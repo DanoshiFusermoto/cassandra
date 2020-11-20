@@ -27,6 +27,9 @@ dependencies {
     compile 'org.xerial.snappy:snappy-java:1.1.7.3'
     compile 'com.sleepycat:je:18.3.12'
     
+    // https://mvnrepository.com/artifact/commons-io/commons-io
+	compile group: 'commons-io', name: 'commons-io', version: '2.8.0'
+    
     // https://mvnrepository.com/artifact/com.google.guava/guava
 	compile group: 'com.google.guava', name: 'guava', version: '29.0-jre'
 

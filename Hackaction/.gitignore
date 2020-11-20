@@ -1,1 +1,17 @@
-/.gradle/
+# gradle stuff
+build/
+.gradle/
+
+# eclipse stuff
+bin/
+.settings/
+.project
+.classpath
+
+# execution stuff
+*.key
+*.wallet
+database/
+logs/
+default.config
+logger.config

@@ -6,7 +6,9 @@ import java.util.Objects;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 
-public abstract class DatabaseStore
+import com.google.common.util.concurrent.AbstractService;
+
+public abstract class DatabaseStore extends AbstractService
 {
 	protected static final Logger log = Logging.getLogger ();
 

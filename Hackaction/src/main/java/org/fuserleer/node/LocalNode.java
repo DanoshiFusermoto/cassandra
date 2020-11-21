@@ -3,6 +3,7 @@ package org.fuserleer.node;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.Objects;
 
 import org.fuserleer.Configuration;
 import org.fuserleer.Hackaction;
@@ -61,13 +62,17 @@ public final class LocalNode extends Node
 
 	public LocalNode(ECKeyPair key, int port, BlockHeader block, String agent, int agentVersion, int protocolVersion)
 	{
-		super(key.getPublicKey(), block, agent, agentVersion, protocolVersion, port);
+		super(Objects.requireNonNull(key, "Key is null").getPublicKey(), block, agent, agentVersion, protocolVersion, port);
 		
 		this.key = key;
 	}
 
 	public void fromPersisted(LocalNode persisted)
 	{
+		Objects.requireNonNull(persisted, "Persisted local node is null");
+		if (persisted.key.equals(this.key) == false)
+			throw new IllegalArgumentException("Persisted node key does not match "+this.key);
+		
 		setBlock(persisted.getBlock());
 		setPort(persisted.getPort());
 	}
@@ -75,11 +80,5 @@ public final class LocalNode extends Node
 	public ECKeyPair getKey() 
 	{
 		return this.key;
-	}
-
-	private void setKey(ECKeyPair key) 
-	{
-		this.key = key;
-		super.setIdentity(key.getPublicKey());
 	}
 }

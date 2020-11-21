@@ -1,6 +1,7 @@
 package org.fuserleer.node;
 
 import java.util.Map;
+import java.util.Objects;
 
 import org.fuserleer.BasicObject;
 import org.fuserleer.crypto.CryptoException;
@@ -50,6 +51,8 @@ public class Node extends BasicObject
 	{
 		super();
 
+		Objects.requireNonNull(node, "Node is null");
+		
  		this.agent = node.getAgent();
  		this.agentVersion = node.getAgentVersion();
  		this.block = node.getBlock();
@@ -62,9 +65,19 @@ public class Node extends BasicObject
 	{
 		this();
 
-		this.identity = identity;
-		this.agent = agent;
-		this.block = block;
+		this.identity = Objects.requireNonNull(identity, "Identity is null");
+		this.agent = Objects.requireNonNull(agent, "Agent is null");
+		this.block = Objects.requireNonNull(block, "BlockHeader is null");
+		
+		if (agentVersion < 0)
+			throw new IllegalArgumentException("Agent version is negative");
+		
+		if (protocolVersion < 0)
+			throw new IllegalArgumentException("Protocol version is negative");
+		
+		if (port <= 0 || port > 65535)
+			throw new IllegalArgumentException("Port is invalid");
+		
 		this.agentVersion = agentVersion;
 		this.protocolVersion = protocolVersion;
 		this.port = port;
@@ -92,6 +105,9 @@ public class Node extends BasicObject
 
 	void setPort(int port)
 	{
+		if (port <= 0 || port > 65535)
+			throw new IllegalArgumentException("Port is invalid");
+
 		this.port = port;
 	}
 
@@ -102,12 +118,16 @@ public class Node extends BasicObject
 
 	public void setBlock(BlockHeader block)
 	{
+		Objects.requireNonNull(block, "Block header is null");
+		
 		this.block = block;
 	}
 	
 	// SYNC //
 	public final boolean isInSyncWith(Node other)
 	{
+		Objects.requireNonNull(other, "Other node is null");
+		
 		// Don't broadcast if not in sync with the remote node
 		// TODO likely needs to be a lot more intelligent
 		long thisHeight = getBlock().getHeight();
@@ -121,6 +141,8 @@ public class Node extends BasicObject
 
 	public final boolean isAheadOf(Node other)
 	{
+		Objects.requireNonNull(other, "Other node is null");
+
 		long thisHeight = getBlock().getHeight();
 		long otherHeight = other.getBlock().getHeight();
 		long heightDelta = thisHeight - otherHeight;
@@ -133,11 +155,6 @@ public class Node extends BasicObject
 	public ECPublicKey getIdentity()
 	{
 		return this.identity;
-	}
-
-	void setIdentity(ECPublicKey identity)
-	{
-		this.identity = identity;
 	}
 
 	// Property "agent" - 1 getter, 1 setter

@@ -8,7 +8,7 @@ import org.fuserleer.logging.Logging;
 
 import com.google.common.util.concurrent.AbstractService;
 
-public abstract class DatabaseStore extends AbstractService
+public abstract class DatabaseStore // extends AbstractService // TODO Guavafy
 {
 	protected static final Logger log = Logging.getLogger ();
 

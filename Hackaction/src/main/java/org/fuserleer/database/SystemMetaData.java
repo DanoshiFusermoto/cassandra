@@ -9,6 +9,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.Context;
+import org.fuserleer.Service;
+import org.fuserleer.exceptions.StartupException;
+import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.executors.ScheduledExecutable;
 import org.fuserleer.logging.Logger;
@@ -26,7 +29,7 @@ import com.sleepycat.je.OperationStatus;
 import com.sleepycat.je.Transaction;
 import com.sleepycat.je.TransactionConfig;
 
-public final class SystemMetaData extends DatabaseStore
+public final class SystemMetaData extends DatabaseStore implements Service
 {
 	private static final Logger log = Logging.getLogger();
 
@@ -42,7 +45,7 @@ public final class SystemMetaData extends DatabaseStore
 	}
 	
 	@Override
-	protected void doStart()
+	public void start() throws StartupException
 	{
 		try
 		{
@@ -55,31 +58,31 @@ public final class SystemMetaData extends DatabaseStore
 			this.metaDataDB = getEnvironment().openDatabase(null, "meta_data", config);
 
 			load();
-
-			this.flush = Executor.getInstance().scheduleWithFixedDelay(new ScheduledExecutable(1, 1, TimeUnit.SECONDS)
-			{
-				@Override
-				public void execute()
-				{
-					try
-					{
-						flush();
-					}
-					catch (DatabaseException e)
-					{
-						log.error(e.getMessage(), e);
-					}
-				}
-			});
 		}
 		catch (Exception ex)
 		{
-			notifyFailed(ex);
+			throw new RuntimeException(ex);
 		}
+
+		this.flush = Executor.getInstance().scheduleWithFixedDelay(new ScheduledExecutable(1, 1, TimeUnit.SECONDS)
+		{
+			@Override
+			public void execute()
+			{
+				try
+				{
+					flush();
+				}
+				catch (DatabaseException e)
+				{
+					log.error(e.getMessage(), e);
+				}
+			}
+		});
 	}
 
 	@Override
-	protected void doStop()
+	public void stop() throws TerminationException
 	{
 		try
 		{
@@ -87,7 +90,7 @@ public final class SystemMetaData extends DatabaseStore
 		}
 		catch (IOException ioex)
 		{
-			notifyFailed(ioex);
+			throw new TerminationException(ioex);
 		}
 	}
 

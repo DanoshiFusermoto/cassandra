@@ -59,5 +59,30 @@ dependencies {
 	
 	// https://mvnrepository.com/artifact/org.json/json
 	compile group: 'org.json', name: 'json', version: '20201115'
+
+	// https://mvnrepository.com/artifact/com.sparkjava/spark-core
+	compile group: 'com.sparkjava', name: 'spark-core', version: '2.9.3'
+	
+	// https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-server
+	compile group: 'org.eclipse.jetty', name: 'jetty-server', version: '9.4.27.v20200227'
+	
+	// https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-webapp
+	compile group: 'org.eclipse.jetty', name: 'jetty-webapp', version: '9.4.27.v20200227'
+	
+	// https://mvnrepository.com/artifact/org.eclipse.jetty.websocket/websocket-server
+	compile group: 'org.eclipse.jetty.websocket', name: 'websocket-server', version: '9.4.27.v20200227'
+
+	// https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-util
+	compile group: 'org.eclipse.jetty', name: 'jetty-util', version: '9.4.27.v20200227'
+	
+	// https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-io
+	compile group: 'org.eclipse.jetty', name: 'jetty-io', version: '9.4.27.v20200227'
+	
+	// https://mvnrepository.com/artifact/org.eclipse.jetty/jetty-http
+	compile group: 'org.eclipse.jetty', name: 'jetty-http', version: '9.4.27.v20200227'
+	
+	// https://mvnrepository.com/artifact/javax.servlet/javax.servlet-api
+	compile group: 'javax.servlet', name: 'javax.servlet-api', version: '4.0.1'
+	
 }
 

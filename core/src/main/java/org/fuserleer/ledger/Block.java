@@ -43,7 +43,7 @@ public final class Block extends BlockHeader implements Primitive, StatePrimitiv
 		if (witnessedAt < 0)
 			throw new IllegalArgumentException("Witnessed timestamp is negative");
 		
-		if (height != 0 && Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
+		if (Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
 			throw new IllegalArgumentException("Atoms is empty");
 
 		// TODO prevent duplicate atoms

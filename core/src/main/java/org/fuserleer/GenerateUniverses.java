@@ -6,6 +6,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.Universe;
 import org.fuserleer.ledger.Block;
+import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.Serialization;
@@ -100,7 +101,7 @@ public final class GenerateUniverses
 
 	private Block createGenesisBlock(byte magic, long timestamp) throws Exception 
 	{
-		Block genesisBlock = new Block(0l, 0l, Hash.ZERO, Hash.ZERO, Collections.emptyList());
+		Block genesisBlock = new Block(0l, 0l, Hash.ZERO, Hash.ZERO, Collections.singleton(new Atom()));
 		return genesisBlock;
 	}
 

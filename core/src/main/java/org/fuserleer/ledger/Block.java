@@ -29,8 +29,6 @@ public final class Block extends BlockHeader implements Primitive, StatePrimitiv
 	private Block()
 	{
 		super();
-		
-		this.witnessedAt = Time.getLedgerTimeMS();
 	}
 	
 	public Block(long height, long step, Hash previous, Hash merkle, Collection<Atom> atoms)

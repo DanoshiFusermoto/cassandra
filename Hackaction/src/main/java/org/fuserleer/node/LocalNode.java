@@ -73,7 +73,7 @@ public final class LocalNode extends Node
 		if (persisted.key.equals(this.key) == false)
 			throw new IllegalArgumentException("Persisted node key does not match "+this.key);
 		
-		setBlock(persisted.getBlock());
+		setHead(persisted.getHead());
 		setPort(persisted.getPort());
 	}
 

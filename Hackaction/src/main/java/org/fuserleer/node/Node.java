@@ -31,7 +31,7 @@ public class Node extends BasicObject
 
 	@JsonProperty("head")
 	@DsonOutput(Output.ALL)
-	private BlockHeader	block;
+	private BlockHeader	head;
 
 	private ECPublicKey		identity;
 	
@@ -41,7 +41,7 @@ public class Node extends BasicObject
 
 		this.agent = "unknown";
 		this.agentVersion = 0;
-		this.block = null;
+		this.head = null;
 		this.protocolVersion = 0;
 		this.port = 0;
 		this.identity = null;
@@ -55,19 +55,19 @@ public class Node extends BasicObject
 		
  		this.agent = node.getAgent();
  		this.agentVersion = node.getAgentVersion();
- 		this.block = node.getBlock();
+ 		this.head = node.getHead();
 		this.protocolVersion = node.getProtocolVersion();
 		this.port = node.getPort();
 		this.identity = node.getIdentity();
 	}
 
-	public Node(ECPublicKey identity, BlockHeader block, String agent, int agentVersion, int protocolVersion, int port)
+	public Node(ECPublicKey identity, BlockHeader head, String agent, int agentVersion, int protocolVersion, int port)
 	{
 		this();
 
 		this.identity = Objects.requireNonNull(identity, "Identity is null");
 		this.agent = Objects.requireNonNull(agent, "Agent is null");
-		this.block = Objects.requireNonNull(block, "BlockHeader is null");
+		this.head = Objects.requireNonNull(head, "BlockHeader is null");
 		
 		if (agentVersion < 0)
 			throw new IllegalArgumentException("Agent version is negative");
@@ -111,16 +111,16 @@ public class Node extends BasicObject
 		this.port = port;
 	}
 
-	public BlockHeader getBlock()
+	public BlockHeader getHead()
 	{
-		return this.block;
+		return this.head;
 	}
 
-	public void setBlock(BlockHeader block)
+	public void setHead(BlockHeader head)
 	{
-		Objects.requireNonNull(block, "Block header is null");
+		Objects.requireNonNull(head, "Block header is null");
 		
-		this.block = block;
+		this.head = head;
 	}
 	
 	// SYNC //
@@ -130,8 +130,8 @@ public class Node extends BasicObject
 		
 		// Don't broadcast if not in sync with the remote node
 		// TODO likely needs to be a lot more intelligent
-		long thisHeight = getBlock().getHeight();
-		long otherHeight = other.getBlock().getHeight();
+		long thisHeight = getHead().getHeight();
+		long otherHeight = other.getHead().getHeight();
 		long heightDelta = Math.abs(thisHeight - otherHeight);
 		if (heightDelta > Universe.getDefault().getEpoch())
 			return false;
@@ -143,8 +143,8 @@ public class Node extends BasicObject
 	{
 		Objects.requireNonNull(other, "Other node is null");
 
-		long thisHeight = getBlock().getHeight();
-		long otherHeight = other.getBlock().getHeight();
+		long thisHeight = getHead().getHeight();
+		long otherHeight = other.getHead().getHeight();
 		long heightDelta = thisHeight - otherHeight;
 		if (heightDelta >= Universe.getDefault().getEpoch())
 			return true;
@@ -201,6 +201,6 @@ public class Node extends BasicObject
 	@Override
 	public String toString()
 	{
-		return this.getIdentity().toString()+"@"+this.block;
+		return this.getIdentity().toString()+"@"+this.head;
 	}
 }

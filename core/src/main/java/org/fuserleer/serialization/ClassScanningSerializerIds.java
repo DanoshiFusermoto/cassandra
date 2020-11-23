@@ -12,6 +12,7 @@ import java.util.Map;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.utils.UInt128;
+import org.fuserleer.serialization.Polymorphic;
 
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
@@ -64,11 +65,19 @@ public abstract class ClassScanningSerializerIds implements SerializerIds
 
 			String id = sid.value();
 
-			// Check for duplicates
-			Class<?> dupClass = idClassMap.put(id, cls);
-			if (dupClass != null)
-				throw new SerializerIdsException(String.format("Aborting, duplicate ID %s discovered in classes: [%s, %s]", id, cls.getName(), dupClass.getName()));
-
+			if (Polymorphic.class.isAssignableFrom(cls)) {
+				// Polymorphic class hierarchy checked later
+				if (log.hasLevel(Logging.DEBUG)) {
+					log.debug("Polymorphic class:" + cls.getName() + " with ID:" + id);
+				}
+				polymorphicMap.computeIfAbsent(id, k -> new ArrayList<>()).add(cls);
+			} else {
+				// Check for duplicates
+				Class<?> dupClass = idClassMap.put(id, cls);
+				if (dupClass != null)
+					throw new SerializerIdsException(String.format("Aborting, duplicate ID %s discovered in classes: [%s, %s]", id, cls.getName(), dupClass.getName()));
+			}
+			
 			if (log.hasLevel(Logging.DEBUG))
 				log.debug("Putting Class:" + cls.getName() + " with ID:" + id);
 

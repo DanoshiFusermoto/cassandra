@@ -30,6 +30,7 @@ import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
 import org.fuserleer.network.messages.FlowControlMessage;
 import org.fuserleer.network.messaging.Message;
+import org.fuserleer.serialization.Polymorphic;
 import org.fuserleer.serialization.SerializerId2;
 
 @SerializerId2("network.peer")
@@ -40,7 +41,7 @@ import org.fuserleer.serialization.SerializerId2;
  *  ordering of packets, and configurable parameters for timeouts etc
  *
  */
-public class RUDPPeer extends ConnectedPeer
+public final class RUDPPeer extends ConnectedPeer implements Polymorphic
 {
 	private static final Logger networkLog = Logging.getLogger("network");
 	private static final Logger messagingLog = Logging.getLogger("messaging");

@@ -14,10 +14,11 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
 import org.fuserleer.network.messaging.Message;
+import org.fuserleer.serialization.Polymorphic;
 import org.fuserleer.serialization.SerializerId2;
 
 @SerializerId2("network.peer")
-public class UDPPeer extends ConnectedPeer
+public final class UDPPeer extends ConnectedPeer implements Polymorphic
 {
 	private static final Logger networkLog = Logging.getLogger("network");
 	private static final Logger messagingLog = Logging.getLogger("messaging");

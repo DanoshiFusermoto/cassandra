@@ -61,12 +61,12 @@ public final class GenerateUniverses
 
 		List<Universe> universes = new ArrayList<>();
 
-		long universeTimestampSeconds = this.configuration.get("universe.timestamp", 1136073600); // TWITTER LAUNCH DATE
+		long universeTimestampSeconds = this.configuration.get("universe.timestamp", 1136073600);
 		long universeTimestampMillis = TimeUnit.SECONDS.toMillis(universeTimestampSeconds);
 
-		universes.add(buildUniverse(10000, "Mainnet", "The public deployment", Universe.Type.PRODUCTION, universeTimestampMillis, (int) TimeUnit.DAYS.toSeconds(1)));
-		universes.add(buildUniverse(20000, "Testnet", "The test deployment", Universe.Type.TEST, universeTimestampMillis, (int) TimeUnit.HOURS.toSeconds(1)));
-		universes.add(buildUniverse(30000, "Devnet", "The development deployment", Universe.Type.DEVELOPMENT, universeTimestampMillis, (int) TimeUnit.HOURS.toSeconds(1)));
+		universes.add(buildUniverse(10000, "Mainnet", "The public universe", Universe.Type.PRODUCTION, universeTimestampMillis, (int) TimeUnit.DAYS.toSeconds(1)));
+		universes.add(buildUniverse(20000, "Testnet", "The test universe", Universe.Type.TEST, universeTimestampMillis, (int) TimeUnit.HOURS.toSeconds(1)));
+		universes.add(buildUniverse(30000, "Devnet", "The development universe", Universe.Type.DEVELOPMENT, universeTimestampMillis, (int) TimeUnit.HOURS.toSeconds(1)));
 
 		return universes;
 	}

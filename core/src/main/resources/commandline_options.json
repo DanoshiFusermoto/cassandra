@@ -20,27 +20,6 @@
 		"has_arg":true
 	},
 
-	"ntp":{
-		"short":"ntp",
-		"long":"ntp",
-		"desc":"Use NTP service",
-		"has_arg":true
-	},
-
-	"ntpoffset":{
-		"short":"ntpoffset",
-		"long":"ntpoffset",
-		"desc":"NTP time offset",
-		"has_arg":true
-	},
-
-	"universe.timestamp":{
-		"short":"ut",
-		"long":"universe.timestamp",
-		"desc":"Universe timestamp for all networks in seconds",
-		"has_arg":true
-	},
-
 	"console":{
 		"short":"c",
 		"long":"console",

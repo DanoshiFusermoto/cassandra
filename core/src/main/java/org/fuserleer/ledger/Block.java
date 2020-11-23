@@ -60,4 +60,9 @@ public final class Block extends BlockHeader implements Primitive, StatePrimitiv
 	{
 		return this.witnessedAt;
 	}
+
+	public BlockHeader toHeader()
+	{
+		return new BlockHeader(getHeight(), getStep(), getPrevious(), getMerkle());
+	}
 }

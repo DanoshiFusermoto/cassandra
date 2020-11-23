@@ -16,7 +16,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.primitives.Longs;
 
 @SerializerId2("ledger.block.header")
-public class BlockHeader implements Comparable<BlockHeader>, Hashable
+public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 {
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)

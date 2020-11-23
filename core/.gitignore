@@ -13,5 +13,5 @@ bin/
 *.wallet
 /database/
 /logs/
-default.config
-logger.config
+/default.config
+/logger.config

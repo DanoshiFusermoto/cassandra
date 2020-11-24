@@ -10,6 +10,7 @@ import java.util.List;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.Configuration;
 import org.fuserleer.Context;
+import org.fuserleer.console.Console;
 import org.fuserleer.API;
 import org.fuserleer.time.Time;
 import org.fuserleer.time.TimeProvider;
@@ -54,6 +55,10 @@ public class Hackation
 			System.setProperty("console", Boolean.toString(Configuration.getDefault().getCommandLine().hasOption("console")));
 			
 			new Hackation();
+			
+			if (Boolean.getBoolean("console") == true)
+				new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Contexts());
+
 		}
 		catch (Throwable t)
 		{

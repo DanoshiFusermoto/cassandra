@@ -29,11 +29,6 @@ public class StandardPeerFilter implements PeerFilter
 	{
 		try
 		{
-			// TODO test this is no longer needed
-//			InetAddress address = InetAddress.getByName(peer.getURI().getHost());
-//			if (Interfaces.getInstance().isSelf(address))
-//				return true;
-
 			if (this.context.getNetwork().isWhitelisted(peer.getURI()) == false)
 		        return true;
 

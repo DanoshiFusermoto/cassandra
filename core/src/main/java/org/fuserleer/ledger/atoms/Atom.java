@@ -2,13 +2,18 @@ package org.fuserleer.ledger.atoms;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.fuserleer.BasicObject;
 import org.fuserleer.common.Primitive;
+import org.fuserleer.database.Identifier;
+import org.fuserleer.database.Indexable;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
@@ -21,6 +26,8 @@ public final class Atom extends BasicObject implements Primitive // StatePrimiti
 	@JsonProperty("particles")
 	@DsonOutput(Output.ALL)
 	private List<Particle> particles;
+	
+	private transient Set<Indexable> indexables = null;
 
 	public Atom()
 	{
@@ -64,5 +71,26 @@ public final class Atom extends BasicObject implements Primitive // StatePrimiti
 		}
 		
 		this.particles = new ArrayList<Particle>(verifiedNonDuplicates);
+	}
+	
+	public synchronized Set<Indexable> getIndexables()
+	{
+		if (this.indexables == null)
+		{
+			Set<Indexable> indexables = new HashSet<Indexable>();
+			indexables.addAll(this.particles.stream().map(p -> Indexable.from(p.getHash(), Particle.class)).collect(Collectors.toList()));
+			indexables.addAll(this.particles.stream().map(p -> Indexable.from(p.getHash(), p.getClass())).collect(Collectors.toList()));
+			this.particles.stream().forEach(p -> indexables.addAll(p.getIndexables()));
+			this.indexables = Collections.unmodifiableSet(indexables);
+		}
+		
+		return this.indexables;
+	}
+
+	public Set<Identifier> getIdentifiers()
+	{
+		Set<Identifier> identifiers = new HashSet<Identifier>();
+		this.particles.stream().forEach(p -> identifiers.addAll(p.getIdentifiers()));
+		return identifiers;
 	}
 }

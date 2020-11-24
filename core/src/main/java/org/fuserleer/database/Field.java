@@ -5,7 +5,7 @@ import java.util.Objects;
 
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
-import org.fuserleer.ledger.atoms.Operation;
+import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerDummy;
@@ -26,7 +26,7 @@ public final class Field
 		if (Field.class.isAssignableFrom(scope.getContainer()) == true)
 			throw new IllegalArgumentException("Field scope references another field");
 		
-		if (Operation.class.isAssignableFrom(scope.getContainer()) == false)
+		if (Particle.class.isAssignableFrom(scope.getContainer()) == false)
 			throw new IllegalArgumentException("Field scope "+scope.getContainer()+" is not a operation");
 
 		Objects.requireNonNull(name);
@@ -68,7 +68,7 @@ public final class Field
 		if (Field.class.isAssignableFrom(scope.getContainer()) == true)
 			throw new IllegalArgumentException("Field scope references another field");
 		
-		if (Operation.class.isAssignableFrom(scope.getContainer()) == false)
+		if (Particle.class.isAssignableFrom(scope.getContainer()) == false)
 			throw new IllegalArgumentException("Field scope "+scope.getContainer()+" is not a operation");
 
 		Objects.requireNonNull(name);

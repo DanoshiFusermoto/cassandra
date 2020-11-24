@@ -14,6 +14,7 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
+import org.fuserleer.serialization.SerializationException;
 
 import com.sleepycat.je.Database;
 import com.sleepycat.je.DatabaseConfig;
@@ -136,6 +137,48 @@ public class LedgerStore extends DatabaseStore
 	@Override
 	public void flush() throws DatabaseException  { /* Not used */ }
 
+	@SuppressWarnings("unchecked")
+	public <T extends Primitive> T get(final Hash hash, final Class<T> primitive) throws IOException
+	{
+		try
+        {
+			DatabaseEntry key = new DatabaseEntry(hash.toByteArray());
+			DatabaseEntry value = new DatabaseEntry();
+			
+			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true)
+			{
+				OperationStatus status = this.primitivesDatabase.get(null, key, value, LockMode.DEFAULT);
+				if (status.equals(OperationStatus.SUCCESS) == true)
+				{
+					try
+					{
+						return (T) Serialization.getInstance().fromDson(value.getData(), primitive);
+					}
+					// FIXME Hack to catch this and convert to a SerializationException that is easier to handle.
+					catch (IllegalArgumentException iaex)
+					{
+						throw new SerializationException(iaex.getMessage());
+					}
+				}
+			}
+			else if (primitive.equals(Block.class) == true)
+			{
+				throw new UnsupportedOperationException("Block retreival from store not implemented yet");
+			}
+			else 
+				throw new IllegalArgumentException();
+			
+			return null;
+        }
+		catch (Exception ex)
+		{
+			if (ex instanceof IOException)
+				throw ex;
+			else
+				throw new DatabaseException(ex);
+		}
+	}
+
 	boolean has(Hash hash) throws DatabaseException
 	{
 		try
@@ -194,6 +237,32 @@ public class LedgerStore extends DatabaseStore
 		} 
 	}
 	
+	final OperationStatus store(Atom atom) throws IOException 
+	{
+		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
+		try 
+		{
+			OperationStatus status = store(transaction, atom.getHash(), atom, Serialization.getInstance().toDson(atom, DsonOutput.Output.PERSIST));
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    {
+		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    		databaseLog.warn(this.context.getName()+": Atom "+atom.getHash()+" is already present");
+		    	else 
+		    		throw new DatabaseException("Failed to store atom "+atom.getHash()+" due to "+status.name());
+		    } 
+
+		    transaction.commit();
+		    return OperationStatus.SUCCESS;
+		} 
+		catch (Exception ex) 
+		{
+			transaction.abort();
+		    if (ex instanceof DatabaseException)
+		    	throw ex; 
+		    throw new DatabaseException(ex);
+		} 
+	}
+
 	private OperationStatus store(Transaction transaction, Hash hash, Primitive primitive, byte[] bytes) throws IOException 
 	{
 		Objects.requireNonNull(hash);

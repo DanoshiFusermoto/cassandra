@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.Objects;
 
 import org.fuserleer.Context;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.DatabaseException;
 import org.fuserleer.database.DatabaseStore;

@@ -2,6 +2,7 @@ package org.fuserleer.ledger;
 
 import java.util.Objects;
 
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
 import org.fuserleer.crypto.Hash.Mode;

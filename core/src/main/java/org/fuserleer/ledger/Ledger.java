@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.Universe;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;

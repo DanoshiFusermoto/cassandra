@@ -6,6 +6,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import org.fuserleer.common.Primitive;
+import org.fuserleer.common.StatePrimitive;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.serialization.DsonOutput;

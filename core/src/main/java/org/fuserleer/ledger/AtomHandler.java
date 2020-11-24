@@ -164,7 +164,7 @@ public class AtomHandler implements Service
 					{
 						try
 						{
-							if (atomsLog.hasLevel(Logging.DEBUG))
+							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug(AtomHandler.this.context.getName()+": Atom broadcast of " + atomBroadcastMessage.getAtoms().size() + " from " + peer);
 							
 							if (AtomHandler.this.context.getNode().isInSyncWith(peer.getNode()) == false)
@@ -210,7 +210,7 @@ public class AtomHandler implements Service
 					{
 						try
 						{
-							if (atomsLog.hasLevel(Logging.DEBUG))
+							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug(AtomHandler.this.context.getName()+": Received atoms request from " + peer + " of " + getAtomsMessage.getSize() + " atoms");
 	
 							List<Atom> atomsToSend = new ArrayList<Atom>();
@@ -258,7 +258,7 @@ public class AtomHandler implements Service
 					{
 						try
 						{
-							if (atomsLog.hasLevel(Logging.DEBUG))
+							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug("Received "+atomsMessage.getAtoms().size()+" atoms from " + peer);
 
 							synchronized(AtomHandler.this.atomsRequested)
@@ -286,12 +286,10 @@ public class AtomHandler implements Service
 			}
 		});
 
-//		Events.getInstance().register(this.eventListener);
-
-		Thread atomStoreProcessorThread = new Thread(this.atomProcessor);
-		atomStoreProcessorThread.setDaemon(true);
-		atomStoreProcessorThread.setName(this.context.getName()+" Atom Store Processor");
-		atomStoreProcessorThread.start();
+		Thread atomProcessorThread = new Thread(this.atomProcessor);
+		atomProcessorThread.setDaemon(true);
+		atomProcessorThread.setName(this.context.getName()+" Atom Processor");
+		atomProcessorThread.start();
 	}
 
 	@Override
@@ -299,7 +297,6 @@ public class AtomHandler implements Service
 	{
 		this.atomProcessor.terminate(true);
 
-//		Events.getInstance().unregister(this.eventListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 	

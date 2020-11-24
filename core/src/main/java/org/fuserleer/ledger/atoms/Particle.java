@@ -69,10 +69,10 @@ public abstract class Particle extends BasicObject implements StateExecutor, Sta
 		this();
 
 		if (Objects.requireNonNull(spin).equals(Spin.NEUTRAL) == true)
-			throw new IllegalArgumentException("Spin NEUTRAL operations are implicit");
+			throw new IllegalArgumentException("Spin NEUTRAL particles are implicit");
 		
 		if (spin.equals(Spin.DOWN) == true && isConsumable() == false)
-			throw new IllegalArgumentException("Operation of type "+this.getClass()+" is not consumable");
+			throw new IllegalArgumentException("Particle of type "+this.getClass()+" is not consumable");
 		
 		this.spin = spin;
 		this.nonce = ThreadLocalRandom.current().nextLong();
@@ -88,7 +88,7 @@ public abstract class Particle extends BasicObject implements StateExecutor, Sta
 	public final <T extends Particle> T get(Spin spin)
 	{
 		if (Objects.requireNonNull(spin).equals(Spin.NEUTRAL) == true)
-			throw new IllegalArgumentException("Spin NEUTRAL operations are implicit");
+			throw new IllegalArgumentException("Spin NEUTRAL particles are implicit");
 
 		try
 		{
@@ -116,7 +116,7 @@ public abstract class Particle extends BasicObject implements StateExecutor, Sta
 	private Hash computeHash(Spin spin)
 	{
 		if (Objects.requireNonNull(spin).equals(Spin.NEUTRAL) == true)
-			throw new IllegalArgumentException("Spin NEUTRAL operations are implicit");
+			throw new IllegalArgumentException("Spin NEUTRAL particles are implicit");
 
 		try
 		{

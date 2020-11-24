@@ -27,7 +27,7 @@ public final class Field
 			throw new IllegalArgumentException("Field scope references another field");
 		
 		if (Particle.class.isAssignableFrom(scope.getContainer()) == false)
-			throw new IllegalArgumentException("Field scope "+scope.getContainer()+" is not a operation");
+			throw new IllegalArgumentException("Field scope "+scope.getContainer()+" is not a particle");
 
 		Objects.requireNonNull(name);
 		
@@ -69,7 +69,7 @@ public final class Field
 			throw new IllegalArgumentException("Field scope references another field");
 		
 		if (Particle.class.isAssignableFrom(scope.getContainer()) == false)
-			throw new IllegalArgumentException("Field scope "+scope.getContainer()+" is not a operation");
+			throw new IllegalArgumentException("Field scope "+scope.getContainer()+" is not a particle");
 
 		Objects.requireNonNull(name);
 		Objects.requireNonNull(value);

@@ -16,18 +16,18 @@ import org.fuserleer.serialization.SerializerId2;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.atoms.particles.unique")
-public final class UniqueOperation extends SignedParticle
+public final class UniqueParticle extends SignedParticle
 {
 	@JsonProperty("value")
 	@DsonOutput(Output.ALL)
 	private Hash value;
 	
-	UniqueOperation()
+	UniqueParticle()
 	{
 		super();
 	}
 	
-	public UniqueOperation(Hash value, ECPublicKey owner)
+	public UniqueParticle(Hash value, ECPublicKey owner)
 	{
 		super(Spin.UP, owner);
 		

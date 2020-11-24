@@ -7,6 +7,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.ledger.BlockHeader;
+import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.peers.Peer;
@@ -107,6 +108,30 @@ public class API implements Service
 				return responseJSON.toString(4);
 			});
 			
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/atom/:hash", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+				
+				try
+				{
+					Atom atom = API.this.context.getLedger().get(new Hash(req.params("hash")), Atom.class);
+					if (atom == null)
+						status(responseJSON, 404, "Atom "+req.params("hash")+" not found");
+					else
+					{
+						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						status(responseJSON, 200);
+					}
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+				
+				return responseJSON.toString(4);
+			});
+
 			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/bootstrap", (req, res) -> 
 			{
 				JSONObject responseJSON = new JSONObject();

@@ -8,6 +8,7 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.ledger.BlockHeader;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.UniqueParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.peers.Peer;
@@ -122,6 +123,29 @@ public class API implements Service
 						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
 						status(responseJSON, 200);
 					}
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+				
+				return responseJSON.toString(4);
+			});
+
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/atom/submit", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+				
+				try
+				{
+					Hash randomValue = Hash.random();
+					UniqueParticle particle = new UniqueParticle(randomValue, API.this.context.getNode().getIdentity());
+					Atom atom = new Atom(particle);
+					
+					API.this.context.getLedger().submit(atom);
+					responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+					status(responseJSON, 200);
 				}
 				catch(Throwable t)
 				{

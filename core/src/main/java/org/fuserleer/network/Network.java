@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -43,6 +44,7 @@ import org.fuserleer.executors.Executor;
 import org.fuserleer.executors.ScheduledExecutable;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
 import org.fuserleer.network.discovery.Whitelist;
 import org.fuserleer.network.messages.NodeMessage;
 import org.fuserleer.network.messaging.Message;
@@ -59,6 +61,7 @@ import org.fuserleer.network.peers.events.PeerAvailableEvent;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerConnectingEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
+import org.fuserleer.network.peers.filters.TCPPeerFilter;
 import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 
@@ -442,7 +445,44 @@ public final class Network implements Service
 						networkLog.error(ex);
 					}
 					
-					// TODO Discovery //
+					// Discovery //
+					// Discovery //
+					try
+					{
+						List<ConnectedPeer> connected = Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.OUTBOUND)).collect(Collectors.toList());
+						if (connected.size() < Network.this.context.getConfiguration().get("network.connections.out", 8))
+						{
+							Collection<Peer> preferredPeers = new RemoteLedgerDiscovery(Network.this.context).discover(new TCPPeerFilter(Network.this.context));
+							for (Peer preferredPeer : preferredPeers)
+							{
+								if (Network.this.get(preferredPeer.getNode().getIdentity(), Protocol.TCP) != null)
+									continue;
+								
+								Network.this.connecting.lock();
+	
+								try
+								{
+									Network.this.connect(preferredPeer.getURI(), Direction.OUTBOUND, Protocol.TCP);
+									break;
+								}
+								catch (Exception ex)
+								{
+									networkLog.error("TCP "+preferredPeer.toString()+" connect error", ex);
+									continue;
+					    		}
+					    		finally
+					    		{
+					    			Network.this.connecting.unlock();
+					    		}
+							}
+						}
+						else
+							networkLog.debug("All outbound slots occupied");
+					}
+					catch (Exception ex)
+					{
+						networkLog.error(ex);
+					}
 
 					// System Heartbeat //
 					// TODO still need this? or even node objects / messages?

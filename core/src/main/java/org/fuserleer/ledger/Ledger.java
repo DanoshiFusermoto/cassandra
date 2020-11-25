@@ -24,6 +24,7 @@ import org.fuserleer.ledger.events.AtomCommittedEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
+import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 
@@ -37,10 +38,11 @@ public final class Ledger implements Service
 
 	private final Context context;
 	
+	private final AtomPool atomPool;
 	private final AtomHandler atomHandler;
-
 	private final LedgerStore ledgerStore;
-
+	private final VoteRegulator voteRegulator;
+	
 	private final transient AtomicReference<BlockHeader> head;
 	
 	private final Map<Hash, AtomFuture> atomFutures = Collections.synchronizedMap(new LinkedHashMap<Hash, AtomFuture>());
@@ -50,6 +52,9 @@ public final class Ledger implements Service
 		this.context = Objects.requireNonNull(context);
 
 		this.ledgerStore = new LedgerStore(this.context);
+
+		this.voteRegulator = new VoteRegulator(this.context);
+		this.atomPool = new AtomPool(this.context, this.voteRegulator);
 		this.atomHandler = new AtomHandler(this.context);
 		
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
@@ -67,6 +72,7 @@ public final class Ledger implements Service
 			this.context.getEvents().register(this.asyncAtomListener);
 			this.context.getEvents().register(this.syncAtomListener);
 
+			this.atomPool.start();
 			this.atomHandler.start();
 		}
 		catch (Exception ex)
@@ -82,6 +88,7 @@ public final class Ledger implements Service
 		this.context.getEvents().unregister(this.syncAtomListener);
 
 		this.atomHandler.stop();
+		this.atomPool.stop();
 		this.ledgerStore.stop();
 	}
 	
@@ -118,6 +125,11 @@ public final class Ledger implements Service
 	AtomHandler getAtomHandler()
 	{
 		return this.atomHandler;
+	}
+
+	AtomPool getAtomPool()
+	{
+		return this.atomPool;
 	}
 
 	LedgerStore getLedgerStore()
@@ -216,5 +228,21 @@ public final class Ledger implements Service
 	// SYNCHRONOUS ATOM LISTENER //
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
+		@Subscribe
+		public void on(AtomPersistedEvent actionPersistedEvent) 
+		{
+			if (Ledger.this.atomPool.add(actionPersistedEvent.getAtom()) == false)
+				ledgerLog.error(Ledger.this.context.getName()+": Atom "+actionPersistedEvent.getAtom().getHash()+" not added to atom pool");
+		}
+
+		@Subscribe
+		public void on(AtomCommittedEvent actionCommittedEvent) 
+		{
+			Ledger.this.atomPool.remove(actionCommittedEvent.getAtom());
+			
+			if (ledgerLog.hasLevel(Logging.DEBUG))
+				ledgerLog.debug(Ledger.this.context.getName()+": Committed atom "+actionCommittedEvent.getAtom().getHash());
+		}
 	};
 }
+ 

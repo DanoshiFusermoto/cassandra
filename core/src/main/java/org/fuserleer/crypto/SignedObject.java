@@ -7,11 +7,20 @@ import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializationException;
+import org.fuserleer.serialization.SerializerConstants;
+import org.fuserleer.serialization.SerializerDummy;
+import org.fuserleer.serialization.SerializerId2;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+@SerializerId2("crypto.signed_object")
 public final class SignedObject<T>
 {
+	// Placeholder for the serializer ID
+	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
+	@DsonOutput(Output.ALL)
+	private SerializerDummy serializer = SerializerDummy.DUMMY;
+
 	@JsonProperty("object")
 	@DsonOutput(Output.ALL)
 	private T object;
@@ -24,6 +33,11 @@ public final class SignedObject<T>
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private ECSignature signature;
 	
+	private SignedObject()
+	{
+		// For serializer
+	}
+	
 	public SignedObject(T object, ECPublicKey owner)
 	{
 		this.object = Objects.requireNonNull(object);
@@ -35,7 +49,7 @@ public final class SignedObject<T>
 
 	public final T getObject()
 	{
-		return this.getObject();
+		return this.object;
 	}
 
 	public final ECPublicKey getOwner()
@@ -46,7 +60,7 @@ public final class SignedObject<T>
 	public final synchronized void sign(ECKeyPair key) throws CryptoException, SerializationException
 	{
 		if (key.getPublicKey().equals(getOwner()) == false)
-			throw new CryptoException("Attempting to sign particle with key that doesn't match owner");
+			throw new CryptoException("Attempting to sign wrapped object with key that doesn't match owner");
 
 		Hash objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.STANDARD);
 		this.signature = key.sign(objectHash);

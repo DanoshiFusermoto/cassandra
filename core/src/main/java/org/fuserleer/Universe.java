@@ -2,11 +2,14 @@ package org.fuserleer;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.common.primitives.Longs;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 
 import org.json.JSONObject;
 import org.fuserleer.BasicObject;
@@ -75,6 +78,7 @@ public class Universe extends BasicObject
 		private Integer epoch;
 		private ECPublicKey creator;
 		private Block genesis;
+		private LinkedHashSet<ECPublicKey> genodes;
 
 		private Builder() 
 		{
@@ -190,6 +194,19 @@ public class Universe extends BasicObject
 		}
 
 		/**
+		 * Sets the genesis nodes.
+		 *
+		 * @param genodes The genesis nodes.
+		 * @return A reference to {@code this} to allow method chaining.
+		 */
+		public Builder setGenodes(Set<ECPublicKey> genodes) 
+		{
+			Objects.requireNonNull(genodes);
+			this.genodes = new LinkedHashSet<ECPublicKey>(genodes);
+			return this;
+		}
+		
+		/**
 		 * Validate and build a universe from the specified data.
 		 *
 		 * @return The freshly build universe object.
@@ -202,6 +219,8 @@ public class Universe extends BasicObject
 			require(this.type, "universeype");
 			require(this.timestamp, "Timestamp");
 			require(this.creator, "Creator");
+			require(this.genesis , "Genesis block");
+			require(this.genodes, "Genesis nodes");
 			return new Universe(this);
 		}
 
@@ -278,6 +297,11 @@ public class Universe extends BasicObject
 	@DsonOutput(Output.ALL)
 	private Block genesis;
 
+	@JsonProperty("genodes")
+	@DsonOutput(Output.ALL)
+	@JsonDeserialize(as=LinkedHashSet.class)
+	private Set<ECPublicKey> genodes;
+
 	private ECPublicKey creator;
 
 	private ECSignature signature;
@@ -300,6 +324,7 @@ public class Universe extends BasicObject
 		this.timestamp = builder.timestamp.longValue();
 		this.creator = builder.creator;
 		this.genesis = builder.genesis;
+		this.genodes = builder.genodes;
 	}
 
 	/**
@@ -408,6 +433,16 @@ public class Universe extends BasicObject
 	{
 		return this.genesis;
 	}
+	
+	/**
+	 * Gets this universe genesis nodes.
+	 *
+	 * @return
+	 */
+	public Set<ECPublicKey> getGenodes()
+	{
+		return this.genodes;
+	}
 
 	/**
 	 * Get creator key.
@@ -449,7 +484,7 @@ public class Universe extends BasicObject
 			throw new IllegalStateException("Invalid universe signature");
 		
 		if (this.genesis == null)
-			throw new IllegalStateException("No genesis action defined");
+			throw new IllegalStateException("No genesis block defined");
 	}
 
 	// Signature - 1 getter, 1 setter.

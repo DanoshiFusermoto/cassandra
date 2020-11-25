@@ -70,6 +70,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		if (height != 0 && previous.equals(Hash.ZERO) == true)
 			throw new IllegalArgumentException("Previous block hash is ZERO");
 
+		this.owner = Objects.requireNonNull(owner, "Block owner is null");
 		this.merkle = Objects.requireNonNull(merkle, "Block merkle is null");
 		this.previous = previous;
 		this.height = height;

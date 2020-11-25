@@ -2,6 +2,7 @@ package org.fuserleer;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.crypto.ECKeyPair;
+import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.Universe;
@@ -19,7 +20,10 @@ import java.io.File;
 import java.security.Security;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.StringTokenizer;
 import java.util.concurrent.TimeUnit;
 
 public final class GenerateUniverses
@@ -29,7 +33,7 @@ public final class GenerateUniverses
 	public static final String RADIX_ICON_URL = "https://assets.radixdlt.com/icons/icon-xrd-32x32.png";
 
 	private final ECKeyPair universeKey;
-	private final ECKeyPair nodeKey;
+	private final Set<ECPublicKey> nodeKeys;
 	private final Configuration configuration;
 
 	public GenerateUniverses(String[] arguments) throws Exception 
@@ -44,8 +48,15 @@ public final class GenerateUniverses
 		this.universeKey = ECKeyPair.fromFile(new File(deploymentKeyPath), true);
 
 		// TODO want to be able to specify multiple nodes to get the genesis mass as bootstrapping
-		String nodeKeyPath = this.configuration.get("node.key.path", "node.key");
-		this.nodeKey = ECKeyPair.fromFile(new File(nodeKeyPath), true);
+		String nodeKeys = this.configuration.get("node.keys", "A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf,AtOM21m9f9DxaR7i2zpM1HNfzazSziwJv9smNsg9JHsO,A8h8Em/ml6X5I5amEMg/Mdz0PgcBwAI3gTUTTPCcjDyU");
+		this.nodeKeys = new LinkedHashSet<ECPublicKey>();
+		
+		StringTokenizer nodeKeysTokenizer = new StringTokenizer(nodeKeys, ",");
+		while (nodeKeysTokenizer.hasMoreTokens() == true)
+		{
+			String nodeKeyToken = nodeKeysTokenizer.nextToken();
+			this.nodeKeys.add(ECPublicKey.from(nodeKeyToken));
+		}
 	}
 
 	public GenerateUniverses() throws Exception 
@@ -57,8 +68,6 @@ public final class GenerateUniverses
 	{
 		LOGGER.info("UNIVERSE KEY PRIVATE:  "+Bytes.toHexString(this.universeKey.getPrivateKey()));
 		LOGGER.info("UNIVERSE KEY PUBLIC:   "+Bytes.toHexString(this.universeKey.getPublicKey().getBytes()));
-		LOGGER.info("NODE KEY PRIVATE:  "+Bytes.toHexString(this.nodeKey.getPrivateKey()));
-		LOGGER.info("NODE KEY PUBLIC:   "+Bytes.toHexString(this.nodeKey.getPublicKey().getBytes()));
 
 		List<Universe> universes = new ArrayList<>();
 
@@ -86,6 +95,7 @@ public final class GenerateUniverses
 			.epoch(epoch)
 			.creator(this.universeKey.getPublicKey())
 			.setGenesis(universeBlock)
+			.setGenodes(this.nodeKeys)
 			.build();
 		universe.sign(this.universeKey);
 
@@ -101,7 +111,8 @@ public final class GenerateUniverses
 
 	private Block createGenesisBlock(byte magic, long timestamp) throws Exception 
 	{
-		Block genesisBlock = new Block(0l, 0l, Hash.ZERO, Hash.ZERO, Collections.singleton(new Atom()));
+		Block genesisBlock = new Block(0l, Hash.ZERO, Hash.ZERO, this.universeKey.getPublicKey(), Collections.singleton(new Atom()));
+		genesisBlock.sign(this.universeKey);
 		return genesisBlock;
 	}
 

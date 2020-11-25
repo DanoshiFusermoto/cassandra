@@ -51,7 +51,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	private ECSignature signature;
 	
 	private transient Hash hash;
-	private transient long step;
+	private transient long step = -1;
 	
 	BlockHeader()
 	{
@@ -85,9 +85,14 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 
 	public final long getStep() throws SerializationException 
 	{
-		byte[] bytes = Serialization.getInstance().toDson(this, Output.WIRE);
-		Hash hash = new Hash(bytes, Mode.DOUBLE);
-		return MathUtils.ringDistance64(this.previous.asLong(), hash.asLong());
+		if (this.step == -1)
+		{
+			byte[] bytes = Serialization.getInstance().toDson(this, Output.WIRE);
+			Hash hash = new Hash(bytes, Mode.DOUBLE);
+			this.step = MathUtils.ringDistance64(this.previous.asLong(), hash.asLong());
+		}
+		
+		return this.step;
 	}
 	
 	@Override

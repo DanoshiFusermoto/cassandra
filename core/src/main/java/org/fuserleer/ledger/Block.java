@@ -8,6 +8,7 @@ import java.util.Objects;
 
 import org.fuserleer.common.Primitive;
 import org.fuserleer.common.StatePrimitive;
+import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.serialization.DsonOutput;
@@ -33,14 +34,14 @@ public final class Block extends BlockHeader implements Primitive, StatePrimitiv
 		super();
 	}
 	
-	public Block(long height, long step, Hash previous, Hash merkle, Collection<Atom> atoms)
+	public Block(long height, Hash previous, Hash merkle, ECPublicKey owner, Collection<Atom> atoms)
 	{
-		this(height, step, previous, merkle, atoms, Time.getLedgerTimeMS());
+		this(height, previous, merkle, owner, atoms, Time.getLedgerTimeMS());
 	}
 	
-	Block(long height, long step, Hash previous, Hash merkle, Collection<Atom> atoms, long witnessedAt)
+	Block(long height, Hash previous, Hash merkle, ECPublicKey owner, Collection<Atom> atoms, long witnessedAt)
 	{
-		super(height, step, previous, merkle);
+		super(height, previous, merkle, owner);
 
 		if (witnessedAt < 0)
 			throw new IllegalArgumentException("Witnessed timestamp is negative");
@@ -65,6 +66,6 @@ public final class Block extends BlockHeader implements Primitive, StatePrimitiv
 
 	public BlockHeader toHeader()
 	{
-		return new BlockHeader(getHeight(), getStep(), getPrevious(), getMerkle());
+		return super.clone();
 	}
 }

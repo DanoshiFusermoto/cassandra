@@ -23,7 +23,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.primitives.Longs;
 
 @SerializerId2("ledger.block.header")
-public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
+public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive, Cloneable
 {
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
@@ -58,13 +58,10 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		super();
 	}
 	
-	BlockHeader(final long height, final long step, final Hash previous, final Hash merkle, final ECPublicKey owner)
+	BlockHeader(final long height, final Hash previous, final Hash merkle, final ECPublicKey owner)
 	{
 		if (height < 0)
 			throw new IllegalArgumentException("Height is negative");
-
-		if (step < 0)
-			throw new IllegalArgumentException("Step is negative");
 
 		Objects.requireNonNull(previous, "Previous block is null");
 		if (height == 0 && previous.equals(Hash.ZERO) == false)
@@ -211,5 +208,13 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	public final synchronized ECSignature getSignature()
 	{
 		return this.signature;
+	}
+	
+	@Override
+	public BlockHeader clone()
+	{
+		BlockHeader blockHeader = new BlockHeader(this.height, this.previous, this.merkle, this.owner);
+		blockHeader.signature = this.signature;
+		return blockHeader;
 	}
 }

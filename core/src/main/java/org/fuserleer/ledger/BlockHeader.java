@@ -3,14 +3,20 @@ package org.fuserleer.ledger;
 import java.util.Objects;
 
 import org.fuserleer.common.Primitive;
+import org.fuserleer.crypto.CryptoException;
+import org.fuserleer.crypto.ECKeyPair;
+import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
+import org.fuserleer.serialization.SerializationException;
 import org.fuserleer.serialization.SerializerConstants;
 import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.MathUtils;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -36,18 +42,23 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@DsonOutput(Output.ALL)
 	private Hash merkle;
 	
-	@JsonProperty("step")
+	@JsonProperty("owner")
 	@DsonOutput(Output.ALL)
-	private long step;
+	private ECPublicKey owner;
 
+	@JsonProperty("signature")
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	private ECSignature signature;
+	
 	private transient Hash hash;
+	private transient long step;
 	
 	BlockHeader()
 	{
 		super();
 	}
 	
-	BlockHeader(final long height, final long step, final Hash previous, final Hash merkle)
+	BlockHeader(final long height, final long step, final Hash previous, final Hash merkle, final ECPublicKey owner)
 	{
 		if (height < 0)
 			throw new IllegalArgumentException("Height is negative");
@@ -65,7 +76,6 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		this.merkle = Objects.requireNonNull(merkle, "Block merkle is null");
 		this.previous = previous;
 		this.height = height;
-		this.step = step;
 	}
 
 	public final long getHeight() 
@@ -73,9 +83,11 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		return this.height;
 	}
 
-	public final long getStep() 
+	public final long getStep() throws SerializationException 
 	{
-		return this.step;
+		byte[] bytes = Serialization.getInstance().toDson(this, Output.WIRE);
+		Hash hash = new Hash(bytes, Mode.DOUBLE);
+		return MathUtils.ringDistance64(this.previous.asLong(), hash.asLong());
 	}
 	
 	@Override
@@ -157,5 +169,42 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	public int compareTo(BlockHeader other)
 	{
 		return Long.compare(getHeight(), other.getHeight());
+	}
+	
+	public final ECPublicKey getOwner()
+	{
+		return this.owner;
+	}
+
+	public final synchronized void sign(ECKeyPair key) throws CryptoException
+	{
+		if (key.getPublicKey().equals(getOwner()) == false)
+			throw new CryptoException("Attempting to sign block header with key that doesn't match owner");
+
+		this.signature = key.sign(getHash());
+	}
+
+	public final synchronized boolean verify(ECPublicKey key) throws CryptoException
+	{
+		if (this.signature == null)
+			throw new CryptoException("Signature is not present");
+		
+		if (getOwner() == null)
+			return false;
+
+		if (key.equals(getOwner()) == false)
+			return false;
+
+		return key.verify(getHash(), this.signature);
+	}
+
+	boolean requiresSignature()
+	{
+		return true;
+	}
+	
+	public final synchronized ECSignature getSignature()
+	{
+		return this.signature;
 	}
 }

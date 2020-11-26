@@ -62,7 +62,12 @@ public final class SignedObject<T>
 		if (key.getPublicKey().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign wrapped object with key that doesn't match owner");
 
-		Hash objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.STANDARD);
+		Hash objectHash;
+		if (object instanceof Hashable)
+			objectHash = ((Hashable)object).getHash();
+		else
+			objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.DOUBLE);
+		
 		this.signature = key.sign(objectHash);
 	}
 
@@ -77,7 +82,12 @@ public final class SignedObject<T>
 		if (key.equals(getOwner()) == false)
 			return false;
 
-		Hash objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.STANDARD);
+		Hash objectHash;
+		if (object instanceof Hashable)
+			objectHash = ((Hashable)object).getHash();
+		else
+			objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.DOUBLE);
+
 		return key.verify(objectHash, this.signature);
 	}
 

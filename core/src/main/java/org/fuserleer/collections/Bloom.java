@@ -104,7 +104,7 @@ public class Bloom
       * @param n is the expected number of elements the filter will contain.
       * @param k is the number of hash functions used.
       */
-    public Bloom(double c, int n, int k, String label) 
+    public Bloom(double c, int n, int k) 
     {
       this.expectedNumberOfFilterElements = n;
       this.k = k;
@@ -120,11 +120,11 @@ public class Bloom
      * @param bitSetSize defines how many bits should be used in total for the filter.
      * @param expectedNumberOElements defines the maximum number of elements the filter is expected to contain.
      */
-    public Bloom(int bitSetSize, int expectedNumberOElements, String label) 
+    public Bloom(int bitSetSize, int expectedNumberOElements) 
     {
         this(bitSetSize / (double)expectedNumberOElements,
              expectedNumberOElements,
-             (int) Math.round((bitSetSize / (double)expectedNumberOElements) * Math.log(2.0)), label);
+             (int) Math.round((bitSetSize / (double)expectedNumberOElements) * Math.log(2.0)));
     }
 
     /**
@@ -135,11 +135,11 @@ public class Bloom
      * @param falsePositiveProbability is the desired false positive probability.
      * @param expectedNumberOfElements is the expected number of elements in the Bloom filter.
      */
-    public Bloom(double falsePositiveProbability, int expectedNumberOfElements, String label) 
+    public Bloom(double falsePositiveProbability, int expectedNumberOfElements) 
     {
         this(Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2))) / Math.log(2), // c = k / ln(2)
              expectedNumberOfElements,
-             (int)Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2))), label); // k = ceil(-log_2(false prob.))
+             (int)Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2)))); // k = ceil(-log_2(false prob.))
     }
 
     /**
@@ -150,9 +150,9 @@ public class Bloom
      * @param actualNumberOfFilterElements specifies how many elements have been inserted into the <code>filterData</code> BitSet.
      * @param filterData a BitSet representing an existing Bloom filter.
      */
-    public Bloom(int bitSetSize, int expectedNumberOfFilterElements, int actualNumberOfFilterElements, BitSet filterData, String label) 
+    public Bloom(int bitSetSize, int expectedNumberOfFilterElements, int actualNumberOfFilterElements, BitSet filterData) 
     {
-        this(bitSetSize, expectedNumberOfFilterElements, label);
+        this(bitSetSize, expectedNumberOfFilterElements);
         this.bitset = filterData;
         this.numberOfAddedElements = actualNumberOfFilterElements;
     }

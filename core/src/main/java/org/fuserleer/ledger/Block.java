@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import org.fuserleer.collections.Bloom;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.common.StatePrimitive;
 import org.fuserleer.crypto.ECPublicKey;
@@ -22,46 +23,33 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public final class Block extends BlockHeader implements Primitive, StatePrimitive
 {
 	@JsonProperty("atoms")
-	@DsonOutput(Output.ALL)
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private List<Atom> atoms;
 	
-	@JsonProperty("witnessed_at")
-	@DsonOutput(Output.PERSIST)
-	private long witnessedAt;
-
 	private Block()
 	{
 		super();
 	}
 	
-	public Block(long height, Hash previous, Hash merkle, ECPublicKey owner, Collection<Atom> atoms)
+	public Block(long height, Hash previous, Bloom bloom, Hash merkle, ECPublicKey owner, Collection<Atom> atoms)
 	{
-		this(height, previous, merkle, owner, atoms, Time.getLedgerTimeMS());
+		this(height, previous, bloom, merkle, Time.getLedgerTimeMS(), owner, atoms);
 	}
 	
-	Block(long height, Hash previous, Hash merkle, ECPublicKey owner, Collection<Atom> atoms, long witnessedAt)
+	public Block(long height, Hash previous, Bloom bloom, Hash merkle, long timestamp, ECPublicKey owner, Collection<Atom> atoms)
 	{
-		super(height, previous, merkle, owner);
+		super(height, previous, bloom, merkle, timestamp, owner);
 
-		if (witnessedAt < 0)
-			throw new IllegalArgumentException("Witnessed timestamp is negative");
-		
 		if (Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
 			throw new IllegalArgumentException("Atoms is empty");
 
 		// TODO prevent duplicate atoms
 		this.atoms = new ArrayList<Atom>(atoms);
-		this.witnessedAt = witnessedAt;
 	}
 
 	public List<Atom> getAtoms()
 	{
 		return Collections.unmodifiableList(this.atoms);
-	}
-
-	public long getWitnessedAt()
-	{
-		return this.witnessedAt;
 	}
 
 	public BlockHeader toHeader()

@@ -2,14 +2,19 @@ package org.fuserleer.ledger;
 
 import java.util.Objects;
 
+import org.fuserleer.Universe;
+import org.fuserleer.collections.Bloom;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.ECSignature;
+import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
 import org.fuserleer.crypto.Hash.Mode;
+import org.fuserleer.logging.Logger;
+import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializationException;
@@ -25,6 +30,8 @@ import com.google.common.primitives.Longs;
 @SerializerId2("ledger.block.header")
 public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive, Cloneable
 {
+	private static final Logger blocksLog = Logging.getLogger("blocks");
+
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
 	@DsonOutput(Output.ALL)
@@ -42,6 +49,14 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@DsonOutput(Output.ALL)
 	private Hash merkle;
 	
+	@JsonProperty("bloom")
+	@DsonOutput(Output.ALL)
+	private Bloom bloom;
+
+	@JsonProperty("timestamp")
+	@DsonOutput(Output.ALL)
+	private long timestamp;
+
 	@JsonProperty("owner")
 	@DsonOutput(Output.ALL)
 	private ECPublicKey owner;
@@ -50,6 +65,11 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private ECSignature signature;
 	
+	// TODO BLS this later
+	@JsonProperty("certificate")
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	private ECSignatureBag certificate;
+
 	private transient Hash hash;
 	private transient long step = -1;
 	
@@ -58,7 +78,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		super();
 	}
 	
-	BlockHeader(final long height, final Hash previous, final Hash merkle, final ECPublicKey owner)
+	BlockHeader(final long height, final Hash previous, final Bloom bloom, final Hash merkle, final long timestamp, final ECPublicKey owner)
 	{
 		if (height < 0)
 			throw new IllegalArgumentException("Height is negative");
@@ -69,11 +89,16 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		
 		if (height != 0 && previous.equals(Hash.ZERO) == true)
 			throw new IllegalArgumentException("Previous block hash is ZERO");
+		
+		if (timestamp < 0)
+			throw new IllegalArgumentException("Timestamp is negative");
 
 		this.owner = Objects.requireNonNull(owner, "Block owner is null");
 		this.merkle = Objects.requireNonNull(merkle, "Block merkle is null");
+		this.bloom = Objects.requireNonNull(bloom, "Block bloom is null");
 		this.previous = previous;
 		this.height = height;
+		this.timestamp = timestamp;
 	}
 
 	public final long getHeight() 
@@ -81,13 +106,26 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		return this.height;
 	}
 
-	public final long getStep() throws SerializationException 
+	public final long getTimestamp() 
+	{
+		return this.timestamp;
+	}
+
+	public final long getStep()
 	{
 		if (this.step == -1)
 		{
-			byte[] bytes = Serialization.getInstance().toDson(this, Output.WIRE);
-			Hash hash = new Hash(bytes, Mode.DOUBLE);
-			this.step = MathUtils.ringDistance64(this.previous.asLong(), hash.asLong());
+			try
+			{
+				byte[] bytes = Serialization.getInstance().toDson(clone(), Output.HASH);
+				Hash hash = new Hash(bytes, Mode.DOUBLE);
+				this.step = MathUtils.ringDistance64(new Hash(previous.toByteArray(), Mode.STANDARD).asLong(), hash.asLong());
+			}
+			catch (SerializationException ex)
+			{
+				// TODO Catch but only report
+				blocksLog.error("Step calculation failed", ex);
+			}
 		}
 		
 		return this.step;
@@ -111,7 +149,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	{
 		try
 		{
-			byte[] contentBytes = Serialization.getInstance().toDson(this, Output.HASH);
+			byte[] contentBytes = Serialization.getInstance().toDson(clone(), Output.HASH);
 			byte[] hashBytes = new byte[Hash.BYTES];
 			System.arraycopy(Longs.toByteArray(getHeight()), 0, hashBytes, 0, Long.BYTES);
 			System.arraycopy(new Hash(contentBytes, Mode.DOUBLE).toByteArray(), 0, hashBytes, Long.BYTES, Hash.BYTES - Long.BYTES);
@@ -130,10 +168,14 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		this.hash = hash;
 	}
 
-
 	public final Hash getMerkle() 
 	{
 		return this.merkle;
+	}
+
+	public final Bloom getBloom() 
+	{
+		return this.bloom;
 	}
 
 	public final Hash getPrevious() 
@@ -165,7 +207,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@Override
 	public String toString() 
 	{
-		return this.height+" "+this.step+" "+getHash()+" "+this.previous+" "+this.merkle;
+		return this.height+" "+getStep()+" "+getHash()+" "+this.previous+" "+this.merkle+" "+this.timestamp;
 	}
 	
 	@Override
@@ -214,8 +256,19 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@Override
 	public BlockHeader clone()
 	{
-		BlockHeader blockHeader = new BlockHeader(this.height, this.previous, this.merkle, this.owner);
+		BlockHeader blockHeader = new BlockHeader(this.height, this.previous, this.bloom, this.merkle, this.timestamp, this.owner);
 		blockHeader.signature = this.signature;
+		blockHeader.certificate = this.certificate;
 		return blockHeader;
+	}
+	
+	public final ECSignatureBag getCertificate()
+	{
+		return this.certificate;
+	}
+
+	final void setCertificate(ECSignatureBag certificate)
+	{
+		this.certificate = Objects.requireNonNull(certificate, "Certificate is null");
 	}
 }

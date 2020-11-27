@@ -25,8 +25,20 @@ public final class VoteRegulator
 		return UInt128.ZERO;
 	}
 	
-	public UInt256 totalVotePower(long height)
+	public UInt256 getTotalVotePower(long height)
 	{
 		return UInt256.THREE;
+	}
+	
+	public UInt256 getVotePowerThreshold(long height)
+	{
+		return twoFPlusOne(UInt256.THREE);
+	}
+	
+	private UInt256 twoFPlusOne(UInt256 power)
+	{
+		UInt256 F = power.divide(UInt256.THREE);
+		UInt256 T = F.multiply(UInt256.TWO);
+		return T.add(UInt256.ONE);
 	}
 }

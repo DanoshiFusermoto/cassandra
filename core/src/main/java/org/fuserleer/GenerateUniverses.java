@@ -4,8 +4,10 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.crypto.MerkleTree;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.Universe;
+import org.fuserleer.collections.Bloom;
 import org.fuserleer.ledger.Block;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.logging.Logger;
@@ -111,7 +113,15 @@ public final class GenerateUniverses
 
 	private Block createGenesisBlock(byte magic, long timestamp) throws Exception 
 	{
-		Block genesisBlock = new Block(0l, Hash.ZERO, Hash.ZERO, this.universeKey.getPublicKey(), Collections.singleton(new Atom()));
+		final List<Atom> atoms = Collections.singletonList(new Atom());
+		final Bloom bloom = new Bloom(0.000000001, 1);
+		final MerkleTree merkle = new MerkleTree();
+		atoms.forEach(a -> {
+			bloom.add(a.getHash().toByteArray());
+			merkle.appendLeaf(a.getHash());
+		});
+		
+		Block genesisBlock = new Block(0l, Hash.ZERO, bloom, merkle.buildTree(), timestamp, this.universeKey.getPublicKey(), Collections.singleton(new Atom()));
 		genesisBlock.sign(this.universeKey);
 		return genesisBlock;
 	}

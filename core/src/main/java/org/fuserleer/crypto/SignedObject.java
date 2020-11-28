@@ -38,13 +38,32 @@ public final class SignedObject<T>
 		// For serializer
 	}
 	
-	public SignedObject(T object, ECPublicKey owner)
+	public SignedObject(final T object, final ECPublicKey owner)
 	{
-		this.object = Objects.requireNonNull(object);
+		this.object = Objects.requireNonNull(object, "Object is null");
 		
 		// TODO check object is serializable
 		
-		this.owner = Objects.requireNonNull(owner);
+		this.owner = Objects.requireNonNull(owner, "Owner is null");
+	}
+
+	public SignedObject(final T object, final ECPublicKey owner, final ECSignature signature) throws CryptoException
+	{
+		this.object = Objects.requireNonNull(object, "Object is null");
+		this.owner = Objects.requireNonNull(owner, "Owner is null");
+		this.signature = Objects.requireNonNull(signature, "Signature is null");
+		
+		// TODO check object is serializable
+		
+		try
+		{
+			if (verify(owner) == false)
+				throw new CryptoException("Signed object invalid / not verified");
+		}
+		catch (SerializationException ex)
+		{
+			throw new CryptoException("Signed object invalid / not verified", ex);
+		}
 	}
 
 	public final T getObject()

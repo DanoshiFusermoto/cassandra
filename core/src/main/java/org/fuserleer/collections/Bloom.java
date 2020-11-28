@@ -20,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.util.BitSet;
+import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -104,7 +105,7 @@ public class Bloom
       * @param n is the expected number of elements the filter will contain.
       * @param k is the number of hash functions used.
       */
-    public Bloom(double c, int n, int k) 
+    public Bloom(final double c, final int n, final int k) 
     {
       this.expectedNumberOfFilterElements = n;
       this.k = k;
@@ -120,7 +121,7 @@ public class Bloom
      * @param bitSetSize defines how many bits should be used in total for the filter.
      * @param expectedNumberOElements defines the maximum number of elements the filter is expected to contain.
      */
-    public Bloom(int bitSetSize, int expectedNumberOElements) 
+    public Bloom(final int bitSetSize, final int expectedNumberOElements) 
     {
         this(bitSetSize / (double)expectedNumberOElements,
              expectedNumberOElements,
@@ -135,7 +136,7 @@ public class Bloom
      * @param falsePositiveProbability is the desired false positive probability.
      * @param expectedNumberOfElements is the expected number of elements in the Bloom filter.
      */
-    public Bloom(double falsePositiveProbability, int expectedNumberOfElements) 
+    public Bloom(final double falsePositiveProbability, final int expectedNumberOfElements) 
     {
         this(Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2))) / Math.log(2), // c = k / ln(2)
              expectedNumberOfElements,
@@ -150,13 +151,18 @@ public class Bloom
      * @param actualNumberOfFilterElements specifies how many elements have been inserted into the <code>filterData</code> BitSet.
      * @param filterData a BitSet representing an existing Bloom filter.
      */
-    public Bloom(int bitSetSize, int expectedNumberOfFilterElements, int actualNumberOfFilterElements, BitSet filterData) 
+    public Bloom(final int bitSetSize, final int expectedNumberOfFilterElements, final int actualNumberOfFilterElements, final BitSet filterData) 
     {
         this(bitSetSize, expectedNumberOfFilterElements);
-        this.bitset = filterData;
+        this.bitset = (BitSet) filterData.clone();
         this.numberOfAddedElements = actualNumberOfFilterElements;
     }
     
+	public Bloom(final Bloom bloom)
+	{
+		this(Objects.requireNonNull(bloom, "Bloom to copy is null").bitSetSize, bloom.expectedNumberOfFilterElements, bloom.numberOfAddedElements, bloom.bitset);
+	}
+
 	@JsonProperty("bitset")
 	@DsonOutput(Output.ALL)
 	private byte[] getDSONBitset() 

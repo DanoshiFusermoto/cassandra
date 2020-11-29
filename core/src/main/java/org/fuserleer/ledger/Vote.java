@@ -3,6 +3,7 @@ package org.fuserleer.ledger;
 import java.util.Objects;
 
 import org.fuserleer.BasicObject;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
@@ -18,8 +19,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.vote")
-public final class Vote<T> extends BasicObject
+abstract class Vote<T> extends BasicObject implements Primitive
 {
 	@JsonProperty("object")
 	@DsonOutput(Output.ALL)
@@ -37,7 +37,7 @@ public final class Vote<T> extends BasicObject
 	@DsonOutput(Output.ALL)
 	private long clock;
 	
-	private Vote()
+	Vote()
 	{
 		// For serializer
 	}

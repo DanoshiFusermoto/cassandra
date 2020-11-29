@@ -3,7 +3,7 @@ package org.fuserleer.ledger.messages;
 import java.util.Objects;
 
 import org.fuserleer.collections.Bloom;
-import org.fuserleer.crypto.SignedObject;
+import org.fuserleer.ledger.Vote;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -18,14 +18,14 @@ public class AtomPoolVoteMessage extends Message
 
 	@JsonProperty("votes")
 	@DsonOutput(Output.ALL)
-	private SignedObject<Bloom> votes;
+	private Vote<Bloom> votes;
 
 	AtomPoolVoteMessage()
 	{
 		super();
 	}
 
-	public AtomPoolVoteMessage(SignedObject<Bloom> votes)
+	public AtomPoolVoteMessage(Vote<Bloom> votes)
 	{
 		super();
 
@@ -36,7 +36,7 @@ public class AtomPoolVoteMessage extends Message
 		this.votes = votes;
 	}
 
-	public SignedObject<Bloom> getVotes()
+	public Vote<Bloom> getVotes()
 	{
 		return this.votes;
 	}

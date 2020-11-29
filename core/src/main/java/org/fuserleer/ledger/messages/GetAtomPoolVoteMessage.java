@@ -1,6 +1,8 @@
 package org.fuserleer.ledger.messages;
 
+import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -11,6 +13,7 @@ import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 @SerializerId2("ledger.messages.atom.pool.vote.get")
 public class GetAtomPoolVoteMessage extends Message
@@ -19,6 +22,7 @@ public class GetAtomPoolVoteMessage extends Message
 
 	@JsonProperty("inventory")
 	@DsonOutput(Output.ALL)
+	@JsonDeserialize(as=LinkedHashSet.class)
 	private Set<Hash> inventory;
 
 	GetAtomPoolVoteMessage()
@@ -26,7 +30,7 @@ public class GetAtomPoolVoteMessage extends Message
 		super();
 	}
 
-	public GetAtomPoolVoteMessage(final Set<Hash> inventory)
+	public GetAtomPoolVoteMessage(final Collection<Hash> inventory)
 	{
 		super();
 
@@ -34,7 +38,7 @@ public class GetAtomPoolVoteMessage extends Message
 		if (inventory.size() > AtomPoolVoteInventoryMessage.MAX_INVENTORY == true)
 			throw new IllegalArgumentException("Too many inventory items");
 		
-		this.inventory = inventory;
+		this.inventory = new LinkedHashSet<Hash>(inventory);
 	}
 
 	public Set<Hash> getInventory()

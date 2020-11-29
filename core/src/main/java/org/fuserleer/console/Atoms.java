@@ -15,7 +15,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 public class Atoms extends Function
 {
-	private final static Options options = new Options().addOption("submit", false, "Submit atom/atoms")
+	private final static Options options = new Options().addOption("submit", true, "Submit atom/atoms")
 														.addOption("get", true, "Get an atom by hash");
 
 	public Atoms()
@@ -41,14 +41,17 @@ public class Atoms extends Function
 		}
 		else if (commandLine.hasOption("submit") == true)
 		{
-			Hash randomValue = Hash.random();
-			UniqueParticle particle = new UniqueParticle(randomValue, context.getNode().getIdentity());
-			Atom atom = new Atom(particle);
-			context.getLedger().submit(atom);
-
-			JSONObject atomJSONObject = Serialization.getInstance().toJsonObject(atom, Output.PERSIST);
-			printStream.println("Submitted "+atom.getHash());
-			printStream.println(atomJSONObject.toString(4));
+			for (int i = 0 ; i < Integer.parseInt(commandLine.getOptionValue("submit", "1")) ; i++)
+			{
+				Hash randomValue = Hash.random();
+				UniqueParticle particle = new UniqueParticle(randomValue, context.getNode().getIdentity());
+				Atom atom = new Atom(particle);
+				context.getLedger().submit(atom);
+	
+				JSONObject atomJSONObject = Serialization.getInstance().toJsonObject(atom, Output.PERSIST);
+				printStream.println("Submitted "+atom.getHash());
+				printStream.println(atomJSONObject.toString(4));
+			}
 		}
 	}
 }

@@ -6,9 +6,9 @@ import org.fuserleer.Context;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.time.Time;
 
-public class TCPPeerFilter extends StandardPeerFilter
+public class OutboundTCPPeerFilter extends StandardPeerFilter
 {
-	public TCPPeerFilter(Context context)
+	public OutboundTCPPeerFilter(Context context)
 	{
 		super(context);
 	}
@@ -16,12 +16,11 @@ public class TCPPeerFilter extends StandardPeerFilter
 	@Override
 	public boolean filter(Peer peer)
 	{
-		if (peer.getDisconnectedAt() > 0 && 
+		if (peer.getAttemptedAt() > 0 && peer.getDisconnectedAt() > 0 && 
 			Time.getSystemTime() - peer.getDisconnectedAt() < TimeUnit.SECONDS.toMillis(getContext().getConfiguration().get("network.peer.inactivity", 30)))
 			return true;
 		
-		if (peer.getAttemptedAt() > 0 && peer.getAttemptedAt() > peer.getDisconnectedAt() && 
-			Time.getSystemTime() - peer.getAttemptedAt() < TimeUnit.SECONDS.toMillis(getContext().getConfiguration().get("network.peer.reattempt", 600)))
+		if (peer.getAttemptAt() > 0 && Time.getSystemTime() < peer.getAttemptAt())
 			return true;
 
 		return super.filter(peer);

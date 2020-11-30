@@ -5,6 +5,7 @@ import java.net.SocketException;
 import java.net.URI;
 import java.util.Objects;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -28,7 +29,7 @@ public abstract class ConnectedPeer extends Peer
 	private transient Direction direction;
 	private transient Semaphore	handshake = new Semaphore(1);
 	private transient PeerState	state = PeerState.DISCONNECTED;
-	
+
 	private transient final Context context;
 
 	ConnectedPeer(Context context, URI host, Direction direction, Peer peer) 
@@ -56,11 +57,20 @@ public abstract class ConnectedPeer extends Peer
 
 	synchronized final void onConnecting() throws IOException
 	{
-		networkLog.debug(this.context+": Connectioned opened on "+toString());
+		networkLog.info(this.context+": Connectioned opened on "+toString());
 
 		setState(PeerState.CONNECTING);
 		setActiveAt(0l);
-		setAttemptedAt(Time.getSystemTime());
+		setConnectingAt(Time.getSystemTime());
+		
+		if (this.direction.equals(Direction.OUTBOUND) == true)
+		{
+			setAttempts(getAttempts()+1);
+			setAttemptedAt(Time.getSystemTime());
+			if (getAttempts() > getContext().getConfiguration().get("network.peer.reattempts", 6))
+				setAttemptAt(Time.getSystemTime() + TimeUnit.SECONDS.toMillis(getContext().getConfiguration().get("network.peer.reattempt", 600)));
+		}
+		
 		this.context.getEvents().post(new PeerConnectingEvent(this));
 		
 		send(new NodeMessage(this.context.getNode()));
@@ -75,6 +85,8 @@ public abstract class ConnectedPeer extends Peer
 		}
 		
 		setState(PeerState.CONNECTED);
+		setAttempts(0);
+		setAttemptAt(0);
 		setConnectedAt(Time.getSystemTime());
 		this.context.getEvents().post(new PeerConnectedEvent(this));
 	}

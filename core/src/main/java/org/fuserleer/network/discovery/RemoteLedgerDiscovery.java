@@ -1,6 +1,7 @@
 package org.fuserleer.network.discovery;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -31,7 +32,7 @@ public class RemoteLedgerDiscovery implements Discovery
 	
 	@Override
 	// TODO optimization of peer selection.  currently gets all peers from peerstore and sorts for each locator attempt
-	public Collection<Peer> discover(PeerFilter filter) throws IOException
+	public List<Peer> discover(PeerFilter filter) throws IOException
 	{
 		final Hash locator = this.context.getNode().getIdentity().asHash();
 		final List<Peer> known = this.context.getNetwork().getPeerStore().get(filter);
@@ -43,8 +44,8 @@ public class RemoteLedgerDiscovery implements Discovery
 			@Override
 			public int compare(Peer arg0, Peer arg1)
 			{
-				long distance0 = MathUtils.ringDistance64(locator.asLong(), arg0.getNode().getIdentity().asHash().asLong());
-				long distance1 = MathUtils.ringDistance64(locator.asLong(), arg1.getNode().getIdentity().asHash().asLong());
+				long distance0 = MathUtils.ringDistance64(locator.asLong(), arg0.getNode().getIdentity().asHash().asLong() ^ locator.asLong());
+				long distance1 = MathUtils.ringDistance64(locator.asLong(), arg1.getNode().getIdentity().asHash().asLong() ^ locator.asLong());
 				
 				if (distance0 < distance1)
 					return -1;
@@ -56,7 +57,7 @@ public class RemoteLedgerDiscovery implements Discovery
 			}
 		});
 		
- 		Set<Peer> discovered = new LinkedHashSet<Peer>(known.subList(0, Math.min(known.size(), this.context.getConfiguration().get("network.connections.out", Network.DEFAULT_TCP_CONNECTIONS_OUT))));
+		List<Peer> discovered = new ArrayList<Peer>(known.subList(0, Math.min(known.size(), this.context.getConfiguration().get("network.connections.out", Network.DEFAULT_TCP_CONNECTIONS_OUT) + this.context.getConfiguration().get("network.connections.in", Network.DEFAULT_TCP_CONNECTIONS_IN))));
 		return discovered;
 	}
 }

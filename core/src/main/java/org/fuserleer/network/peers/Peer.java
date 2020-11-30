@@ -10,7 +10,6 @@ import org.fuserleer.BasicObject;
 import org.fuserleer.common.Agent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Network;
 import org.fuserleer.network.Protocol;
 import org.fuserleer.node.Node;
 import org.fuserleer.serialization.DsonOutput;
@@ -36,18 +35,30 @@ public class Peer extends BasicObject
 	@DsonOutput(Output.ALL)
 	private Node node = null;
 	
-	@JsonProperty("active_at")
+	@JsonProperty("attempts")
 	@DsonOutput(Output.PERSIST)
-	private long activeAt;
+	private int attempts;
+
+	@JsonProperty("attempt_at")
+	@DsonOutput(Output.PERSIST)
+	private long attemptAt;
 
 	@JsonProperty("attempted_at")
 	@DsonOutput(Output.PERSIST)
 	private long attemptedAt;
 
+	@JsonProperty("active_at")
+	@DsonOutput(Output.PERSIST)
+	private long activeAt;
+
 	@JsonProperty("connected_at")
 	@DsonOutput(Output.PERSIST)
 	private long connectedAt;
 	
+	@JsonProperty("connecting_at")
+	@DsonOutput(Output.PERSIST)
+	private long connectingAt;
+
 	@JsonProperty("disconnected_at")
 	@DsonOutput(Output.PERSIST)
 	private long disconnectedAt;
@@ -93,7 +104,10 @@ public class Peer extends BasicObject
 		{
 			this.node = peer.node == null ? null : new Node(peer.node);
 			this.activeAt = peer.activeAt;
+			this.attempts = peer.attempts;
+			this.attemptAt = peer.attemptAt;
 			this.attemptedAt = peer.attemptedAt;
+			this.connectingAt = peer.connectingAt;
 			this.connectedAt = peer.connectedAt;
 			this.disconnectedAt = peer.disconnectedAt;
 			this.trafficIn = peer.trafficIn;
@@ -112,9 +126,6 @@ public class Peer extends BasicObject
 		
 		if (object == this) 
 			return true;
-
-		if (object.getClass().equals(getClass()) == false)
-			return false;
 
 		if (object instanceof Peer)
 		{
@@ -135,8 +146,8 @@ public class Peer extends BasicObject
 	{
 		int result = 17;
 
-		result = 31 * result + this.host.getHost().toLowerCase().hashCode();
-		result = 31 * result + getClass().hashCode();
+		result = 31 * result + getURI().getHost().toLowerCase().hashCode();
+		result = 31 * result + getNode().getIdentity().hashCode();
 
 		return result;
 	}
@@ -218,6 +229,26 @@ public class Peer extends BasicObject
 		this.activeAt = timestamp;
 	}
 
+	public int getAttempts()
+	{
+		return this.attempts;
+	}
+
+	void setAttempts(int attempts)
+	{
+		this.attempts = attempts;
+	}
+
+	public long getAttemptAt()
+	{
+		return this.attemptAt;
+	}
+
+	void setAttemptAt(long timestamp)
+	{
+		this.attemptAt = timestamp;
+	}
+
 	public long getAttemptedAt()
 	{
 		return this.attemptedAt;
@@ -236,6 +267,16 @@ public class Peer extends BasicObject
 	void setConnectedAt(long timestamp)
 	{
 		this.connectedAt = timestamp;
+	}
+	
+	public long getConnectingAt()
+	{
+		return this.connectingAt;
+	}
+
+	void setConnectingAt(long timestamp)
+	{
+		this.connectingAt = timestamp;
 	}
 
 	public long getDisconnectedAt()
@@ -296,7 +337,9 @@ public class Peer extends BasicObject
 			peer.node = this.node;
 		
 		peer.activeAt = other.activeAt > this.activeAt ? other.activeAt : this.activeAt;
-		peer.attemptedAt = other.attemptedAt > this.attemptedAt ? other.attemptedAt : this.attemptedAt;
+
+		peer.attemptAt = other.attemptAt > this.attemptAt ? other.attemptAt : this.attemptAt;
+		peer.attempts = other.attempts > this.attempts ? other.attempts : this.attempts;
 		
 		if (other.bannedUntil > this.bannedUntil)
 		{

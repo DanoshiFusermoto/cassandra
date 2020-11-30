@@ -2,8 +2,7 @@ package org.fuserleer.ledger.messages;
 
 import java.util.Objects;
 
-import org.fuserleer.ledger.BlockHeader;
-import org.fuserleer.ledger.Vote;
+import org.fuserleer.ledger.BlockVote;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -12,19 +11,19 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 // TODO embed the block vote into the atom pool votes?
-@SerializerId2("ledger.messages.block.candidate.vote")
-public class BlockCandidateVoteMessage extends Message
+@SerializerId2("ledger.messages.block.vote")
+public final class BlockVoteMessage extends Message
 {
 	@JsonProperty("vote")
 	@DsonOutput(Output.ALL)
-	private Vote<BlockHeader> vote;
+	private BlockVote vote;
 
-	BlockCandidateVoteMessage()
+	BlockVoteMessage()
 	{
 		super();
 	}
 
-	public BlockCandidateVoteMessage(Vote<BlockHeader> vote)
+	public BlockVoteMessage(BlockVote vote)
 	{
 		super();
 
@@ -32,7 +31,7 @@ public class BlockCandidateVoteMessage extends Message
 		this.vote = vote;
 	}
 
-	public Vote<BlockHeader> getVote()
+	public BlockVote getVote()
 	{
 		return this.vote;
 	}

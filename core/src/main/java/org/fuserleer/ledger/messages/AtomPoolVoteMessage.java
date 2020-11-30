@@ -2,8 +2,7 @@ package org.fuserleer.ledger.messages;
 
 import java.util.Objects;
 
-import org.fuserleer.collections.Bloom;
-import org.fuserleer.ledger.Vote;
+import org.fuserleer.ledger.AtomPoolVote;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -12,20 +11,20 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.messages.atom.pool.vote")
-public class AtomPoolVoteMessage extends Message
+public final class AtomPoolVoteMessage extends Message
 {
 	public final static int MAX_VOTES = 1024;
 
 	@JsonProperty("votes")
 	@DsonOutput(Output.ALL)
-	private Vote<Bloom> votes;
+	private AtomPoolVote votes;
 
 	AtomPoolVoteMessage()
 	{
 		super();
 	}
 
-	public AtomPoolVoteMessage(Vote<Bloom> votes)
+	public AtomPoolVoteMessage(AtomPoolVote votes)
 	{
 		super();
 
@@ -36,7 +35,7 @@ public class AtomPoolVoteMessage extends Message
 		this.votes = votes;
 	}
 
-	public Vote<Bloom> getVotes()
+	public AtomPoolVote getVotes()
 	{
 		return this.votes;
 	}

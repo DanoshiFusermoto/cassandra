@@ -14,7 +14,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.messages.atoms")
-public class AtomsMessage extends Message
+public final class AtomsMessage extends Message
 {
 	public final static int MAX_ATOMS = 16;
 

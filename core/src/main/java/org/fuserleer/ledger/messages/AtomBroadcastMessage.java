@@ -13,7 +13,7 @@ import org.fuserleer.serialization.SerializerId2;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.messages.atom.broadcast")
-public class AtomBroadcastMessage extends Message
+public final class AtomBroadcastMessage extends Message
 {
 	public final static int MAX_ATOMS = 1024;
 	

@@ -2,9 +2,12 @@ package org.fuserleer.network.discovery;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -26,6 +29,7 @@ import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.node.Node;
 import org.fuserleer.serialization.Serialization;
+import org.fuserleer.serialization.DsonOutput.Output;
 
 public class BootstrapService extends Executable
 {
@@ -97,7 +101,7 @@ public class BootstrapService extends Executable
 				networkLog.info(this.context.getName()+": Contacting boostrap host "+bootstrapHost+" for known peers ...");
 
 				// open connection
-				URLConnection conn = null;
+				HttpURLConnection conn = null;
 				BufferedInputStream input = null;
 				try
 				{
@@ -110,22 +114,33 @@ public class BootstrapService extends Executable
 					if (bootstrapHost.getPath() == null || bootstrapHost.getPath().isEmpty() == true)
 						bootstrapHost = new URI(bootstrapHost.getScheme(), bootstrapHost.getUserInfo(), bootstrapHost.getHost(), bootstrapHost.getPort(),
 												API.DEFAULT_API_PATH+"/bootstrap", bootstrapHost.getQuery(), bootstrapHost.getFragment());
-						
 					
-					conn = bootstrapHost.toURL().openConnection();
+					conn = (HttpURLConnection) bootstrapHost.toURL().openConnection();
 					// spoof User-Agents otherwise some CDNs do not let us through.
+					conn.setRequestMethod("POST");
 					conn.setRequestProperty("User-Agent", "curl/7.54.0");
+					conn.setRequestProperty("Content-Type", "application/json; utf-8");
+					conn.setRequestProperty("Accept", "application/json");
 					conn.setAllowUserInteraction(false); // no follow symlinks - just plain old direct links
 					conn.setUseCaches(false);
 					conn.setConnectTimeout(connectionTimeout);
 					conn.setReadTimeout(readTimeout);
-					conn.connect();
+					
+					conn.setDoOutput(true);
+					OutputStream os = conn.getOutputStream();
+					os.write(Serialization.getInstance().toJson(this.context.getNode(), Output.WIRE).getBytes(StandardCharsets.UTF_8));
+					os.flush();
+					os.close();
+					
+//					conn.connect();
 
 					// read data
 					input = new BufferedInputStream(conn.getInputStream());
 					JSONTokener tokener = new JSONTokener(input);
 					JSONObject response = new JSONObject(tokener);
-					JSONObject nodeJSONObject = response.getJSONObject("node");
+					// TODO shouldn't be storing the bootstrap node to peers database.
+					//		seems better to let that information propagate naturally
+/*					JSONObject nodeJSONObject = response.getJSONObject("node");
 					if (nodeJSONObject != null)
 					{
 						Node bootstrapNode = Serialization.getInstance().fromJsonObject(nodeJSONObject, Node.class);
@@ -135,7 +150,7 @@ public class BootstrapService extends Executable
 						URI boostrapPeerURI = Agent.getURI(bootstrapHost.getHost(), bootstrapNode.getPort());
 						Peer bootstrapPeer = new Peer(boostrapPeerURI, bootstrapNode, Protocol.TCP);
 						this.context.getNetwork().getPeerStore().store(bootstrapPeer);
-					}
+					}*/
 					
 					if (response.has("peers") == true)
 					{

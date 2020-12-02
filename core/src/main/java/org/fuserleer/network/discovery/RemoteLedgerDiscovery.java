@@ -5,10 +5,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 import org.fuserleer.Context;
 import org.fuserleer.crypto.Hash;
@@ -17,7 +15,6 @@ import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Network;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.filters.PeerFilter;
-import org.fuserleer.utils.MathUtils;
 
 public class RemoteLedgerDiscovery implements Discovery
 {
@@ -31,33 +28,37 @@ public class RemoteLedgerDiscovery implements Discovery
 	}
 	
 	@Override
-	// TODO optimization of peer selection.  currently gets all peers from peerstore and sorts for each locator attempt
-	public List<Peer> discover(PeerFilter filter) throws IOException
+	// TODO optimisation of peer selection.  currently gets all peers from peerstore and sorts for each locator attempt
+	public Collection<Peer> discover(PeerFilter filter) throws IOException
 	{
 		final Hash locator = this.context.getNode().getIdentity().asHash();
 		final List<Peer> known = this.context.getNetwork().getPeerStore().get(filter);
 		if (known.isEmpty() == true)
 			return Collections.emptyList();
 		
+		if (networkLog.hasLevel(Logging.DEBUG) == true)
+			networkLog.debug(this.context.getName()+": Discovering from "+known.size()+" known peers");
+		
 		Collections.sort(known, new Comparator<Peer>() 
 		{
 			@Override
 			public int compare(Peer arg0, Peer arg1)
 			{
-				long distance0 = MathUtils.ringDistance64(locator.asLong(), arg0.getNode().getIdentity().asHash().asLong() ^ locator.asLong());
-				long distance1 = MathUtils.ringDistance64(locator.asLong(), arg1.getNode().getIdentity().asHash().asLong() ^ locator.asLong());
+				long xor0 = arg0.getNode().getIdentity().asHash().asLong() ^ (locator.asLong() * locator.asLong());
+				long xor1 = arg1.getNode().getIdentity().asHash().asLong() ^ (locator.asLong() * locator.asLong());
 				
-				if (distance0 < distance1)
+				if (xor0 < xor1)
 					return -1;
 				
-				if (distance0 > distance1)
+				if (xor0 > xor1)
 					return 1;
 
 				return arg0.getNode().getIdentity().asHash().compareTo(arg1.getNode().getIdentity().asHash());
 			}
 		});
 		
-		List<Peer> discovered = new ArrayList<Peer>(known.subList(0, Math.min(known.size(), this.context.getConfiguration().get("network.connections.out", Network.DEFAULT_TCP_CONNECTIONS_OUT) + this.context.getConfiguration().get("network.connections.in", Network.DEFAULT_TCP_CONNECTIONS_IN))));
+		int limit = this.context.getConfiguration().get("network.connections.out", Network.DEFAULT_TCP_CONNECTIONS_OUT);
+		List<Peer> discovered = new ArrayList<Peer>(known.subList(0, Math.min(known.size(), limit)));
 		return discovered;
 	}
 }

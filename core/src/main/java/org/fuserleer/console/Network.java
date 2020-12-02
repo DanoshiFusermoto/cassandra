@@ -8,15 +8,18 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
+import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.filters.AllPeersFilter;
+import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
 
 public class Network extends Function
 {
 	private final static Options options = new Options().addOption(Option.builder("disconnect").desc("Disconnect a peer").optionalArg(true).build())
-														.addOption("known", false, "Lists all known peers (can be very large)"); // TODO pagination for this?
+														.addOption("known", false, "Lists all known peers (can be very large)") // TODO pagination for this?
+														.addOption("best", false, "Lists all known peers by XOR ranking (can be very large)"); // TODO pagination for this?
 ;
 
 	public Network()
@@ -44,6 +47,17 @@ public class Network extends Function
 			{
 				printStream.println("Disconnecting individual peers not yet supported");
 			}
+		}
+		else if (commandLine.hasOption("best") == true)
+		{
+			Collection<Peer> bestPeers = new RemoteLedgerDiscovery(context).discover(new AllPeersFilter());
+			for (Peer bestPeer : bestPeers)
+				printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
+
+			printStream.println("-- Filtered ---");
+			bestPeers = new RemoteLedgerDiscovery(context).discover(new OutboundTCPPeerFilter(context));
+			for (Peer bestPeer : bestPeers)
+				printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
 		}
 		else if (commandLine.hasOption("known") == true)
 		{

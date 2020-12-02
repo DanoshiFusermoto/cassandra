@@ -67,8 +67,8 @@ public abstract class ConnectedPeer extends Peer
 		{
 			setAttempts(getAttempts()+1);
 			setAttemptedAt(Time.getSystemTime());
-			if (getAttempts() > getContext().getConfiguration().get("network.peer.reattempts", 6))
-				setAttemptAt(Time.getSystemTime() + TimeUnit.SECONDS.toMillis(getContext().getConfiguration().get("network.peer.reattempt", 600)));
+			// NOTE if reattempt delay is too high, the power applied will make it eons in length!
+			setAttemptAt(Time.getSystemTime() + TimeUnit.SECONDS.toMillis((long) Math.pow(getContext().getConfiguration().get("network.peer.reattempt", 10), getAttempts())));
 		}
 		
 		this.context.getEvents().post(new PeerConnectingEvent(this));

@@ -20,7 +20,8 @@ public class OutboundTCPPeerFilter extends StandardPeerFilter
 			Time.getSystemTime() - peer.getDisconnectedAt() < TimeUnit.SECONDS.toMillis(getContext().getConfiguration().get("network.peer.inactivity", 30)))
 			return true;
 		
-		if (peer.getAttemptAt() > 0 && Time.getSystemTime() < peer.getAttemptAt())
+		if (peer.getAttemptAt() > 0 && 
+			Time.getSystemTime() < peer.getAttemptAt())
 			return true;
 
 		return super.filter(peer);

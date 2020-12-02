@@ -244,7 +244,7 @@ public class PeerHandler implements Service
 						for (Peer peer : PeerHandler.this.context.getNetwork().getPeerStore().get(new AllPeersFilter())) 
 						{
 							if (PeerHandler.this.context.getNetwork().has(peer.getNode().getIdentity(), PeerState.CONNECTING, PeerState.CONNECTED) == false && 
-								(peer.getAttemptedAt() > 0 && TimeUnit.MILLISECONDS.toSeconds(Time.getSystemTime() - peer.getAttemptedAt()) >= PeerHandler.this.context.getConfiguration().get("network.peers.aged", 3600)) &&
+								(peer.getConnectingAt() > 0 && TimeUnit.MILLISECONDS.toSeconds(Time.getSystemTime() - peer.getConnectingAt()) >= PeerHandler.this.context.getConfiguration().get("network.peers.aged", 3600)) &&
 								(peer.getActiveAt() > 0 && TimeUnit.MILLISECONDS.toSeconds(Time.getSystemTime() - peer.getActiveAt()) >= PeerHandler.this.context.getConfiguration().get("network.peers.aged", 3600)))
 							{
 								if (peer.getNode() == null) 

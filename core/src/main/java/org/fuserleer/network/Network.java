@@ -61,10 +61,13 @@ import org.fuserleer.network.peers.events.PeerAvailableEvent;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerConnectingEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
-import org.fuserleer.network.peers.filters.TCPPeerFilter;
+import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
+import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
 
 public final class Network implements Service
@@ -261,7 +264,8 @@ public final class Network implements Service
 						URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), nodeMessage.getNode().getPort());
 						
 						// Store the node in the peer store even if can not connect due to whitelists or available connections as it may be a preferred peer
-						Network.this.context.getNetwork().getPeerStore().store(new Peer(uri, nodeMessage.getNode(), Protocol.TCP));
+						Peer connectingPeer = new Peer(uri, nodeMessage.getNode(), Protocol.TCP);
+						Network.this.context.getNetwork().getPeerStore().store(connectingPeer);
 						
 						if (Network.this.isWhitelisted(uri) == false)
 					    {
@@ -427,7 +431,7 @@ public final class Network implements Service
 						{
 							for (ConnectedPeer peer : Network.this.peers)
 							{
-								if ((peer.getState().equals(PeerState.CONNECTING) == true && Time.getSystemTime() - peer.getAttemptedAt() > TimeUnit.SECONDS.toMillis(Network.this.context.getConfiguration().get("network.peer.connect.timeout", DEFAULT_CONNECT_TIMEOUT))) ||
+								if ((peer.getState().equals(PeerState.CONNECTING) == true && Time.getSystemTime() - peer.getConnectingAt() > TimeUnit.SECONDS.toMillis(Network.this.context.getConfiguration().get("network.peer.connect.timeout", DEFAULT_CONNECT_TIMEOUT))) ||
 									(peer.getState().equals(PeerState.CONNECTED) == true && 
 									 Time.getSystemTime() - peer.getActiveAt() > TimeUnit.SECONDS.toMillis(Network.this.context.getConfiguration().get("network.peer.inactivity", DEFAULT_PEER_INACTIVITY)) &&
 									 Time.getSystemTime() - peer.getConnectedAt() > TimeUnit.SECONDS.toMillis(Network.this.context.getConfiguration().get("network.peer.inactivity", DEFAULT_PEER_INACTIVITY))))
@@ -445,25 +449,39 @@ public final class Network implements Service
 						networkLog.error(ex);
 					}
 					
-					// Discovery //
-					// Discovery //
+					// Discovery / Rotation //
 					try
 					{
+						Collection<Peer> preferred = new RemoteLedgerDiscovery(Network.this.context).discover(new OutboundTCPPeerFilter(Network.this.context));
+						preferred.removeAll(Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.INBOUND)).collect(Collectors.toList()));
+
 						List<ConnectedPeer> connected = Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.OUTBOUND)).collect(Collectors.toList());
-						if (connected.size() < Network.this.context.getConfiguration().get("network.connections.out", 8))
+						if (connected.size() > Network.this.context.getConfiguration().get("network.connections.out", Network.DEFAULT_TCP_CONNECTIONS_OUT))
 						{
-							Collection<Peer> preferredPeers = new RemoteLedgerDiscovery(Network.this.context).discover(new TCPPeerFilter(Network.this.context));
-							for (Peer preferredPeer : preferredPeers)
+							for (ConnectedPeer peer : connected)
+							{
+								if (preferred.contains(peer) == false)
+								{
+									peer.disconnect("Discovered better neighbourhood peer");
+									break;
+								}
+							}
+						}
+						preferred.removeAll(connected);
+						
+						if (preferred.isEmpty() == false)
+						{
+							for (Peer preferredPeer : preferred)
 							{
 								if (Network.this.get(preferredPeer.getNode().getIdentity(), Protocol.TCP) != null)
 									continue;
 								
 								Network.this.connecting.lock();
-	
+		
 								try
 								{
 									Network.this.connect(preferredPeer.getURI(), Direction.OUTBOUND, Protocol.TCP);
-									break;
+//									break;
 								}
 								catch (Exception ex)
 								{
@@ -476,8 +494,8 @@ public final class Network implements Service
 					    		}
 							}
 						}
-						else
-							networkLog.debug("All outbound slots occupied");
+						else if (networkLog.hasLevel(Logging.DEBUG) == true)
+							networkLog.debug("Preferred outbound peers already connected");
 					}
 					catch (Exception ex)
 					{

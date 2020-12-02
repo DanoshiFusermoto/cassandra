@@ -30,6 +30,8 @@ import com.google.common.primitives.Longs;
 @SerializerId2("ledger.block.header")
 public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive, Cloneable
 {
+	public final static int	MAX_ATOMS = 256;
+
 	private static final Logger blocksLog = Logging.getLogger("blocks");
 
 	// Placeholder for the serializer ID

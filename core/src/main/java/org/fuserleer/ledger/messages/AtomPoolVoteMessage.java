@@ -13,7 +13,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @SerializerId2("ledger.messages.atom.pool.vote")
 public final class AtomPoolVoteMessage extends Message
 {
-	public final static int MAX_VOTES = 1024;
+	public final static int MAX_VOTES = 16;
 
 	@JsonProperty("votes")
 	@DsonOutput(Output.ALL)
@@ -29,7 +29,7 @@ public final class AtomPoolVoteMessage extends Message
 		super();
 
 		Objects.requireNonNull(votes, "Votes is null");
-		if (votes.getObject().getExpectedNumberOfElements() > AtomPoolVoteMessage.MAX_VOTES == true)
+		if (votes.getObject().size() > AtomPoolVoteMessage.MAX_VOTES == true)
 			throw new IllegalArgumentException("Too many votes cast");
 		
 		this.votes = votes;

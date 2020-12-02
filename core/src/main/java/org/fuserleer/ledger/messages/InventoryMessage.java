@@ -16,7 +16,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 abstract class InventoryMessage extends Message
 {
-	public final static int MAX_INVENTORY = 1024;
+	public final static int MAX_INVENTORY = 64;
 
 	@JsonProperty("inventory")
 	@DsonOutput(Output.ALL)

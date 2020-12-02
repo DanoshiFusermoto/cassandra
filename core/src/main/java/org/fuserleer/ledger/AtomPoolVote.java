@@ -1,18 +1,20 @@
 package org.fuserleer.ledger;
 
-import org.fuserleer.collections.Bloom;
+import java.util.List;
+
 import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.SerializerId2;
 
 @SerializerId2("ledger.vote.atom.pool")
-public final class AtomPoolVote extends Vote<Bloom>
+public final class AtomPoolVote extends Vote<List<Hash>>
 {
 	private AtomPoolVote()
 	{
 		// SERIALIZER
 	}
 	
-	public AtomPoolVote(final Bloom object, final long clock, final ECPublicKey owner)
+	public AtomPoolVote(final List<Hash> object, final long clock, final ECPublicKey owner)
 	{
 		super(object, clock, owner);
 	}

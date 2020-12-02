@@ -15,7 +15,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @SerializerId2("ledger.messages.atom.broadcast")
 public final class AtomBroadcastMessage extends Message
 {
-	public final static int MAX_ATOMS = 1024;
+	public final static int MAX_ATOMS = 64;
 	
 	@JsonProperty("atoms")
 	@DsonOutput(Output.ALL)

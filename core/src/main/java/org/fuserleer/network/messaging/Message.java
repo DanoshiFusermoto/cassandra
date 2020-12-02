@@ -43,8 +43,11 @@ public abstract class Message extends BasicObject
 		// Save the data items so that we can pre-calculate the hash //
 		boolean compressed = dataInputStream.readBoolean();
 		int length = dataInputStream.readInt();
+		int read = 0;
+		int total = 0;
 		byte[] bytes = new byte[length];
-		dataInputStream.read(bytes);
+		while(total != length && (read = dataInputStream.read(bytes, total, length-total)) != -1)
+			total += read;	
 		
 		if (compressed == true)
 			bytes = Snappy.uncompress(bytes);

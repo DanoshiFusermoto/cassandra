@@ -10,19 +10,19 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.messages.block.candidate")
-public final class BlockCandidateMessage extends Message
+@SerializerId2("ledger.messages.block.header")
+public final class BlockHeaderMessage extends Message
 {
 	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
 	private BlockHeader blockHeader;
 
-	BlockCandidateMessage()
+	BlockHeaderMessage()
 	{
 		// Serializer only
 	}
 
-	public BlockCandidateMessage(BlockHeader blockHeader)
+	public BlockHeaderMessage(BlockHeader blockHeader)
 	{
 		super();
 

@@ -99,9 +99,9 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		if (this.object instanceof Hash)
 			objectHash = (Hash) this.object;
 		else if (this.object instanceof Hashable)
-			objectHash = ((Hashable)object).getHash();
+			objectHash = ((Hashable)this.object).getHash();
 		else
-			objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.DOUBLE);
+			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);
 		
 		this.signature = key.sign(objectHash);
 	}
@@ -118,10 +118,12 @@ abstract class Vote<T> extends BasicObject implements Primitive
 			return false;
 
 		Hash objectHash;
-		if (object instanceof Hashable)
-			objectHash = ((Hashable)object).getHash();
+		if (this.object instanceof Hash)
+			objectHash = (Hash) this.object;
+		else if (this.object instanceof Hashable)
+			objectHash = ((Hashable)this.object).getHash();
 		else
-			objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.DOUBLE);
+			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);
 
 		return key.verify(objectHash, this.signature);
 	}

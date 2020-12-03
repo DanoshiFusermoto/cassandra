@@ -14,7 +14,6 @@ import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializationException;
-import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -97,7 +96,9 @@ abstract class Vote<T> extends BasicObject implements Primitive
 			throw new CryptoException("Attempting to sign wrapped object with key that doesn't match owner");
 
 		Hash objectHash;
-		if (object instanceof Hashable)
+		if (this.object instanceof Hash)
+			objectHash = (Hash) this.object;
+		else if (this.object instanceof Hashable)
 			objectHash = ((Hashable)object).getHash();
 		else
 			objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.DOUBLE);

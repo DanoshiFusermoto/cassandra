@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.util.Objects;
 
 import org.fuserleer.Configuration;
-import org.fuserleer.Hackation;
 import org.fuserleer.Universe;
 import org.fuserleer.common.Agent;
 import org.fuserleer.crypto.CryptoException;
@@ -14,10 +13,11 @@ import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.ledger.BlockHeader;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.serialization.Polymorphic;
 import org.fuserleer.serialization.SerializerId2;
 
-@SerializerId2("node.local")
-public final class LocalNode extends Node
+@SerializerId2("node")
+public final class LocalNode extends Node implements Polymorphic
 {
 	private static final Logger log = Logging.getLogger ();
 
@@ -68,10 +68,10 @@ public final class LocalNode extends Node
 		this.key = key;
 	}
 
-	public void fromPersisted(LocalNode persisted)
+	public void fromPersisted(Node persisted)
 	{
 		Objects.requireNonNull(persisted, "Persisted local node is null");
-		if (persisted.key.equals(this.key) == false)
+		if (persisted.getIdentity().equals(this.key.getPublicKey()) == false)
 			throw new IllegalArgumentException("Persisted node key does not match "+this.key);
 		
 		setHead(persisted.getHead());

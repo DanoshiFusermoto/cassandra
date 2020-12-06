@@ -1,8 +1,10 @@
 package org.fuserleer;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Objects;
 
+import org.fuserleer.common.Agent;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
@@ -11,6 +13,7 @@ import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.UniqueParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.Protocol;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
@@ -190,6 +193,46 @@ public class API implements Service
 				return responseJSON.toString(4);
 			});
 
+			spark.Spark.post(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/bootstrap", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+
+				try
+				{
+					String bodyString = req.body();
+					JSONObject nodeJSON = new JSONObject(bodyString);
+					String nodeIP = req.ip();
+					URI nodeURI = Agent.getURI(nodeIP, nodeJSON.getInt("port"));
+					Peer nodePeer = new Peer(nodeURI, Serialization.getInstance().fromJsonObject(nodeJSON, Node.class), Protocol.TCP, Protocol.UDP);
+					API.this.context.getNetwork().getPeerStore().store(nodePeer);
+
+					int offset = Integer.parseInt(req.queryParamOrDefault("offset", "0"));
+					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
+					List<Peer> peers = API.this.context.getNetwork().getPeerStore().get(offset, limit, new StandardPeerFilter(API.this.context));
+					
+					if (peers.isEmpty())
+					{
+						status(responseJSON, 404, "No peers found");
+					}
+					else
+					{
+						JSONArray peersArray  = new JSONArray();
+						for (Peer peer : peers)
+							peersArray.put(Serialization.getInstance().toJsonObject(peer, Output.API));
+						responseJSON.put("peers", peersArray);
+						
+						boolean EOR = peers.size() != limit;
+						status(responseJSON, 200, offset, EOR == true ? -1 : offset + peers.size(), limit, EOR);
+					}
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+
+				return responseJSON.toString(4);
+			});
 		}
 		catch (Throwable t)
 		{

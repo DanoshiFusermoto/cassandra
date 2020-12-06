@@ -16,6 +16,7 @@ import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.time.Time;
+import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -31,14 +32,14 @@ public final class Block extends BlockHeader implements Primitive, StatePrimitiv
 		super();
 	}
 	
-	public Block(long height, Hash previous, Bloom bloom, Hash merkle, ECPublicKey owner, Collection<Atom> atoms)
+	public Block(long height, Hash previous, UInt256 stepped, Bloom bloom, Hash merkle, ECPublicKey owner, Collection<Atom> atoms)
 	{
-		this(height, previous, bloom, merkle, Time.getLedgerTimeMS(), owner, atoms);
+		this(height, previous, stepped, bloom, merkle, Time.getLedgerTimeMS(), owner, atoms);
 	}
 	
-	public Block(long height, Hash previous, Bloom bloom, Hash merkle, long timestamp, ECPublicKey owner, Collection<Atom> atoms)
+	public Block(long height, Hash previous, UInt256 stepped, Bloom bloom, Hash merkle, long timestamp, ECPublicKey owner, Collection<Atom> atoms)
 	{
-		super(height, previous, bloom, merkle, timestamp, owner);
+		super(height, previous, stepped, bloom, merkle, timestamp, owner);
 
 		if (Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
 			throw new IllegalArgumentException("Atoms is empty");

@@ -17,6 +17,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.time.Time;
 import org.fuserleer.time.WallClockTime;
 import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.UInt256;
 
 import java.io.File;
 import java.security.Security;
@@ -121,7 +122,7 @@ public final class GenerateUniverses
 			merkle.appendLeaf(a.getHash());
 		});
 		
-		Block genesisBlock = new Block(0l, Hash.ZERO, bloom, merkle.buildTree(), timestamp, this.universeKey.getPublicKey(), Collections.singleton(new Atom()));
+		Block genesisBlock = new Block(0l, Hash.ZERO, UInt256.ZERO, bloom, merkle.buildTree(), timestamp, this.universeKey.getPublicKey(), Collections.singleton(new Atom()));
 		genesisBlock.sign(this.universeKey);
 		return genesisBlock;
 	}

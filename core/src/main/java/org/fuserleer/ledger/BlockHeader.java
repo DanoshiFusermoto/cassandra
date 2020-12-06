@@ -2,7 +2,6 @@ package org.fuserleer.ledger;
 
 import java.util.Objects;
 
-import org.fuserleer.Universe;
 import org.fuserleer.collections.Bloom;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
@@ -22,6 +21,8 @@ import org.fuserleer.serialization.SerializerConstants;
 import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.utils.MathUtils;
+import org.fuserleer.utils.UInt128;
+import org.fuserleer.utils.UInt256;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -46,6 +47,10 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@JsonProperty("previous")
 	@DsonOutput(Output.ALL)
 	private Hash previous;
+
+	@JsonProperty("stepped")
+	@DsonOutput(Output.ALL)
+	private UInt256 stepped;
 
 	@JsonProperty("merkle")
 	@DsonOutput(Output.ALL)
@@ -80,7 +85,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		super();
 	}
 	
-	BlockHeader(final long height, final Hash previous, final Bloom bloom, final Hash merkle, final long timestamp, final ECPublicKey owner)
+	BlockHeader(final long height, final Hash previous, final UInt256 stepped, final Bloom bloom, final Hash merkle, final long timestamp, final ECPublicKey owner)
 	{
 		if (height < 0)
 			throw new IllegalArgumentException("Height is negative");
@@ -98,6 +103,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 		this.owner = Objects.requireNonNull(owner, "Block owner is null");
 		this.merkle = Objects.requireNonNull(merkle, "Block merkle is null");
 		this.bloom = Objects.requireNonNull(bloom, "Block bloom is null");
+		this.stepped = Objects.requireNonNull(stepped, "Stepped is null");
 		this.previous = previous;
 		this.height = height;
 		this.timestamp = timestamp;
@@ -112,6 +118,20 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	{
 		return this.timestamp;
 	}
+	
+	public UInt256 getStepped()
+	{
+		return this.stepped.add(UInt256.from(getStep()));
+	}
+	
+	public long getAverageStep()
+	{
+		if (this.height == 0)
+			return 0;
+		UInt256 stepped = getStepped();
+		UInt256	average = stepped.divide(UInt256.from(this.height+1));
+		return average.getLow().getLow();
+	}
 
 	public final long getStep()
 	{
@@ -121,7 +141,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 			{
 				byte[] bytes = Serialization.getInstance().toDson(clone(), Output.HASH);
 				Hash hash = new Hash(bytes, Mode.DOUBLE);
-				this.step = MathUtils.ringDistance64(new Hash(previous.toByteArray(), Mode.STANDARD).asLong(), hash.asLong());
+				this.step = MathUtils.ringDistance64(new Hash(this.previous.toByteArray(), Mode.STANDARD).asLong(), hash.asLong());
 			}
 			catch (SerializationException ex)
 			{
@@ -209,7 +229,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@Override
 	public String toString() 
 	{
-		return this.height+" "+getStep()+" "+getHash()+" "+this.previous+" "+this.merkle+" "+this.timestamp;
+		return this.height+" "+getStep()+"/"+getAverageStep()+" "+getHash()+" "+this.previous+" "+this.merkle+" "+this.timestamp;
 	}
 	
 	@Override
@@ -258,7 +278,7 @@ public class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive
 	@Override
 	public BlockHeader clone()
 	{
-		BlockHeader blockHeader = new BlockHeader(this.height, this.previous, this.bloom, this.merkle, this.timestamp, this.owner);
+		BlockHeader blockHeader = new BlockHeader(this.height, this.previous, this.stepped, this.bloom, this.merkle, this.timestamp, this.owner);
 		blockHeader.signature = this.signature;
 		blockHeader.certificate = this.certificate;
 		return blockHeader;

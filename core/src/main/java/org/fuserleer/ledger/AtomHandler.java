@@ -66,7 +66,7 @@ public class AtomHandler implements Service
 						if (atom != null)
 						{
 							if (atomsLog.hasLevel(Logging.DEBUG))
-								atomsLog.debug("Verifying atom "+atom.getValue().getHash());
+								atomsLog.debug(AtomHandler.this.context.getName()+": Verifying atom "+atom.getValue().getHash());
 
 							try
 							{
@@ -89,7 +89,7 @@ public class AtomHandler implements Service
 							}*/
 							catch (Exception ex)
 							{
-								atomsLog.error("Error processing for atom for " + atom.getValue().getHash(), ex);
+								atomsLog.error(AtomHandler.this.context.getName()+": Error processing for atom for " + atom.getValue().getHash(), ex);
 								AtomHandler.this.context.getEvents().post(new AtomExceptionEvent(atom.getValue(), ex));
 							}
 						}
@@ -98,7 +98,7 @@ public class AtomHandler implements Service
 							(System.currentTimeMillis() - lastBroadcast > TimeUnit.SECONDS.toMillis(1) && this.atomsToBroadcast.isEmpty() == false))
 						{
 							if (atomsLog.hasLevel(Logging.DEBUG))
-								atomsLog.debug("Broadcasting about "+this.atomsToBroadcast.size()+" atoms");
+								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+this.atomsToBroadcast.size()+" atoms");
 							
 							lastBroadcast = System.currentTimeMillis();
 							broadcast(this.atomsToBroadcast);
@@ -115,7 +115,7 @@ public class AtomHandler implements Service
 			catch (Throwable throwable)
 			{
 				// TODO want to actually handle this?
-				atomsLog.fatal("Error processing atom queue", throwable);
+				atomsLog.fatal(AtomHandler.this.context.getName()+": Error processing atom queue", throwable);
 			}
 		}
 		
@@ -259,7 +259,7 @@ public class AtomHandler implements Service
 						try
 						{
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug("Received "+atomsMessage.getAtoms().size()+" atoms from " + peer);
+								atomsLog.debug(AtomHandler.this.context.getName()+": Received "+atomsMessage.getAtoms().size()+" atoms from " + peer);
 
 							synchronized(AtomHandler.this.atomsRequested)
 							{
@@ -310,7 +310,7 @@ public class AtomHandler implements Service
 		this.atomQueue.put(atom.getHash(), atom);
 		
 		if (atomsLog.hasLevel(Logging.DEBUG) == true)
-			atomsLog.debug("Queued atom for storage "+atom.getHash());
+			atomsLog.debug(AtomHandler.this.context.getName()+": Queued atom for storage "+atom.getHash());
 		
 		return true;
 	}
@@ -339,7 +339,7 @@ public class AtomHandler implements Service
 
 			if (atomsPending.isEmpty() == true)
 			{
-				atomsLog.warn("No atoms required from "+peer);
+				atomsLog.warn(AtomHandler.this.context.getName()+": No atoms required from "+peer);
 				return Collections.EMPTY_LIST;
 			}
 			
@@ -352,7 +352,7 @@ public class AtomHandler implements Service
 					if (atomsLog.hasLevel(Logging.DEBUG))
 					{	
 						atomsToRequest.forEach(a -> {
-							atomsLog.debug("Requesting atom " + a + " from " + peer);
+							atomsLog.debug(AtomHandler.this.context.getName()+": Requesting atom " + a + " from " + peer);
 						});
 					}
 	
@@ -383,7 +383,7 @@ public class AtomHandler implements Service
 								
 								if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
 								{
-									atomsLog.error(getPeer()+" did not respond to atom request of "+this.requestedAtoms.size()+" atoms");
+									atomsLog.error(AtomHandler.this.context.getName()+": "+getPeer()+" did not respond to atom request of "+this.requestedAtoms.size()+" atoms");
 									getPeer().disconnect("Did not respond to atom request of "+this.requestedAtoms.size()+" atoms");
 								}
 							}
@@ -394,7 +394,7 @@ public class AtomHandler implements Service
 					this.atomsRequestedCounter.addAndGet(atoms.size());
 					
 					if (atomsLog.hasLevel(Logging.DEBUG))
-						atomsLog.debug("Requesting "+getAtomsMessage.getAtoms().size()+" atoms with nonce "+getAtomsMessage.getNonce()+" from "+peer);
+						atomsLog.debug(AtomHandler.this.context.getName()+": Requesting "+getAtomsMessage.getAtoms().size()+" atoms with nonce "+getAtomsMessage.getNonce()+" from "+peer);
 				}
 				catch (Throwable t)
 				{

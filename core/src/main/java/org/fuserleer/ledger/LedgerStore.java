@@ -146,7 +146,7 @@ public class LedgerStore extends DatabaseStore
 			DatabaseEntry key = new DatabaseEntry(hash.toByteArray());
 			DatabaseEntry value = new DatabaseEntry();
 			
-			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true)
+			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || Vote.class.isAssignableFrom(primitive) == true)
 			{
 				OperationStatus status = this.primitivesDatabase.get(null, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -199,6 +199,36 @@ public class LedgerStore extends DatabaseStore
 		}
 	}
 	
+	final OperationStatus store(BlockHeader blockHeader) throws IOException 
+	{
+		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
+		try 
+		{
+			OperationStatus status = store(transaction, blockHeader.getHash(), blockHeader, Serialization.getInstance().toDson(blockHeader, DsonOutput.Output.PERSIST));
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    {
+		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    	{
+		    		databaseLog.warn(this.context.getName()+": Block header " + blockHeader + " is already present");
+		    		transaction.abort();
+		    		return status;
+		    	}
+		    	else 
+		    		throw new DatabaseException("Failed to store " + blockHeader.getHash() + " due to " + status.name());
+		    } 
+		    
+		    transaction.commit();
+		    return OperationStatus.SUCCESS;
+		} 
+		catch (Exception ex) 
+		{
+			transaction.abort();
+		    if (ex instanceof DatabaseException)
+		    	throw ex; 
+		    throw new DatabaseException(ex);
+		} 
+	}
+	
 	final OperationStatus store(Block block) throws IOException 
 	{
 		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
@@ -247,7 +277,11 @@ public class LedgerStore extends DatabaseStore
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 		    {
 		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    	{
 		    		databaseLog.warn(this.context.getName()+": Atom "+atom.getHash()+" is already present");
+		    		transaction.abort();
+		    		return status;
+		    	}
 		    	else 
 		    		throw new DatabaseException("Failed to store atom "+atom.getHash()+" due to "+status.name());
 		    } 
@@ -272,5 +306,69 @@ public class LedgerStore extends DatabaseStore
 		DatabaseEntry value = new DatabaseEntry(bytes);
 		OperationStatus status = this.primitivesDatabase.putNoOverwrite(transaction, key, value);
 		return status;
+	}
+	
+	final OperationStatus store(AtomPoolVote votes) throws IOException 
+	{
+		Objects.requireNonNull(votes, "Votes is null");
+		
+		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
+		try 
+		{
+			OperationStatus status = store(transaction, votes.getHash(), votes, Serialization.getInstance().toDson(votes, DsonOutput.Output.PERSIST));
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    {
+		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    	{
+		    		databaseLog.warn(this.context.getName()+": Atom pool votes "+votes.getHash()+" is already present");
+		    		transaction.abort();
+		    		return status;
+		    	}
+		    	else 
+		    		throw new DatabaseException("Failed to store atom pool votes "+votes.getHash()+" due to "+status.name());
+		    } 
+
+		    transaction.commit();
+		    return OperationStatus.SUCCESS;
+		} 
+		catch (Exception ex) 
+		{
+			transaction.abort();
+		    if (ex instanceof DatabaseException)
+		    	throw ex; 
+		    throw new DatabaseException(ex);
+		} 
+	}
+
+	final OperationStatus store(BlockVote vote) throws IOException 
+	{
+		Objects.requireNonNull(vote, "Vote is null");
+		
+		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
+		try 
+		{
+			OperationStatus status = store(transaction, vote.getHash(), vote, Serialization.getInstance().toDson(vote, DsonOutput.Output.PERSIST));
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    {
+		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    	{
+		    		databaseLog.warn(this.context.getName()+": Block vote "+vote.getHash()+" is already present");
+		    		transaction.abort();
+		    		return status;
+		    	}
+		    	else 
+		    		throw new DatabaseException("Failed to store block votes "+vote.getHash()+" due to "+status.name());
+		    } 
+
+		    transaction.commit();
+		    return OperationStatus.SUCCESS;
+		} 
+		catch (Exception ex) 
+		{
+			transaction.abort();
+		    if (ex instanceof DatabaseException)
+		    	throw ex; 
+		    throw new DatabaseException(ex);
+		} 
 	}
 }

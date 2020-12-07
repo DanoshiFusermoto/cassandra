@@ -25,8 +25,12 @@ import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
+import org.fuserleer.ledger.events.BlockCommittedEvent;
+import org.fuserleer.ledger.messages.GetAtomPoolMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.Protocol;
+import org.fuserleer.network.peers.events.PeerConnectedEvent;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
 import com.google.common.eventbus.AllowConcurrentEvents;
@@ -40,6 +44,9 @@ public final class Ledger implements Service
 	
 	private final AtomPool atomPool;
 	private final AtomHandler atomHandler;
+	
+	private final BlockHandler blockHandler;
+
 	private final LedgerStore ledgerStore;
 	private final VoteRegulator voteRegulator;
 	
@@ -54,6 +61,7 @@ public final class Ledger implements Service
 		this.ledgerStore = new LedgerStore(this.context);
 
 		this.voteRegulator = new VoteRegulator(this.context);
+		this.blockHandler = new BlockHandler(this.context, this.voteRegulator);
 		this.atomPool = new AtomPool(this.context, this.voteRegulator);
 		this.atomHandler = new AtomHandler(this.context);
 		
@@ -69,9 +77,12 @@ public final class Ledger implements Service
 			
 			integrity();
 			
+			this.context.getEvents().register(this.syncBlockListener);
 			this.context.getEvents().register(this.asyncAtomListener);
 			this.context.getEvents().register(this.syncAtomListener);
+			this.context.getEvents().register(this.peerListener);
 
+			this.blockHandler.start();
 			this.atomPool.start();
 			this.atomHandler.start();
 		}
@@ -84,11 +95,14 @@ public final class Ledger implements Service
 	@Override
 	public void stop() throws TerminationException
 	{
+		this.context.getEvents().unregister(this.peerListener);
 		this.context.getEvents().unregister(this.asyncAtomListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
+		this.context.getEvents().unregister(this.syncBlockListener);
 
 		this.atomHandler.stop();
 		this.atomPool.stop();
+		this.blockHandler.stop();
 		this.ledgerStore.stop();
 	}
 	
@@ -127,7 +141,12 @@ public final class Ledger implements Service
 		return this.atomHandler;
 	}
 
-	AtomPool getAtomPool()
+	public BlockHandler getBlockHandler()
+	{
+		return this.blockHandler;
+	}
+
+	public AtomPool getAtomPool()
 	{
 		return this.atomPool;
 	}
@@ -238,10 +257,54 @@ public final class Ledger implements Service
 		@Subscribe
 		public void on(AtomCommittedEvent actionCommittedEvent) 
 		{
-			Ledger.this.atomPool.remove(actionCommittedEvent.getAtom());
+			Ledger.this.atomPool.remove(actionCommittedEvent.getAtom().getHash());
 			
 			if (ledgerLog.hasLevel(Logging.DEBUG))
 				ledgerLog.debug(Ledger.this.context.getName()+": Committed atom "+actionCommittedEvent.getAtom().getHash());
+		}
+	};
+	
+	// SYNCHRONOUS BLOCK LISTENER //
+	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(BlockCommittedEvent blockCommittedEvent) 
+		{
+			if (blockCommittedEvent.getBlockHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
+			{
+				ledgerLog.error(Ledger.this.context.getName()+": Committed block "+blockCommittedEvent.getBlockHeader()+" does not attach to current head "+Ledger.this.getHead());
+				return;
+			}
+			
+			// Clone it to make sure to extract the header
+			BlockHeader blockHeader = blockCommittedEvent.getBlockHeader().clone();
+			Ledger.this.setHead(blockHeader);
+			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+blockHeader.getBloom().count()+" atoms "+blockHeader);
+			Ledger.this.context.getMetaData().increment("ledger.commits.atoms", blockHeader.getBloom().count());
+			
+			Ledger.this.voteRegulator.addVotePower(blockCommittedEvent.getBlockHeader().getOwner(), blockCommittedEvent.getBlockHeader().getHeight());
+			
+			// TODO this will be different when sharded as need to wait for QCs from other shards and leave atom locked
+			Ledger.this.atomPool.remove(blockHeader.getBloom());
+		}
+	};
+	
+	// PEER LISTENER //
+	private EventListener peerListener = new EventListener()
+	{
+    	@Subscribe
+		public void on(PeerConnectedEvent event)
+		{
+    		try
+    		{
+    			// TODO needs requesting on connect from synced nodes only
+    			if (event.getPeer().getProtocol().equals(Protocol.TCP) == true)
+    				Ledger.this.context.getNetwork().getMessaging().send(new GetAtomPoolMessage(), event.getPeer());
+    		}
+    		catch (IOException ioex)
+    		{
+    			ledgerLog.error("Failed to request atom pool items from "+event.getPeer(), ioex);
+    		}
 		}
 	};
 }

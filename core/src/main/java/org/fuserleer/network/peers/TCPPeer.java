@@ -35,15 +35,6 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 				try
 				{
 					message = Message.parse(socket.getInputStream());
-
-/*					if (TCPPeer.this.isHandshaked())
-					{
-						if (!message.verify(getSystem().getKey()))
-						{
-							messagingLog.error(Serializer.getInstance().serialize(message, User.RADIX, Level.WIRE).asObject().toJSON().toString(4));
-//							throw new BanException("Message "+message.getCommand()+" hash "+message.getHash()+" signature invalid");
-						}
-					}*/
 				}
 				catch(IOException ioex)
 				{

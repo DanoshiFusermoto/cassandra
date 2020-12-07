@@ -14,7 +14,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
-abstract class InventoryMessage extends Message
+public abstract class InventoryMessage extends Message
 {
 	public final static int MAX_INVENTORY = 64;
 

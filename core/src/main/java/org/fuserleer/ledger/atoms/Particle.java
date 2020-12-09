@@ -9,7 +9,6 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 import org.fuserleer.BasicObject;
-import org.fuserleer.common.StatePrimitive;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.database.Field;
@@ -19,6 +18,7 @@ import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateExecutor;
 import org.fuserleer.ledger.StateMachine;
+import org.fuserleer.ledger.StatePrimitive;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializerId2;
@@ -150,6 +150,12 @@ public abstract class Particle extends BasicObject implements StateExecutor, Sta
 	public Set<Identifier> getIdentifiers()
 	{
 		return new HashSet<Identifier>(); 
+	}
+	
+	public final boolean hasIndexable(Indexable indexable)
+	{
+		Set<Indexable> indexables = getIndexables();
+		return indexables.contains(indexable);
 	}
 	
 	public Field getField(Indexable scope, String name)

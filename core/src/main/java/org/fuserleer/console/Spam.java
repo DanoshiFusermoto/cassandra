@@ -67,7 +67,7 @@ public class Spam extends Function
 				if (context.getLedger().getHead().getHeight() > lastCommittedBlockHeight)
 				{
 					long duration = System.currentTimeMillis()-start;
-					long committedAtoms = context.getLedger().getHead().getBloom().count();
+					long committedAtoms = context.getLedger().getHead().getInventory().size();
 					totalAtomsCommittedCount += committedAtoms;
 					printStream.println("Atoms: "+totalAtomsCommittedCount+" TPS: "+(totalAtomsCommittedCount / TimeUnit.MILLISECONDS.toSeconds(duration)));
 					lastCommittedBlockHeight = context.getLedger().getHead().getHeight();
@@ -83,7 +83,7 @@ public class Spam extends Function
 				if (context.getLedger().getHead().getHeight() > lastCommittedBlockHeight)
 				{
 					long duration = System.currentTimeMillis()-start;
-					long committedAtoms = context.getLedger().getHead().getBloom().count();
+					long committedAtoms = context.getLedger().getHead().getInventory().size();
 					totalAtomsCommittedCount += committedAtoms;
 					printStream.println("Atoms: "+totalAtomsCommittedCount+" TPS: "+(totalAtomsCommittedCount / TimeUnit.MILLISECONDS.toSeconds(duration)));
 					lastCommittedBlockHeight = context.getLedger().getHead().getHeight();

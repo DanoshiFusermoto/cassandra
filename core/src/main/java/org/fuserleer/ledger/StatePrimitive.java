@@ -1,6 +1,8 @@
 package org.fuserleer.ledger;
 
-public interface StatePrimitive
+import org.fuserleer.common.Primitive;
+
+public interface StatePrimitive extends Primitive
 {
 
 }

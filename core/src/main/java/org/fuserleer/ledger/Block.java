@@ -1,14 +1,12 @@
 package org.fuserleer.ledger;
 
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
+import java.util.LinkedList;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
-import org.fuserleer.collections.Bloom;
+import org.fuserleer.BasicObject;
 import org.fuserleer.common.Primitive;
-import org.fuserleer.common.StatePrimitive;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.ledger.atoms.Atom;
@@ -21,40 +19,64 @@ import org.fuserleer.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.block")
-public final class Block extends BlockHeader implements Primitive, StatePrimitive
+public final class Block extends BasicObject implements Primitive
 {
+	@JsonProperty("header")
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	private BlockHeader header;
+	
 	@JsonProperty("atoms")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
-	private List<Atom> atoms;
+	private LinkedList<Atom> atoms;
 	
 	private Block()
 	{
 		super();
 	}
 	
-	public Block(long height, Hash previous, UInt256 stepped, Bloom bloom, Hash merkle, ECPublicKey owner, Collection<Atom> atoms)
+	Block(final BlockHeader header, final Collection<Atom> atoms)
 	{
-		this(height, previous, stepped, bloom, merkle, Time.getLedgerTimeMS(), owner, atoms);
-	}
-	
-	public Block(long height, Hash previous, UInt256 stepped, Bloom bloom, Hash merkle, long timestamp, ECPublicKey owner, Collection<Atom> atoms)
-	{
-		super(height, previous, stepped, bloom, merkle, timestamp, owner);
+		super();
 
 		if (Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
 			throw new IllegalArgumentException("Atoms is empty");
+		
+		this.header = Objects.requireNonNull(header, "Header is null");
 
 		// TODO prevent duplicate atoms
-		this.atoms = new ArrayList<Atom>(atoms);
+		this.atoms = new LinkedList<Atom>(atoms);
 	}
 
-	public List<Atom> getAtoms()
+	public Block(long height, Hash previous, UInt256 stepped, long index, Hash merkle, ECPublicKey owner, Collection<Atom> atoms)
 	{
-		return Collections.unmodifiableList(this.atoms);
+		this(height, previous, stepped, index, merkle, Time.getLedgerTimeMS(), owner, atoms);
+	}
+	
+	public Block(long height, Hash previous, UInt256 stepped, long index, Hash merkle, long timestamp, ECPublicKey owner, Collection<Atom> atoms)
+	{
+		super();
+
+		if (Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
+			throw new IllegalArgumentException("Atoms is empty");
+		
+		this.header = new BlockHeader(height, previous, stepped, index, atoms.stream().map(a -> a.getHash()).collect(Collectors.toList()), merkle, timestamp, owner);
+
+		// TODO prevent duplicate atoms
+		this.atoms = new LinkedList<Atom>(atoms);
 	}
 
-	public BlockHeader toHeader()
+	protected synchronized Hash computeHash()
 	{
-		return super.clone();
+		return this.header.getHash();
+	}
+	
+	public LinkedList<Atom> getAtoms()
+	{
+		return new LinkedList<Atom>(this.atoms);
+	}
+
+	public BlockHeader getHeader()
+	{
+		return this.header;
 	}
 }

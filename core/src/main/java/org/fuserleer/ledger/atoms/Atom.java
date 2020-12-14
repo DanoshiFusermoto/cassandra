@@ -11,9 +11,12 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.fuserleer.BasicObject;
-import org.fuserleer.common.Primitive;
+import org.fuserleer.crypto.Hash;
+import org.fuserleer.database.Field;
+import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
+import org.fuserleer.ledger.StatePrimitive;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
@@ -21,7 +24,7 @@ import org.fuserleer.serialization.SerializerId2;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.atom")
-public final class Atom extends BasicObject implements Primitive // StatePrimitive TODO not sure if this needs to be state primitive as its really an envelope for particle state primitives
+public final class Atom extends BasicObject implements StatePrimitive // TODO not sure if this needs to be state primitive as its really an envelope for particle state primitives
 {
 	@JsonProperty("particles")
 	@DsonOutput(Output.ALL)
@@ -93,4 +96,80 @@ public final class Atom extends BasicObject implements Primitive // StatePrimiti
 		this.particles.stream().forEach(p -> identifiers.addAll(p.getIdentifiers()));
 		return identifiers;
 	}
+
+	public Collection<Particle> getParticles()
+	{
+		return Collections.unmodifiableList(this.particles);
+	}
+	
+	@SuppressWarnings("unchecked")
+	public <T> T getParticle(Hash hash) 
+	{
+		Objects.requireNonNull(hash);
+		
+		for (Particle particle : this.particles)
+			if (particle.getHash().equals(hash) == true)
+				return (T)particle;
+		
+		return null;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public <T> T getParticle(Indexable indexable) 
+	{
+		Objects.requireNonNull(indexable);
+		
+		for (Particle particle : this.particles)
+			if (particle.getHash().equals(indexable.getKey()) == true || particle.hasIndexable(indexable) == true)
+				return (T)particle;
+		
+		return null;
+	}
+
+	@SuppressWarnings("unchecked")
+	public <T extends Particle> List<T> getParticles(Class<T> type)
+	{
+		List<T> particles = new ArrayList<T>();
+		this.particles.stream().filter(p -> type.isAssignableFrom(p.getClass())).forEach(p -> particles.add((T) p));
+		return particles;
+	}
+
+	public boolean hasParticle(Class<? extends Particle> type)
+	{
+		for (Particle particle : this.particles)
+			if (type.isAssignableFrom(particle.getClass()))
+				return true;
+		
+		return false;
+	}
+	
+	public boolean hasParticle(Hash hash) 
+	{
+		for (Particle particle : this.particles)
+			if (particle.getHash().equals(hash) == true)
+				return true;
+		
+		return false;
+	}
+	
+	public Fields getFields()
+	{
+		Fields fields = new Fields();
+		for (Particle particle : this.particles)
+			for (Field field : particle.getFields())
+				fields.set(field);
+		
+		return fields;
+	}
+	
+	public void setFields(Fields fields)
+	{
+		for (Field field : fields)
+		{
+			Particle particle = getParticle(field.getScope());
+			if (particle != null)
+				particle.setField(field);
+		}
+	}
+
 }

@@ -133,7 +133,7 @@ public abstract class Particle extends BasicObject implements StateExecutor, Sta
 		}
 	}
 	
-	public final Spin getState()
+	public final Spin getSpin()
 	{
 		return this.spin; 
 	}

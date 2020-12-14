@@ -7,17 +7,19 @@ import org.fuserleer.ledger.atoms.Atom;
 
 public final class AtomCommittedEvent extends AtomEvent 
 {
-	private final BlockHeader blockHeader;
+	private final BlockHeader block;
 	
-	public AtomCommittedEvent(BlockHeader blockHeader, Atom atom)
+	public AtomCommittedEvent(BlockHeader block, Atom atom)
 	{
 		super(atom);
 		
-		this.blockHeader = Objects.requireNonNull(blockHeader);
+		this.block = Objects.requireNonNull(block);
+		if (this.block.getInventory().contains(atom.getHash()) == false)
+			throw new IllegalArgumentException("Block "+block+" doesnt reference atom "+atom);
 	}
 	
 	public BlockHeader getBlockHeader()
 	{
-		return this.blockHeader;
+		return this.block;
 	}
 }

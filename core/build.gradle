@@ -27,6 +27,9 @@ dependencies {
     compile 'org.xerial.snappy:snappy-java:1.1.7.3'
     compile 'com.sleepycat:je:18.3.12'
     
+	// https://mvnrepository.com/artifact/org.apache.commons/commons-compress
+	compile group: 'org.apache.commons', name: 'commons-compress', version: '1.20'
+
     // https://mvnrepository.com/artifact/commons-io/commons-io
 	compile group: 'commons-io', name: 'commons-io', version: '2.8.0'
     

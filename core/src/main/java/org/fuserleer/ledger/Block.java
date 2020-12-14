@@ -70,6 +70,20 @@ public final class Block extends BasicObject implements Primitive
 		return this.header.getHash();
 	}
 	
+	public boolean contains(Hash hash)
+	{
+		for (Atom atom : this.atoms)
+		{
+			if (atom.getHash().equals(hash) == true)
+				return true;
+			
+			if (atom.hasParticle(hash) == true)
+				return true;
+		}
+		
+		return false;
+	}
+	
 	public LinkedList<Atom> getAtoms()
 	{
 		return new LinkedList<Atom>(this.atoms);

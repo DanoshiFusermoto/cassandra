@@ -7,9 +7,11 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleTree;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.Universe;
-import org.fuserleer.collections.Bloom;
 import org.fuserleer.ledger.Block;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.atoms.TokenSpecification;
+import org.fuserleer.ledger.atoms.TransferParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.Serialization;
@@ -17,6 +19,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.time.Time;
 import org.fuserleer.time.WallClockTime;
 import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.UInt128;
 import org.fuserleer.utils.UInt256;
 
 import java.io.File;
@@ -114,16 +117,17 @@ public final class GenerateUniverses
 
 	private Block createGenesisBlock(byte magic, long timestamp) throws Exception 
 	{
-		final List<Atom> atoms = Collections.singletonList(new Atom());
-		final Bloom bloom = new Bloom(0.000000001, 1);
+		final TokenSpecification tokenParticle = new TokenSpecification("FLEX", "Flexathon token", this.universeKey.getPublicKey());
+		tokenParticle.sign(this.universeKey);
+		final TransferParticle transferParticle = new TransferParticle(UInt256.from(UInt128.HIGH_BIT), tokenParticle.getHash(), Spin.UP, this.universeKey.getPublicKey());
+		transferParticle.sign(this.universeKey);
+
+		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
 		final MerkleTree merkle = new MerkleTree();
-		atoms.forEach(a -> {
-			bloom.add(a.getHash().toByteArray());
-			merkle.appendLeaf(a.getHash());
-		});
+		atoms.forEach(a -> { merkle.appendLeaf(a.getHash()); });
 		
-		Block genesisBlock = new Block(0l, Hash.ZERO, UInt256.ZERO, bloom, merkle.buildTree(), timestamp, this.universeKey.getPublicKey(), Collections.singleton(new Atom()));
-		genesisBlock.sign(this.universeKey);
+		Block genesisBlock = new Block(0l, Hash.ZERO, UInt256.ZERO, 0, merkle.buildTree(), timestamp, this.universeKey.getPublicKey(), atoms);
+		genesisBlock.getHeader().sign(this.universeKey);
 		return genesisBlock;
 	}
 

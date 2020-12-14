@@ -51,7 +51,7 @@ public final class LocalNode extends Node implements Polymorphic
 			}
 		}
 		
-		return new LocalNode(nodeKey, configuration.get("network.port", Universe.getDefault().getPort()), Universe.getDefault().getGenesis(), Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
+		return new LocalNode(nodeKey, configuration.get("network.port", Universe.getDefault().getPort()), Universe.getDefault().getGenesis().getHeader(), Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
 	}
 	
 	private ECKeyPair key;

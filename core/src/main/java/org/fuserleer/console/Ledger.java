@@ -32,8 +32,8 @@ public class Ledger extends Function
 			printStream.println("Atom throughput: "+context.getMetaData().get("ledger.throughput.atoms", 0l));
 			printStream.println("Particle throughput: "+context.getMetaData().get("ledger.throughput.particles", 0l));
 			printStream.println("Commit latency: "+context.getMetaData().get("ledger.throughput.latency", 0l));
-			printStream.println("Atom pool: "+context.getLedger().getAtomPool().size()+" / "+context.getMetaData().increment("ledger.pool.atoms.added")+" / "+context.getMetaData().increment("ledger.pool.atoms.removed"));
-			printStream.println("Block pool: "+context.getLedger().getBlockHandler().size()+" / "+context.getMetaData().increment("ledger.pool.blocks.added")+" / "+context.getMetaData().increment("ledger.pool.blocks.removed"));
+			printStream.println("Atom pool: "+context.getLedger().getAtomPool().size()+" / "+context.getMetaData().get("ledger.pool.atoms.added", 0l)+" / "+context.getMetaData().get("ledger.pool.atoms.removed", 0l));
+			printStream.println("Block pool: "+context.getLedger().getBlockHandler().size()+" / "+context.getMetaData().get("ledger.pool.blocks.added", 0l)+" / "+context.getMetaData().get("ledger.pool.blocks.removed", 0l));
 		}
 	}
 }

@@ -1,10 +1,10 @@
 package org.fuserleer.ledger.events;
 
-import org.fuserleer.ledger.BlockHeader;
+import org.fuserleer.ledger.Block;
 
 public final class BlockCommittedEvent extends BlockEvent
 {
-	public BlockCommittedEvent(BlockHeader block)
+	public BlockCommittedEvent(Block block)
 	{
 		super(block);
 	}

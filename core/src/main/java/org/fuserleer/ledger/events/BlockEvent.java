@@ -3,19 +3,19 @@ package org.fuserleer.ledger.events;
 import java.util.Objects;
 
 import org.fuserleer.events.Event;
-import org.fuserleer.ledger.BlockHeader;
+import org.fuserleer.ledger.Block;
 
 abstract class BlockEvent implements Event 
 {
-	private final BlockHeader blockHeader;
+	private final Block block;
 	
-	BlockEvent(BlockHeader blockHeader)
+	BlockEvent(Block block)
 	{
-		this.blockHeader = Objects.requireNonNull(blockHeader);
+		this.block = Objects.requireNonNull(block);
 	}
 	
-	public final BlockHeader getBlockHeader()
+	public final Block getBlock()
 	{
-		return this.blockHeader;
+		return this.block;
 	}
 }

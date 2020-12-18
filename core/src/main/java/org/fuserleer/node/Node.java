@@ -7,7 +7,6 @@ import org.fuserleer.BasicObject;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.ledger.BlockHeader;
-import org.fuserleer.Universe;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializationException;
@@ -19,6 +18,8 @@ import com.google.common.collect.ImmutableMap;
 @SerializerId2("node")
 public class Node extends BasicObject
 {
+	public static final int OOS_TRIGGER_LIMIT = 6;
+
 	private String 	agent;
 
 	private int  	agentVersion;
@@ -124,7 +125,7 @@ public class Node extends BasicObject
 	}
 	
 	// SYNC //
-	public final boolean isInSyncWith(Node other)
+	public final boolean isInSyncWith(Node other, int limit)
 	{
 		Objects.requireNonNull(other, "Other node is null");
 		
@@ -133,20 +134,20 @@ public class Node extends BasicObject
 		long thisHeight = getHead().getHeight();
 		long otherHeight = other.getHead().getHeight();
 		long heightDelta = Math.abs(thisHeight - otherHeight);
-		if (heightDelta > Universe.getDefault().getEpoch())
+		if (heightDelta > limit)
 			return false;
 		
 		return true;
 	}
 
-	public final boolean isAheadOf(Node other)
+	public final boolean isAheadOf(Node other, int limit)
 	{
 		Objects.requireNonNull(other, "Other node is null");
 
 		long thisHeight = getHead().getHeight();
 		long otherHeight = other.getHead().getHeight();
 		long heightDelta = thisHeight - otherHeight;
-		if (heightDelta >= Universe.getDefault().getEpoch())
+		if (heightDelta >= limit)
 			return true;
 		
 		return false;

@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
@@ -53,6 +54,21 @@ public final class VoteRegulator
 		return this.totalVotePower.getOrDefault(height, UInt256.ZERO);
 	}
 	
+	public UInt256 getVotePower(long height, Set<ECPublicKey> identities)
+	{
+		if (height < 0)
+			throw new IllegalArgumentException("Height is negative");
+		
+		if (height > this.context.getLedger().getHead().getHeight())
+			height = this.context.getLedger().getHead().getHeight();
+
+		UInt256 votePower = UInt256.ZERO;
+		for (ECPublicKey identity : identities)
+			votePower = votePower.add(this.votePower.getOrDefault(identity, UInt128.ZERO));
+		
+		return votePower;
+	}
+
 	public UInt256 getVotePowerThreshold(long height)
 	{
 		return twoFPlusOne(getTotalVotePower(height));

@@ -8,6 +8,7 @@ import java.util.Objects;
 
 import org.fuserleer.common.Match;
 import org.fuserleer.common.Order;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
@@ -37,7 +38,7 @@ public class SearchQuery
 
 	@JsonProperty("container")
 	@DsonOutput(Output.ALL)
-	private Class<?> container;
+	private Class<? extends Primitive> container;
 
 	@JsonProperty("order")
 	@DsonOutput(Output.ALL)
@@ -58,33 +59,33 @@ public class SearchQuery
 		super();
 	}
 
-	public SearchQuery(final Identifier identifier, final Class<?> container, final Order order)
+	public SearchQuery(final Identifier identifier, final Class<? extends Primitive> container, final Order order)
 	{ 
 		this(Collections.singletonList(Objects.requireNonNull(identifier, "Identifier is null")), Match.ANY, container, order, -1, SearchQuery.MAX_LIMIT);
 	}
 
-	public SearchQuery(final Identifier identifier, final Class<?> container, final Order order, final int limit)
+	public SearchQuery(final Identifier identifier, final Class<? extends Primitive> container, final Order order, final int limit)
 	{ 
 		this(Collections.singletonList(Objects.requireNonNull(identifier, "Identifier is null")), Match.ANY, container, order, -1, limit);
 	}
 	
-	public SearchQuery(final Identifier identifier, final Class<?> container, final Order order, final long offset, final int limit)
+	public SearchQuery(final Identifier identifier, final Class<? extends Primitive> container, final Order order, final long offset, final int limit)
 	{ 
 		this(Collections.singletonList(Objects.requireNonNull(identifier, "Identifier is null")), Match.ANY, container, order, offset, limit);
 	}
 
-	public SearchQuery(final Identifier identifier, final Match matchOn, final Class<?> container, final Order order, final long offset, final int limit)
+	public SearchQuery(final Identifier identifier, final Match matchOn, final Class<? extends Primitive> container, final Order order, final long offset, final int limit)
 	{ 
 		this(Collections.singletonList(Objects.requireNonNull(identifier, "Identifier is null")), matchOn, container, order, offset, limit);
 	}
 
-	public SearchQuery(final Collection<Identifier> identifiers, final Match matchOn, final Class<?> container, final Order order, final int limit)
+	public SearchQuery(final Collection<Identifier> identifiers, final Match matchOn, final Class<? extends Primitive> container, final Order order, final int limit)
 	{ 
 		this(identifiers, matchOn, container, order, -1, limit);
 	}
 	
 	// TODO can offset limit just be zero for new searches?
-	public SearchQuery(final Collection<Identifier> identifiers, final Match matchOn, final Class<?> container, final Order order, final long offset, final int limit)
+	public SearchQuery(final Collection<Identifier> identifiers, final Match matchOn, final Class<? extends Primitive> container, final Order order, final long offset, final int limit)
 	{ 
 		super();
 		
@@ -133,7 +134,7 @@ public class SearchQuery
 		return this.limit;
 	}
 
-	public Class<?> getContainer()
+	public Class<? extends Primitive> getContainer()
 	{
 		return this.container;
 	}

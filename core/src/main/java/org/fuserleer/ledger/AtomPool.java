@@ -59,7 +59,7 @@ import org.fuserleer.utils.UInt256;
 import com.google.common.eventbus.Subscribe;
 import com.sleepycat.je.OperationStatus;
 
-public class AtomPool implements Service
+public final class AtomPool implements Service
 {
 	private static final Logger atomsLog = Logging.getLogger("atoms");
 
@@ -210,7 +210,7 @@ public class AtomPool implements Service
 							try
 							{
 								// Dont vote if we have no power!
-								UInt128 localVotePower = AtomPool.this.voteRegulator.getVotePower(AtomPool.this.context.getNode().getIdentity(), pendingAtom.getValue().getSeen());
+								UInt128 localVotePower = AtomPool.this.context.getLedger().getVoteRegulator().getVotePower(AtomPool.this.context.getNode().getIdentity(), pendingAtom.getValue().getSeen());
 								if (localVotePower.compareTo(UInt128.ZERO) > 0)
 								{
 									pendingAtom.getValue().vote(AtomPool.this.context.getNode().getIdentity(), localVotePower);
@@ -287,7 +287,6 @@ public class AtomPool implements Service
 	private final Map<Hash, PendingAtom> pending = new HashMap<Hash, PendingAtom>();
 	private final Map<Hash, Hash> indexables = new HashMap<Hash, Hash>();
 	private final Map<Long, Set<PendingAtom>> buckets = new HashMap<Long, Set<PendingAtom>>();
-	private final VoteRegulator voteRegulator;
 	private final MappedBlockingQueue<Hash, PendingAtom> voteQueue;
 
 	// Atom vote broadcast batching
@@ -333,15 +332,14 @@ public class AtomPool implements Service
 		}
 	};
 
-	public AtomPool(Context context, VoteRegulator voteRegulator)
+	public AtomPool(Context context)
 	{
-		this(context, voteRegulator, TimeUnit.SECONDS.toMillis(context.getConfiguration().get("ledger.pool.atom.timeout", 3600*24)), TimeUnit.SECONDS.toMillis(context.getConfiguration().get("ledger.pool.dependency.timeout", 3600)));
+		this(context, TimeUnit.SECONDS.toMillis(context.getConfiguration().get("ledger.pool.atom.timeout", 3600*24)), TimeUnit.SECONDS.toMillis(context.getConfiguration().get("ledger.pool.dependency.timeout", 3600)));
 	}
 	
-	public AtomPool(Context context, VoteRegulator voteRegulator, long commitTimeout, long dependencyTimeout)
+	public AtomPool(Context context, long commitTimeout, long dependencyTimeout)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
-		this.voteRegulator = Objects.requireNonNull(voteRegulator, "Vote regulator is null");
 		this.commitTimeout = commitTimeout;
 		this.dependencyTimeout = dependencyTimeout;
 		this.voteQueue = new MappedBlockingQueue<Hash, PendingAtom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
@@ -573,11 +571,11 @@ public class AtomPool implements Service
 										if (pendingAtom.voted(atomPoolVoteMessage.getVotes().getOwner()) == true)
 											continue;
 										
-										pendingAtom.vote(atomPoolVoteMessage.getVotes().getOwner(), AtomPool.this.voteRegulator.getVotePower(atomPoolVoteMessage.getVotes().getOwner(), pendingAtom.getSeen()));
+										pendingAtom.vote(atomPoolVoteMessage.getVotes().getOwner(), AtomPool.this.context.getLedger().getVoteRegulator().getVotePower(atomPoolVoteMessage.getVotes().getOwner(), pendingAtom.getSeen()));
 										
-										UInt256 voteThresold = AtomPool.this.voteRegulator.getVotePowerThreshold(pendingAtom.getSeen());
+										UInt256 voteThresold = AtomPool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pendingAtom.getSeen());
 										if (pendingAtom.votes().compareTo(voteThresold) >= 0)
-											atomsLog.info(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.votes()+"/"+AtomPool.this.voteRegulator.getTotalVotePower(pendingAtom.getSeen()));
+											atomsLog.info(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.votes()+"/"+AtomPool.this.context.getLedger().getVoteRegulator().getTotalVotePower(pendingAtom.getSeen()));
 									}
 								}
 								finally
@@ -892,7 +890,7 @@ public class AtomPool implements Service
 					return false;
 				}
 				
-				UInt256 voteThresold = AtomPool.this.voteRegulator.getVotePowerThreshold(pa.getSeen());
+				UInt256 voteThresold = AtomPool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pa.getSeen());
 				if (pa.votes().compareTo(voteThresold) < 0)
 					return false;
 

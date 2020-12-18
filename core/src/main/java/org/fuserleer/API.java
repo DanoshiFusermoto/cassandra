@@ -1,15 +1,28 @@
 package org.fuserleer;
 
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 
 import org.fuserleer.common.Agent;
+import org.fuserleer.common.Match;
+import org.fuserleer.common.Order;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.database.Indexable;
+import org.fuserleer.database.IndexablePrimitive;
+import org.fuserleer.database.Identifier;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
+import org.fuserleer.ledger.Block;
 import org.fuserleer.ledger.BlockHeader;
+import org.fuserleer.ledger.SearchQuery;
+import org.fuserleer.ledger.SearchResponse;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.Particle;
+import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.UniqueParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -93,6 +106,11 @@ public class API implements Service
 
 					JSONObject statistics = new JSONObject();
 					
+					JSONObject processed = new JSONObject();
+					processed.put("atoms", API.this.context.getMetaData().get("ledger.processed.atoms", 0l));
+					processed.put("particles", API.this.context.getMetaData().get("ledger.processed.particles", 0l));
+					statistics.put("processed", processed);
+
 					JSONObject throughput = new JSONObject();
 					throughput.put("atoms", API.this.context.getMetaData().get("ledger.throughput.atoms", 0l));
 					throughput.put("particles", API.this.context.getMetaData().get("ledger.throughput.particles", 0l));
@@ -112,19 +130,228 @@ public class API implements Service
 				return responseJSON.toString(4);
 			});
 			
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/recent", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+				
+				try
+				{
+					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
+					if (limit > 100)
+						throw new IllegalArgumentException("Limit is greater than 100");
+
+					Block block = API.this.context.getLedger().get(API.this.context.getLedger().getHead().getHash(), Block.class);
+					long offset = block.getHeader().getIndex()+block.getHeader().getInventory().size();
+					long nextOffset = offset;
+					JSONArray headersArray = new JSONArray();
+					JSONArray atomsArray = new JSONArray();
+					
+					while(block != null && atomsArray.length() < limit)
+					{
+						headersArray.put(Serialization.getInstance().toJsonObject(block.getHeader(), Output.ALL));
+						Iterator<Atom> atomIterator = block.getAtoms().descendingIterator();
+						while(atomIterator.hasNext() == true)
+						{
+							Atom atom = atomIterator.next();
+							atomsArray.put(Serialization.getInstance().toJsonObject(atom, Output.ALL));
+							nextOffset--;
+						}
+						
+						block = API.this.context.getLedger().get(block.getHeader().getPrevious(), Block.class);
+					}
+					
+					responseJSON.put("atoms", atomsArray);
+					responseJSON.put("headers", headersArray);
+					status(responseJSON, 200, offset, nextOffset, limit, nextOffset == offset);
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+				
+				return responseJSON.toString(4);
+			});
+
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/recent/:container", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+				
+				try
+				{
+					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
+					if (limit > 100)
+						throw new IllegalArgumentException("Limit is greater than 100");
+
+					@SuppressWarnings("unchecked")
+					Class<? extends Particle> container = (Class<? extends Particle>) Serialization.getInstance().getClassForId(req.params("container").toLowerCase());
+					Block block = API.this.context.getLedger().get(API.this.context.getLedger().getHead().getHash(), Block.class);
+					long offset = block.getHeader().getIndex()+block.getHeader().getInventory().size();
+					long nextOffset = offset;
+					JSONArray headersArray = new JSONArray();
+					JSONArray atomsArray = new JSONArray();
+					
+					while(block != null && atomsArray.length() < limit)
+					{
+						boolean addedHeader = false;
+						Iterator<Atom> atomIterator = block.getAtoms().descendingIterator();
+						while(atomIterator.hasNext() == true)
+						{
+							Atom atom = atomIterator.next();
+							int numMatches = atom.getParticles(container).size();
+							if (numMatches > 0)
+							{
+								if (addedHeader == false)
+									headersArray.put(Serialization.getInstance().toJsonObject(block.getHeader(), Output.ALL));
+								atomsArray.put(Serialization.getInstance().toJsonObject(atom, Output.ALL));
+							}
+							
+							if (atomsArray.length() == limit)
+								break;
+
+							nextOffset--;
+						}
+
+						block = API.this.context.getLedger().get(block.getHeader().getPrevious(), Block.class);
+					}
+					
+					responseJSON.put("atoms", atomsArray);
+					responseJSON.put("headers", headersArray);
+					status(responseJSON, 200, offset, nextOffset, limit, nextOffset == offset);
+					status(responseJSON, 200, offset, nextOffset, limit, nextOffset == -1);
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+				
+				return responseJSON.toString(4);
+			});
+
 			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/atom/:hash", (req, res) -> 
 			{
 				JSONObject responseJSON = new JSONObject();
 				
 				try
 				{
-					Atom atom = API.this.context.getLedger().get(new Hash(req.params("hash")), Atom.class);
+					Atom atom = API.this.context.getLedger().get(Indexable.from(req.params("hash"), Atom.class), Atom.class);
 					if (atom == null)
 						status(responseJSON, 404, "Atom "+req.params("hash")+" not found");
 					else
 					{
-						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						responseJSON.put("action", Serialization.getInstance().toJsonObject(atom, Output.ALL));
 						status(responseJSON, 200);
+					}
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+				
+				return responseJSON.toString(4);
+			});
+			
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/particle/:hash", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+				
+				try
+				{
+					Atom atom = API.this.context.getLedger().get(Indexable.from(req.params("hash"), Particle.class), Atom.class);
+					if (atom == null)
+						status(responseJSON, 404, "Particle "+req.params("hash")+" not found");
+					else
+					{
+						responseJSON.put("action", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						status(responseJSON, 200);
+					}
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+				
+				return responseJSON.toString(4);
+			});
+			
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/indexable/:container/:key", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+				
+				try
+				{
+					Class<?> container = Serialization.getInstance().getClassForId(req.params("container").toLowerCase());
+					if (container == null)
+						status(responseJSON, 404, "Container "+req.params("container").toLowerCase()+" not found");
+					else if (IndexablePrimitive.class.isAssignableFrom(container) == false)
+						status(responseJSON, 500, "Container "+req.params("container").toLowerCase()+" is not a indexable");
+					else
+					{
+						Atom atom = API.this.context.getLedger().get(Indexable.from(decodeQueryValue(req.params("key")), (Class<? extends IndexablePrimitive>) container), Atom.class);
+						if (atom == null)
+							status(responseJSON, 404, "Indexable "+req.params("container").toLowerCase()+":"+req.params("key")+" not found");
+						else
+						{
+							responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+							status(responseJSON, 200);
+						}
+					}
+				}
+				catch(Throwable t)
+				{
+					status(responseJSON, 500, t.toString());
+					apiLog.error(t);
+				}
+				
+				return responseJSON.toString(4);
+			});
+
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/identifier/:container/:key", (req, res) -> 
+			{
+				JSONObject responseJSON = new JSONObject();
+				
+				try
+				{
+					@SuppressWarnings("unchecked")
+					Class<?> container = Serialization.getInstance().getClassForId(req.params("container").toLowerCase());
+					if (container == null)
+						status(responseJSON, 404, "Container "+req.params("container").toLowerCase()+" not found");
+					else if (Primitive.class.isAssignableFrom(container) == false)
+						status(responseJSON, 500, "Container "+req.params("container").toLowerCase()+" is not a primitive");
+					else
+					{
+						Match matchon = Match.valueOf(req.queryParamOrDefault("match", "all").toUpperCase());
+						List<Identifier> identifiers = new ArrayList<Identifier>();
+						for (String secondary : req.params("key").split(","))
+							identifiers.add(Identifier.from(decodeQueryValue(secondary)));
+						
+						if (matchon.equals(Match.ALL) && identifiers.size() > 1)
+						{
+							Identifier concatenated = Identifier.from(identifiers);
+							identifiers.clear();
+							identifiers.add(concatenated);
+						}
+						
+						SearchResponse<Atom> atoms = null;
+						Order order = Order.valueOf(req.queryParamOrDefault("order", Order.ASCENDING.toString()).toUpperCase());
+						int offset = Integer.parseInt(req.queryParamOrDefault("offset", "-1"));
+						int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
+						atoms = API.this.context.getLedger().get(new SearchQuery(identifiers, matchon, (Class<? extends Primitive>) container, order, offset, limit), Atom.class, Spin.UP);
+	
+						if (atoms.isEmpty() == true)
+							status(responseJSON, 404, "Identifier "+req.params("container").toLowerCase()+":"+req.params("key")+" no instances found");
+						else
+						{
+							JSONArray atomsArray  = new JSONArray();
+							for (Atom atom : atoms.getResults())
+								atomsArray.put(Serialization.getInstance().toJsonObject(atom, Output.ALL));
+	
+							responseJSON.put("atoms", atomsArray);
+							status(responseJSON, 200, atoms.getQuery().getOffset(), atoms.getNextOffset(), limit, atoms.isEOR());
+						}
 					}
 				}
 				catch(Throwable t)

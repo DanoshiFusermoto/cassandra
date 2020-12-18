@@ -1,25 +1,36 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.Universe;
+import org.fuserleer.common.Match;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.database.Fields;
+import org.fuserleer.database.Identifier;
+import org.fuserleer.database.Indexable;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.Particle;
+import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.events.AtomCommittedEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomErrorEvent;
@@ -30,24 +41,29 @@ import org.fuserleer.ledger.messages.GetAtomPoolMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
+import org.fuserleer.network.peers.ConnectedPeer;
+import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
+import org.fuserleer.node.Node;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.eventbus.AllowConcurrentEvents;
 import com.google.common.eventbus.Subscribe;
 
-public final class Ledger implements Service
+public final class Ledger implements Service, LedgerInterface
 {
 	private static final Logger ledgerLog = Logging.getLogger("ledger");
 
-	private final Context context;
+	private final Context 	context;
 	
-	private final AtomPool atomPool;
-	private final AtomHandler atomHandler;
+	private final AtomPool 		atomPool;
+	private final AtomHandler 	atomHandler;
 	
-	private final BlockHandler blockHandler;
+	private final BlockHandler 	blockHandler;
+	private final SyncHandler 	syncHandler;
 
-	private final LedgerStore ledgerStore;
+	private final LedgerStore 	ledgerStore;
 	private final VoteRegulator voteRegulator;
 	
 	private final transient AtomicReference<BlockHeader> head;
@@ -62,10 +78,12 @@ public final class Ledger implements Service
 
 		this.voteRegulator = new VoteRegulator(this.context);
 		this.blockHandler = new BlockHandler(this.context, this.voteRegulator);
+		this.syncHandler = new SyncHandler(this.context);
 		this.atomPool = new AtomPool(this.context, this.voteRegulator);
 		this.atomHandler = new AtomHandler(this.context);
 		
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
+		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
 	}
 	
 	@Override
@@ -82,6 +100,7 @@ public final class Ledger implements Service
 			this.context.getEvents().register(this.syncAtomListener);
 			this.context.getEvents().register(this.peerListener);
 
+			this.syncHandler.start();
 			this.blockHandler.start();
 			this.atomPool.start();
 			this.atomHandler.start();
@@ -103,6 +122,7 @@ public final class Ledger implements Service
 		this.atomHandler.stop();
 		this.atomPool.stop();
 		this.blockHandler.stop();
+		this.syncHandler.stop();
 		this.ledgerStore.stop();
 	}
 	
@@ -115,12 +135,18 @@ public final class Ledger implements Service
 	{
 		BlockHeader nodeBlockHeader = this.context.getNode().getHead();
 		// Check if this is just a new ledger store and doesn't need integrity or recovery
-		if (nodeBlockHeader.equals(Universe.getDefault().getGenesis()) == true && this.ledgerStore.has(nodeBlockHeader.getHash()) == false)
+		if (nodeBlockHeader.equals(Universe.getDefault().getGenesis().getHeader()) == true && this.ledgerStore.has(nodeBlockHeader.getHash()) == false)
 		{
 			// Store the genesis block primitive
 			this.ledgerStore.store(Universe.getDefault().getGenesis());
 
-			// TODO need to commit the state here but components are not ready yet
+			// Commit the genesis block
+			this.ledgerStore.commit(Universe.getDefault().getGenesis());
+			
+			StateAccumulator accumulator = new StateAccumulator(this.context);
+			accumulator.store(Universe.getDefault().getGenesis());
+			accumulator.commit(Universe.getDefault().getGenesis().getHeader());
+			
 			return;
 		}
 		else if (this.ledgerStore.has(nodeBlockHeader.getHash()) == false)
@@ -139,6 +165,11 @@ public final class Ledger implements Service
 	AtomHandler getAtomHandler()
 	{
 		return this.atomHandler;
+	}
+
+	VoteRegulator getVoteRegulator()
+	{
+		return this.voteRegulator;
 	}
 
 	public BlockHandler getBlockHandler()
@@ -202,6 +233,205 @@ public final class Ledger implements Service
 		}
 	}
 	
+	@SuppressWarnings("unchecked")
+	@Override
+	public <T extends Primitive> SearchResponse<T> get(final SearchQuery query, final Class<T> container, final Spin spin) throws IOException 
+	{
+		SearchResponse<IndexableCommit> searchResponse = null;
+		long nextOffset = query.getOffset();
+		List<T> results = new ArrayList<T>();
+
+		try
+		{
+			do
+			{
+				SearchQuery nextQuery = new SearchQuery(query.getIdentifiers(), query.getMatchOn(), query.getContainer(), query.getOrder(), nextOffset, query.getLimit());
+				searchResponse = this.ledgerStore.search(nextQuery);
+				if (searchResponse != null)
+				{
+					List<Atom> atoms = new ArrayList<Atom>();
+					for (IndexableCommit commit : searchResponse.getResults())
+					{
+						nextOffset = commit.getIndex();
+						Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
+						if (atom == null)
+							ledgerLog.error("Expected atom "+commit.get(IndexableCommit.Path.ATOM)+" was not found");
+						else
+						{
+							Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
+							if (fields != null && fields.isEmpty() == false)
+								atom.setFields(fields);
+
+							atoms.add(atom);
+						}
+					}
+					
+					for (Atom atom : atoms)
+					{
+						try
+						{
+							for (Particle particle : atom.getParticles())
+							{
+								if (query.getContainer().isAssignableFrom(particle.getClass()) == false)
+									continue;
+								
+								if (query.getMatchOn().equals(Match.ALL) == true &&
+									particle.getIdentifiers().containsAll(query.getIdentifiers()) == false)
+									continue;
+		
+								if (query.getMatchOn().equals(Match.ANY) == true)
+								{
+									boolean matched = false;
+									for (Identifier identifier : query.getIdentifiers())
+									{
+										if (particle.getIdentifiers().contains(identifier) == true)
+										{
+											matched = true;
+											break;
+										}
+									}
+									
+									if (matched == false)
+										continue;
+								}
+	
+								if ( spin.equals(Spin.ANY) == true ||
+									(spin.equals(Spin.DOWN) == true && particle.getSpin().equals(Spin.DOWN)) ||
+									(spin.equals(Spin.UP) == true && particle.getSpin().equals(Spin.UP)))
+								{
+									// TODO put a toggle in this so that function can return UP operations even if there is a DOWN
+									if (this.ledgerStore.has(Indexable.from(particle.getHash(Spin.DOWN), Particle.class)) == true)
+										continue;
+									
+									if (Atom.class.isAssignableFrom(container) == true)
+										results.add((T) atom);
+									else if (container.isAssignableFrom(particle.getClass()) == true)
+										results.add((T) particle);
+									
+									break;
+								}
+							}
+						}
+						catch (Exception ex)
+						{
+							// TODO Catch any throw or just error silently?
+							ledgerLog.error(Ledger.this.context.getName()+": Atom for discovered identifier "+query+" threw error", ex);
+						}
+					}
+				}
+			}
+			while(searchResponse.isEOR() == false && results.size() < query.getLimit());
+		}
+		catch (IOException ioex)
+		{
+			throw ioex;
+		}
+			
+		return new SearchResponse<T>(query, nextOffset, results, searchResponse.isEOR());
+	}
+
+	@Override
+	public boolean state(Indexable indexable) throws IOException 
+	{
+		return this.ledgerStore.search(indexable) == null ? false : true;
+	}
+	
+	@SuppressWarnings("unchecked")
+	@Override
+	public <T extends Primitive> T get(final Indexable indexable, final Class<T> container) throws IOException
+	{
+		final IndexableCommit commit = this.ledgerStore.search(indexable);
+		if (commit == null)
+			return null;
+		
+		if (Block.class.isAssignableFrom(container) == true)
+		{
+			Block block = this.ledgerStore.get(commit.get(IndexableCommit.Path.BLOCK), Block.class);
+			if (block == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate block");
+			
+			for (Atom atom : block.getAtoms())
+			{
+				Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
+				if (fields != null && fields.isEmpty() == false)
+					atom.setFields(fields);
+			}
+
+			return (T) block;
+		}
+		else if (BlockHeader.class.isAssignableFrom(container) == true)
+		{
+			BlockHeader blockHeader = this.ledgerStore.get(commit.get(IndexableCommit.Path.BLOCK), BlockHeader.class);
+			if (blockHeader == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate block header");
+
+			return (T) blockHeader;
+		}
+		else if (Atom.class.isAssignableFrom(container) == true)
+		{
+			Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
+			if (atom == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate atom");
+
+			Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
+			if (fields != null && fields.isEmpty() == false)
+				atom.setFields(fields);
+
+			return (T) atom;
+		}
+		else if (Particle.class.isAssignableFrom(container) == true)
+		{
+			Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
+			if (atom == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate atom");
+
+			Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
+			if (fields != null && fields.isEmpty() == false)
+				atom.setFields(fields);
+
+			for (Particle particle : atom.getParticles())
+			{
+				if (container.isAssignableFrom(particle.getClass()) == false)
+					continue;
+					
+				if (particle.getHash().equals(indexable.getKey()) == true || 
+					particle.getIndexables().contains(indexable) == true)
+					return (T) particle;
+			}
+		}
+		
+		return null;
+	}
+	
+	@VisibleForTesting
+	private final AtomicBoolean synced = new AtomicBoolean(false);
+	public synchronized boolean isInSync()
+	{
+		List<ConnectedPeer> syncPeers = this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED); 
+		if (syncPeers.isEmpty() == true)
+			return false;
+
+		// Out of sync?
+		// TODO need to deal with forks that don't converge with local chain due to safety break
+		if (this.synced.get() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), Node.OOS_TRIGGER_LIMIT)) == true)
+			this.synced.set(false);
+		else if (this.synced.get() == false)
+		{
+			ConnectedPeer strongestPeer = null;
+			for (ConnectedPeer syncPeer : syncPeers)
+			{
+				if (strongestPeer == null || syncPeer.getNode().getHead().getHeight() > strongestPeer.getNode().getHead().getHeight())
+					strongestPeer = syncPeer;
+			}
+			
+			if (strongestPeer != null && 
+				(strongestPeer.getNode().isInSyncWith(this.context.getNode(), 0) == true || this.context.getNode().isAheadOf(strongestPeer.getNode(), 0) == true))
+				this.synced.set(true);
+		}
+
+		return this.synced.get();
+	}
+	
 	// ASYNC ATOM LISTENER //
 	private EventListener asyncAtomListener = new EventListener()
 	{
@@ -248,19 +478,38 @@ public final class Ledger implements Service
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(AtomPersistedEvent actionPersistedEvent) 
+		public void on(AtomPersistedEvent atomPersistedEvent) 
 		{
-			if (Ledger.this.atomPool.add(actionPersistedEvent.getAtom()) == false)
-				ledgerLog.error(Ledger.this.context.getName()+": Atom "+actionPersistedEvent.getAtom().getHash()+" not added to atom pool");
+			if (Ledger.this.atomPool.add(atomPersistedEvent.getAtom()) == false)
+				ledgerLog.error(Ledger.this.context.getName()+": Atom "+atomPersistedEvent.getAtom().getHash()+" not added to atom pool");
 		}
 
+		private long lastThroughputUpdate = System.currentTimeMillis();
+		private long lastThroughputAtoms = 0;
+		private long lastThroughputParticles = 0;
+		
 		@Subscribe
-		public void on(AtomCommittedEvent actionCommittedEvent) 
+		public void on(AtomCommittedEvent atomCommittedEvent) 
 		{
-			Ledger.this.atomPool.remove(actionCommittedEvent.getAtom().getHash());
+			Ledger.this.atomPool.remove(atomCommittedEvent.getAtom().getHash());
 			
 			if (ledgerLog.hasLevel(Logging.DEBUG))
-				ledgerLog.debug(Ledger.this.context.getName()+": Committed atom "+actionCommittedEvent.getAtom().getHash());
+				ledgerLog.debug(Ledger.this.context.getName()+": Committed atom "+atomCommittedEvent.getAtom().getHash());
+			
+			Ledger.this.context.getMetaData().increment("ledger.processed.atoms");
+			this.lastThroughputAtoms++;
+			Ledger.this.context.getMetaData().increment("ledger.processed.particles", atomCommittedEvent.getAtom().getParticles().size());
+			this.lastThroughputParticles += atomCommittedEvent.getAtom().getParticles().size();
+
+			if (System.currentTimeMillis() - this.lastThroughputUpdate > TimeUnit.SECONDS.toMillis(10))
+			{
+				int seconds = (int) TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - this.lastThroughputUpdate);
+				Ledger.this.context.getMetaData().put("ledger.throughput.atoms", (this.lastThroughputAtoms / seconds));
+				Ledger.this.context.getMetaData().put("ledger.throughput.particles", (this.lastThroughputParticles / seconds));
+				
+				this.lastThroughputUpdate = System.currentTimeMillis();
+				this.lastThroughputAtoms = this.lastThroughputParticles = 0;
+			}
 		}
 	};
 	
@@ -270,22 +519,23 @@ public final class Ledger implements Service
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent) 
 		{
-			if (blockCommittedEvent.getBlockHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
+			if (blockCommittedEvent.getBlock().getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
 			{
-				ledgerLog.error(Ledger.this.context.getName()+": Committed block "+blockCommittedEvent.getBlockHeader()+" does not attach to current head "+Ledger.this.getHead());
+				ledgerLog.error(Ledger.this.context.getName()+": Committed block "+blockCommittedEvent.getBlock().getHeader()+" does not attach to current head "+Ledger.this.getHead());
 				return;
 			}
 			
 			// Clone it to make sure to extract the header
-			BlockHeader blockHeader = blockCommittedEvent.getBlockHeader().clone();
-			Ledger.this.setHead(blockHeader);
-			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+blockHeader.getBloom().count()+" atoms "+blockHeader);
-			Ledger.this.context.getMetaData().increment("ledger.commits.atoms", blockHeader.getBloom().count());
+			Ledger.this.setHead(blockCommittedEvent.getBlock().getHeader());
+			Ledger.this.context.getNode().setHead(blockCommittedEvent.getBlock().getHeader());
+			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+blockCommittedEvent.getBlock().getHeader().getInventory().size()+" atoms "+blockCommittedEvent.getBlock().getHeader());
+			Ledger.this.context.getMetaData().increment("ledger.commits.atoms", blockCommittedEvent.getBlock().getHeader().getInventory().size());
 			
-			Ledger.this.voteRegulator.addVotePower(blockCommittedEvent.getBlockHeader().getOwner(), blockCommittedEvent.getBlockHeader().getHeight());
+			Ledger.this.voteRegulator.addVotePower(blockCommittedEvent.getBlock().getHeader().getOwner(), blockCommittedEvent.getBlock().getHeader().getHeight());
 			
 			// TODO this will be different when sharded as need to wait for QCs from other shards and leave atom locked
-			Ledger.this.atomPool.remove(blockHeader.getBloom());
+			for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
+				Ledger.this.context.getEvents().post(new AtomCommittedEvent(blockCommittedEvent.getBlock().getHeader(), atom));
 		}
 	};
 	

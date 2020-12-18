@@ -141,7 +141,7 @@ public class API implements Service
 						throw new IllegalArgumentException("Limit is greater than 100");
 
 					Block block = API.this.context.getLedger().get(API.this.context.getLedger().getHead().getHash(), Block.class);
-					long offset = block.getHeader().getIndex()+block.getHeader().getInventory().size();
+					long offset = block.getHeader().getIndex()+block.getHeader().getInventory(Atom.class).size();
 					long nextOffset = offset;
 					JSONArray headersArray = new JSONArray();
 					JSONArray atomsArray = new JSONArray();
@@ -186,7 +186,7 @@ public class API implements Service
 					@SuppressWarnings("unchecked")
 					Class<? extends Particle> container = (Class<? extends Particle>) Serialization.getInstance().getClassForId(req.params("container").toLowerCase());
 					Block block = API.this.context.getLedger().get(API.this.context.getLedger().getHead().getHash(), Block.class);
-					long offset = block.getHeader().getIndex()+block.getHeader().getInventory().size();
+					long offset = block.getHeader().getIndex()+block.getHeader().getInventory(Atom.class).size();
 					long nextOffset = offset;
 					JSONArray headersArray = new JSONArray();
 					JSONArray atomsArray = new JSONArray();

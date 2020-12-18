@@ -121,4 +121,9 @@ public final class Block extends BasicObject implements Primitive
 	{
 		return this.header;
 	}
+
+	public LinkedList<Certificate> getCertificates()
+	{
+		return new LinkedList<Certificate>(this.certificates.values());
+	}
 }

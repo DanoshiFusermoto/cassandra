@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
+import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleTree;
@@ -329,9 +330,9 @@ public class BlockHandler implements Service
 						if (blocksLog.hasLevel(Logging.DEBUG) == true)
 							blocksLog.debug(BlockHandler.this.context.getName()+": Block header "+blockHeaderMessage.getBlockHeader().getHash()+" from "+peer);
 							
-						// Try to build the block from known atoms
+						// Try to build the block from known atoms and certificates
 						List<Atom> atoms = new ArrayList<Atom>();
-						for (Hash atomHash : blockHeaderMessage.getBlockHeader().getInventory())
+						for (Hash atomHash : blockHeaderMessage.getBlockHeader().getInventory(Atom.class))
 						{
 							Atom atom = BlockHandler.this.context.getLedger().get(atomHash, Atom.class);
 							if (atom == null)
@@ -340,9 +341,20 @@ public class BlockHandler implements Service
 							atoms.add(atom);
 						}
 
-						if (atoms.size() == blockHeaderMessage.getBlockHeader().getInventory().size())
+						List<Certificate> certificates = new ArrayList<Certificate>();
+						for (Hash certificateHash : blockHeaderMessage.getBlockHeader().getInventory(Certificate.class))
 						{
-							Block block = new Block(blockHeaderMessage.getBlockHeader(), atoms);
+							Certificate certificate = BlockHandler.this.context.getLedger().get(certificateHash, Certificate.class);
+							if (certificate == null)
+								break;
+							
+							certificates.add(certificate);
+						}
+
+						if (atoms.size() == blockHeaderMessage.getBlockHeader().getInventory(Atom.class).size() && 
+							certificates.size() == blockHeaderMessage.getBlockHeader().getInventory(Certificate.class).size())
+						{
+							Block block = new Block(blockHeaderMessage.getBlockHeader(), atoms, certificates);
 
 							// TODO needs block verification
 							
@@ -875,7 +887,7 @@ public class BlockHandler implements Service
 		if (branch != null && branch.isEmpty() == false)
 		{
 			for (PendingBlock block : branch.getBlocks())
-				branchExclusions.addAll(block.getBlockHeader().getInventory());
+				branchExclusions.addAll(block.getBlockHeader().getInventory(Atom.class));
 			
 			if (branch != null && branch.isEmpty() == false && head.equals(branch.getLast()) == false)
 				throw new IllegalArgumentException("Head is not top of branch "+head);
@@ -892,7 +904,6 @@ public class BlockHandler implements Service
 
 			StateAccumulator accumulator = new StateAccumulator(this.context);
 			List<Hash> exclusions = new ArrayList<Hash>(branchExclusions);
-			MerkleTree merkle = new MerkleTree();
 			long nextTarget = initialTarget;
 			
 			final LinkedList<Atom> candidateAtoms = new LinkedList<Atom>();
@@ -921,14 +932,13 @@ public class BlockHandler implements Service
 							// FIXME this is junk
 							StateMachine stateMachine = new StateMachine(BlockHandler.this.context, head.getBlockHeader(), atom, accumulator);
 							stateMachine.execute();
-							merkle.appendLeaf(atom.getHash());
 							exclusions.add(atom.getHash());
 							candidateAtoms.add(atom);
 							nextTarget = atom.getHash().asLong();
 							foundAtom = true;
 							
 							// Try to build a block
-							Block discoveredBlock = new Block(previous.getBlockHeader().getHeight()+1, previous.getHash(), previous.getBlockHeader().getStepped(), previous.getBlockHeader().getNextIndex(), merkle.buildTree(), this.context.getNode().getIdentity(), candidateAtoms);
+							Block discoveredBlock = new Block(previous.getBlockHeader().getHeight()+1, previous.getHash(), previous.getBlockHeader().getStepped(), previous.getBlockHeader().getNextIndex(), this.context.getNode().getIdentity(), candidateAtoms, Collections.emptyList());
 							if (discoveredBlock.getHeader().getStep() >= BlockHandler.BLOCK_DISTANCE_TARGET) // TODO difficulty stuff
 							{
 								if (strongestBlock == null || strongestBlock.getAtoms().size() < discoveredBlock.getAtoms().size())

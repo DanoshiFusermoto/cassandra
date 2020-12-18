@@ -14,7 +14,7 @@ public final class AtomCommittedEvent extends AtomEvent
 		super(atom);
 		
 		this.block = Objects.requireNonNull(block);
-		if (this.block.getInventory().contains(atom.getHash()) == false)
+		if (this.block.getInventory(Atom.class).contains(atom.getHash()) == false)
 			throw new IllegalArgumentException("Block "+block+" doesnt reference atom "+atom);
 	}
 	

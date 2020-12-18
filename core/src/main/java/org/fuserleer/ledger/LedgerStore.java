@@ -13,8 +13,8 @@ import org.fuserleer.Context;
 import org.fuserleer.Universe;
 import org.fuserleer.common.Order;
 import org.fuserleer.common.Primitive;
+import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.database.DatabaseException;
 import org.fuserleer.database.DatabaseStore;
 import org.fuserleer.database.Fields;
@@ -199,7 +199,8 @@ public class LedgerStore extends DatabaseStore
 			DatabaseEntry key = new DatabaseEntry(hash.toByteArray());
 			DatabaseEntry value = new DatabaseEntry();
 			
-			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || Vote.class.isAssignableFrom(primitive) == true)
+			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || 
+				Vote.class.isAssignableFrom(primitive) == true  || Certificate.class.isAssignableFrom(primitive) == true)
 			{
 				OperationStatus status = this.primitives.get(null, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -223,7 +224,7 @@ public class LedgerStore extends DatabaseStore
 				
 				BlockHeader header = (BlockHeader) Serialization.getInstance().fromDson(value.getData(), BlockHeader.class);
 				List<Atom> atoms = new ArrayList<Atom>();
-				for (Hash atomHash : header.getInventory())
+				for (Hash atomHash : header.getInventory(Atom.class))
 				{
 					key = new DatabaseEntry(atomHash.toByteArray());
 					status = this.primitives.get(null, key, value, LockMode.DEFAULT);
@@ -244,7 +245,29 @@ public class LedgerStore extends DatabaseStore
 					atoms.add(atom);
 				}
 				
-				return (T) new Block(header, atoms);
+				List<Certificate> certificates = new ArrayList<Certificate>();
+				for (Hash certificateHash : header.getInventory(Certificate.class))
+				{
+					key = new DatabaseEntry(certificateHash.toByteArray());
+					status = this.primitives.get(null, key, value, LockMode.DEFAULT);
+					if (status.equals(OperationStatus.SUCCESS) != true)
+						throw new IllegalStateException("Found block header "+hash+" but contained certificate "+certificateHash+" is missing");
+
+					Certificate certificate;
+					try
+					{
+						certificate = Serialization.getInstance().fromDson(value.getData(), Certificate.class);
+					}
+					// FIXME Hack to catch this and convert to a SerializationException that is easier to handle.
+					catch (IllegalArgumentException iaex)
+					{
+						throw new SerializationException(iaex.getMessage());
+					}
+					
+					certificates.add(certificate);
+				}
+
+				return (T) new Block(header, atoms, certificates);
 			}
 			else if (primitive.equals(Fields.class) == true)
 			{
@@ -325,6 +348,20 @@ public class LedgerStore extends DatabaseStore
 			    } 
 		    }
 		    
+		    // Certificates can be stored without a reference to the atom itself I believe.  A certificate reference could be placed in the indexable 
+		    // if it turns out that certificate lookups are required frequently.
+		    for (Certificate certificate : block.getCertificates())
+		    {
+				status = store(transaction, certificate.getHash(), certificate, Serialization.getInstance().toDson(certificate, DsonOutput.Output.PERSIST));
+			    if (status.equals(OperationStatus.SUCCESS) == false) 
+			    {
+			    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+			    		databaseLog.warn(this.context.getName()+": Certificate "+certificate.getHash()+" in block "+blockHeader + " is already present");
+			    	else 
+			    		throw new DatabaseException("Failed to store certificate "+certificate.getHash()+" in block "+blockHeader + " due to " + status.name());
+			    } 
+		    }
+
 		    transaction.commit();
 		    return OperationStatus.SUCCESS;
 		} 
@@ -552,7 +589,16 @@ public class LedgerStore extends DatabaseStore
 		    		throw new DatabaseException("Failed to commit block atom "+atom.getHash()+" in block "+block.getHash()+" due to " + status.name());
 		    }
 		    
-			DatabaseEntry syncKey = new DatabaseEntry(Longs.toByteArray(block.getHeader().getHeight()));
+		    for (Certificate certificate : block.getCertificates())
+		    {
+				DatabaseEntry atomKey = new DatabaseEntry(certificate.getHash().toByteArray());
+				DatabaseEntry atomValue = new DatabaseEntry(Serialization.getInstance().toDson(certificate, DsonOutput.Output.PERSIST));
+				status = this.primitives.put(transaction, atomKey, atomValue);
+			    if (status.equals(OperationStatus.SUCCESS) != true) 
+		    		throw new DatabaseException("Failed to commit block certificate "+certificate.getHash()+" in block "+block.getHash()+" due to " + status.name());
+		    }
+
+		    DatabaseEntry syncKey = new DatabaseEntry(Longs.toByteArray(block.getHeader().getHeight()));
 			DatabaseEntry syncValue = new DatabaseEntry(block.getHeader().getHash().toByteArray());
 			status = this.syncChain.putNoOverwrite(transaction, syncKey, syncValue);
 		    if (status.equals(OperationStatus.SUCCESS) != true) 

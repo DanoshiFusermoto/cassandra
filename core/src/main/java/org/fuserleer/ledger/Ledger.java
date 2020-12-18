@@ -2,7 +2,6 @@ package org.fuserleer.ledger;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,6 +18,7 @@ import org.fuserleer.Service;
 import org.fuserleer.Universe;
 import org.fuserleer.common.Match;
 import org.fuserleer.common.Primitive;
+import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
@@ -60,6 +60,9 @@ public final class Ledger implements Service, LedgerInterface
 	private final AtomPool 		atomPool;
 	private final AtomHandler 	atomHandler;
 	
+	private final StatePool 	statePool;
+	private final StateHandler 	stateHandler;
+
 	private final BlockHandler 	blockHandler;
 	private final SyncHandler 	syncHandler;
 
@@ -79,8 +82,10 @@ public final class Ledger implements Service, LedgerInterface
 		this.voteRegulator = new VoteRegulator(this.context);
 		this.blockHandler = new BlockHandler(this.context, this.voteRegulator);
 		this.syncHandler = new SyncHandler(this.context);
-		this.atomPool = new AtomPool(this.context, this.voteRegulator);
+		this.atomPool = new AtomPool(this.context);
 		this.atomHandler = new AtomHandler(this.context);
+		this.statePool = new StatePool(this.context);
+		this.stateHandler = new StateHandler(this.context);
 		
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
 		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
@@ -104,6 +109,8 @@ public final class Ledger implements Service, LedgerInterface
 			this.blockHandler.start();
 			this.atomPool.start();
 			this.atomHandler.start();
+			this.statePool.start();
+			this.stateHandler.start();
 		}
 		catch (Exception ex)
 		{
@@ -119,6 +126,8 @@ public final class Ledger implements Service, LedgerInterface
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
 
+		this.statePool.stop();
+		this.stateHandler.stop();
 		this.atomHandler.stop();
 		this.atomPool.stop();
 		this.blockHandler.stop();
@@ -528,8 +537,9 @@ public final class Ledger implements Service, LedgerInterface
 			// Clone it to make sure to extract the header
 			Ledger.this.setHead(blockCommittedEvent.getBlock().getHeader());
 			Ledger.this.context.getNode().setHead(blockCommittedEvent.getBlock().getHeader());
-			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+blockCommittedEvent.getBlock().getHeader().getInventory().size()+" atoms "+blockCommittedEvent.getBlock().getHeader());
-			Ledger.this.context.getMetaData().increment("ledger.commits.atoms", blockCommittedEvent.getBlock().getHeader().getInventory().size());
+			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+blockCommittedEvent.getBlock().getHeader().getInventory(Atom.class).size()+" atoms and "+blockCommittedEvent.getBlock().getHeader().getInventory(Certificate.class).size()+" certificates "+blockCommittedEvent.getBlock().getHeader());
+			Ledger.this.context.getMetaData().increment("ledger.commits.atoms", blockCommittedEvent.getBlock().getHeader().getInventory(Atom.class).size());
+			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", blockCommittedEvent.getBlock().getHeader().getInventory(Certificate.class).size());
 			
 			Ledger.this.voteRegulator.addVotePower(blockCommittedEvent.getBlock().getHeader().getOwner(), blockCommittedEvent.getBlock().getHeader().getHeight());
 			

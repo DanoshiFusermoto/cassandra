@@ -5,7 +5,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
@@ -13,6 +12,7 @@ import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
+import org.fuserleer.database.IndexablePrimitive;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -30,9 +30,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.primitives.Longs;
 
 @SerializerId2("ledger.block.header")
-public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive, Cloneable
+public final class BlockHeader implements Comparable<BlockHeader>, Hashable, IndexablePrimitive, Cloneable
 {
-	public final static int	MAX_ATOMS = 256;
+	public final static int	MAX_ATOMS = 1024;
 
 	private static final Logger blocksLog = Logging.getLogger("blocks");
 
@@ -132,6 +132,11 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	long getNextIndex() 
 	{
 		return this.index + this.inventory.size();
+	}
+
+	public long getIndexOf(Hash hash)
+	{
+		return this.index + this.inventory.indexOf(hash);
 	}
 
 	public long getTimestamp() 

@@ -15,10 +15,10 @@ import org.fuserleer.database.Field;
 import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
+import org.fuserleer.database.IndexablePrimitive;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateExecutor;
 import org.fuserleer.ledger.StateMachine;
-import org.fuserleer.ledger.StatePrimitive;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializerId2;
@@ -29,7 +29,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.collect.ImmutableMap;
 
 @SerializerId2("ledger.atoms.particle")
-public abstract class Particle extends BasicObject implements StateExecutor, StatePrimitive
+public abstract class Particle extends BasicObject implements StateExecutor, IndexablePrimitive
 {
 	public enum Spin
 	{

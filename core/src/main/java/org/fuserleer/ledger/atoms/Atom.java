@@ -16,7 +16,7 @@ import org.fuserleer.database.Field;
 import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
-import org.fuserleer.ledger.StatePrimitive;
+import org.fuserleer.database.IndexablePrimitive;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
@@ -24,7 +24,7 @@ import org.fuserleer.serialization.SerializerId2;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.atom")
-public final class Atom extends BasicObject implements StatePrimitive // TODO not sure if this needs to be state primitive as its really an envelope for particle state primitives
+public final class Atom extends BasicObject implements IndexablePrimitive // TODO not sure if this needs to be state primitive as its really an envelope for particle state primitives
 {
 	@JsonProperty("particles")
 	@DsonOutput(Output.ALL)

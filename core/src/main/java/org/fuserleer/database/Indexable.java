@@ -23,12 +23,12 @@ public final class Indexable implements Hashable
 	public final static int MIN_COMPRESSED_INDEXABLE_BYTES = 4;
 	public final static int MAX_COMPRESSED_INDEXABLE_BYTES = Hash.BYTES;
 
-	public static byte[] toByteArray(Hash key, Class<?> container)
+	public static byte[] toByteArray(Hash key, Class<? extends IndexablePrimitive> container)
 	{
 		return toByteArray(key, container, Indexable.DEFAULT_COMPRESSED_INDEXABLE_BYTES);
 	}
 
-	public static byte[] toByteArray(Hash key, Class<?> container, int size) 
+	public static byte[] toByteArray(Hash key, Class<? extends IndexablePrimitive> container, int size) 
 	{
 		if (size < MIN_COMPRESSED_INDEXABLE_BYTES)
 			throw new IllegalArgumentException("Size is less than minimum "+Indexable.MIN_COMPRESSED_INDEXABLE_BYTES);
@@ -62,12 +62,12 @@ public final class Indexable implements Hashable
 	
 	@JsonProperty("container")
 	@DsonOutput(Output.ALL)
-	private Class<?> container;
+	private Class<? extends IndexablePrimitive> container;
 
 	private transient Hash hash;
 	private transient byte[] bytes;
 	
-	public static Indexable from(Object object, Class<?> container)
+	public static Indexable from(Object object, Class<? extends IndexablePrimitive> container)
 	{
 		Objects.requireNonNull(object, "Object is null");
 		Objects.requireNonNull(container, "Container is null");
@@ -92,7 +92,7 @@ public final class Indexable implements Hashable
 		super();
 	}
 
-	private Indexable(String key, Class<?> container)
+	private Indexable(String key, Class<? extends IndexablePrimitive> container)
 	{
 		this();
 		
@@ -108,7 +108,7 @@ public final class Indexable implements Hashable
 		this.bytes = Indexable.toByteArray(this.key, container);
 	}
 
-	private Indexable(byte[] key, Class<?> container)
+	private Indexable(byte[] key, Class<? extends IndexablePrimitive> container)
 	{
 		this();
 		
@@ -123,7 +123,7 @@ public final class Indexable implements Hashable
 		this.bytes = Indexable.toByteArray(this.key, container);
 	}
 
-	private Indexable(Hash key, Class<?> container)
+	private Indexable(Hash key, Class<? extends IndexablePrimitive> container)
 	{ 
 		this();
 		
@@ -155,7 +155,7 @@ public final class Indexable implements Hashable
 		return this.key;
 	}
 
-	public Class<?> getContainer()
+	public Class<? extends IndexablePrimitive> getContainer()
 	{
 		return this.container;
 	}

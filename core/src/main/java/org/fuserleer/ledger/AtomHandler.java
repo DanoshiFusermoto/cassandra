@@ -36,6 +36,7 @@ import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
+import org.fuserleer.node.Node;
 
 public class AtomHandler implements Service
 {
@@ -124,7 +125,7 @@ public class AtomHandler implements Service
 			AtomBroadcastMessage atomBroadcastMessage = new AtomBroadcastMessage(atomsToBroadcast);
 			for (ConnectedPeer connectedPeer : AtomHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
 			{
-				if (AtomHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode()) == false)
+				if (AtomHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
 					return;
 				
 				if (AtomHandler.this.context.getConfiguration().get("network.broadcast.type") != null)
@@ -167,7 +168,7 @@ public class AtomHandler implements Service
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug(AtomHandler.this.context.getName()+": Atom broadcast of " + atomBroadcastMessage.getAtoms().size() + " from " + peer);
 							
-							if (AtomHandler.this.context.getNode().isInSyncWith(peer.getNode()) == false)
+							if (AtomHandler.this.context.getNode().isInSyncWith(peer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
 								return;
 
 							synchronized(AtomHandler.this.atomsRequested)

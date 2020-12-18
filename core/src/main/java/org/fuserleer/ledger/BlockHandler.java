@@ -3,9 +3,7 @@ package org.fuserleer.ledger;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -20,24 +18,23 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.Hashable;
 import org.fuserleer.crypto.MerkleTree;
 import org.fuserleer.events.EventListener;
+import org.fuserleer.exceptions.DependencyNotFoundException;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
-import org.fuserleer.ledger.atoms.AtomNotFoundException;
+import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.messages.BlockHeaderInventoryMessage;
@@ -55,14 +52,11 @@ import org.fuserleer.network.Protocol;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
+import org.fuserleer.node.Node;
 import org.fuserleer.serialization.SerializationException;
-import org.fuserleer.time.Time;
 import org.fuserleer.utils.MathUtils;
 import org.fuserleer.utils.UInt128;
-import org.fuserleer.utils.UInt256;
 
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Longs;
 import com.sleepycat.je.OperationStatus;
@@ -71,29 +65,13 @@ public class BlockHandler implements Service
 {
 	private static final Logger blocksLog = Logging.getLogger("blocks");
 
-	public final static long 	BASELINE_DISTANCE_FACTOR = 8;
+	public final static long 	BASELINE_DISTANCE_FACTOR = 4;
 	public final static long 	BASELINE_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BASELINE_DISTANCE_FACTOR * Math.log(BASELINE_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
 	public final static long 	BLOCK_DISTANCE_FACTOR = 256;
 	public final static long 	BLOCK_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BLOCK_DISTANCE_FACTOR * Math.log(BLOCK_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
 	
-	private final static Comparator<PendingBlock> PENDING_BRANCH_COMPARATOR = Collections.reverseOrder(new Comparator<PendingBlock>() 
+	public static boolean withinRange(long location, long point, long range)
 	{
-		@Override
-		public int compare(PendingBlock arg0, PendingBlock arg1)
-		{
-			if (arg0.getBlockHeader().getHeight() < arg1.getBlockHeader().getHeight())
-				return -1;
-
-			if (arg0.getBlockHeader().getHeight() > arg1.getBlockHeader().getHeight())
-				return 1;
-			
-			return 0;
-		}
-	});
-
-	public static boolean withinRange(Hash hash, long point, long range)
-	{
-		long location = hash.asLong();
 		long distance = MathUtils.ringDistance64(point, location);
 		if (distance > range)
 			return true;
@@ -101,9 +79,8 @@ public class BlockHandler implements Service
 		return false;
 	}
 	
-	public static long getDistance(Hash hash, long point, long range)
+	public static long getDistance(long location, long point, long range)
 	{
-		long location = hash.asLong();
 		long distance = MathUtils.ringDistance64(point, location);
 		if (distance > range)
 			return distance;
@@ -124,80 +101,73 @@ public class BlockHandler implements Service
 					{
 						Thread.sleep(1000);
 						
+						if (BlockHandler.this.context.getLedger().isInSync() == false)
+							continue;
+						
 						// TODO do clean up of old pending blocks / committed / orphans etc
 						
 						// Find the best block candidate to build on top of
 						PendingBlock buildCandidate = null;
 						
-						synchronized(BlockHandler.this.bestBranch)
+						BlockHandler.this.lock.lock();
+						try
 						{
-							BlockHandler.this.bestBranch.clear();
-							BlockHandler.this.bestBranch.addAll(getBestBranch());
-						
-							if (BlockHandler.this.bestBranch.isEmpty() == false)
-								buildCandidate = BlockHandler.this.bestBranch.getFirst();
+							updateBranches();
+							BlockHandler.this.bestBranch = getBestBranch();
+							
+							if (BlockHandler.this.bestBranch != null)
+								buildCandidate = BlockHandler.this.bestBranch.getLast();
 							else
-								buildCandidate = new PendingBlock(BlockHandler.this.context.getLedger().get(BlockHandler.this.context.getLedger().getHead().getHash(), Block.class));
+								buildCandidate = new PendingBlock(BlockHandler.this.context, BlockHandler.this.context.getLedger().get(BlockHandler.this.context.getLedger().getHead().getHash(), Block.class));
 						}
-						
-						synchronized(BlockHandler.this.voteClock)
+						finally
 						{
-							// Check didn't vote on a new block while building one
-//							if (lastGenerated.get() != null && lastGenerated.get().getHeight() > BlockHandler.this.voteClock.get())
-							{
-								// Vote on best branch?
-								if (BlockHandler.this.voteClock.get() < buildCandidate.getBlockHeader().getHeight())
-									vote(BlockHandler.this.bestBranch);
-							}
+							BlockHandler.this.lock.unlock();
 						}
 						
+						BlockHandler.this.lock.lock();
+						try
+						{
+							// Vote on best branch?
+							if (BlockHandler.this.voteClock.get() < buildCandidate.getBlockHeader().getHeight())
+								vote(BlockHandler.this.bestBranch);
+						}
+						finally
+						{
+							BlockHandler.this.lock.unlock();
+						}
+						
+						final Block generatedBlock;
 						// No one has produced a new block yet that that the local node has voted on, 
 						// if havent successfully built one for the current round attempt to
 						if (BlockHandler.this.lastGenerated.get() == null || BlockHandler.this.lastGenerated.get().getHeight() <= buildCandidate.getBlockHeader().getHeight())
+							generatedBlock = BlockHandler.this.build(buildCandidate, BlockHandler.this.bestBranch);
+						else 
+							generatedBlock = null;
+						
+						BlockHandler.this.lock.lock();
+						try
 						{
-							final Block generatedBlock;
-							synchronized(BlockHandler.this.bestBranch)
+							if (generatedBlock != null && BlockHandler.this.pendingBlocks.containsKey(generatedBlock.getHash()) == false)
 							{
-								generatedBlock = BlockHandler.this.build(buildCandidate, BlockHandler.this.bestBranch);
-							}
-							
-							if (generatedBlock != null)
-							{
+								PendingBlock pendingBlock = new PendingBlock(BlockHandler.this.context, generatedBlock);
+								BlockHandler.this.pendingBlocks.put(generatedBlock.getHash(), pendingBlock);
 								BlockHandler.this.lastGenerated.set(generatedBlock.getHeader());
 								blocksLog.info(BlockHandler.this.context.getName()+": Generated block "+generatedBlock.getHeader());
-								BlockHandler.this.pending.computeIfAbsent(generatedBlock.getHash(), (h) -> new PendingBlock(generatedBlock));
 								broadcast(generatedBlock.getHeader());
 							}
-						}
 						
-						List<PendingBlock> commitBranchSection = new ArrayList<PendingBlock>();
-						synchronized(BlockHandler.this.bestBranch)
-						{
-							if (BlockHandler.this.bestBranch.isEmpty() == false)
+							if (BlockHandler.this.bestBranch != null)
 							{
-								boolean haveCommits = false;
-								// See if there is a section of the best branch that can be committed (any block that has 2f+1 agreement)
-								Iterator<PendingBlock> reverseIterator = BlockHandler.this.bestBranch.descendingIterator();
-								while(reverseIterator.hasNext())
-								{
-									PendingBlock branchBlock = reverseIterator.next();
-									commitBranchSection.add(branchBlock);	
-
-									if (branchBlock.weight().compareTo(BlockHandler.this.voteRegulator.getVotePowerThreshold(branchBlock.getBlockHeader().getHeight())) >= 0)
-									{
-										haveCommits = true;
-										blocksLog.info(BlockHandler.this.context.getName()+": Found commit at block with weight "+branchBlock.weight()+"/"+BlockHandler.this.voteRegulator.getTotalVotePower(branchBlock.getBlockHeader().getHeight())+" to commit list "+branchBlock);
-										break;
-									}
-								}
-								
-								if (haveCommits == false)
-									commitBranchSection.clear();
+								PendingBlock committable = BlockHandler.this.bestBranch.commitable();
+								if (committable != null)
+									commit(committable, BlockHandler.this.bestBranch);
 							}
 						}
-							
-						if (commitBranchSection.isEmpty() == false)
-							commit(commitBranchSection);
+						finally
+						{
+							BlockHandler.this.lock.unlock();
+						}
 					} 
 					catch (InterruptedException e) 
 					{
@@ -215,154 +185,17 @@ public class BlockHandler implements Service
 	};
 
 	private final Context context;
-	
-	private class PendingBlock implements Hashable
-	{
-		private Hash		hash;
-		private	final long 	witnessed;
-		private Block		block;
-
-		private UInt256		voteWeight;
-		private final Map<ECPublicKey, BlockVote> votes;
-
-		public PendingBlock(Hash block)
-		{
-			this.hash = Objects.requireNonNull(block);
-			this.witnessed = Time.getLedgerTimeMS();
-			this.voteWeight = UInt256.ZERO;
-			this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, BlockVote>());
-		}
-
-		public PendingBlock(Block block)
-		{
-			this.hash = Objects.requireNonNull(block).getHash();
-			this.block = block;
-			this.witnessed = Time.getLedgerTimeMS();
-			this.voteWeight = UInt256.ZERO;
-			this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, BlockVote>());
-		}
-		
-		@Override
-		public Hash getHash()
-		{
-			return this.hash;
-		}
-		
-		public BlockHeader getBlockHeader()
-		{
-			return this.getBlock().getHeader();
-		}
-				
-		public Block getBlock()
-		{
-			return this.block;
-		}
-
-		void setBlock(Block block)
-		{
-			this.block = Objects.requireNonNull(block);
-		}
-
-		@Override
-		public int hashCode()
-		{
-			return this.hash.hashCode();
-		}
-
-		@Override
-		public boolean equals(Object obj)
-		{
-			if (obj == null)
-				return false;
-			
-			if (obj != this)
-				return false;
-			
-			return true;
-		}
-
-		@Override
-		public String toString()
-		{
-			return (this.block == null ? this.hash : this.block.getHeader().getHeight()+" "+this.block.getHeader().getHash()+" "+this.block.getHeader().getStep())+" @ "+this.witnessed;
-		}
-		
-		public long getWitnessed()
-		{
-			return this.witnessed;
-		}
-		
-		public boolean voted(ECPublicKey identity)
-		{
-			return this.votes.containsKey(Objects.requireNonNull(identity, "Vote identity is null"));
-		}
-		
-		public ECSignatureBag certificate()
-		{
-			if (getBlockHeader().getCertificate() != null)
-			{
-				blocksLog.warn("Block header already has a certificate "+getBlockHeader());
-				return getBlockHeader().getCertificate();
-			}
-			
-			synchronized(this.votes)
-			{
-				if (this.votes.isEmpty() == true)
-					blocksLog.warn("Block header has no votes "+getBlockHeader());
-				
-				ECSignatureBag certificate = new ECSignatureBag(this.votes.values().stream().collect(Collectors.toMap(v -> v.getOwner(), v -> v.getSignature())));
-				getBlockHeader().setCertificate(certificate);
-				return certificate;
-			}
-		}
-
-		public UInt256 vote(BlockVote vote, UInt128 weight) throws ValidationException
-		{
-			Objects.requireNonNull(vote, "Vote is null");
-			Objects.requireNonNull(weight, "Weight is null");
-			
-			if (vote.getObject().equals(getHash()) == false)
-				throw new ValidationException("Vote from "+vote.getOwner()+" is not for "+getHash());
-			
-			if (vote.getOwner().verify(getHash(), vote.getSignature()) == false)
-				throw new ValidationException("Signature from "+vote.getOwner()+" did not verify against "+getHash());
-
-			synchronized(this.votes)
-			{
-				if (this.votes.containsKey(vote.getOwner()) == false)
-				{
-					this.votes.put(vote.getOwner(), vote);
-					this.voteWeight = this.voteWeight.add(weight);
-				}
-				else
-					blocksLog.warn(BlockHandler.this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+this.hash);
-				
-			}
-
-			return this.voteWeight;
-		}
-		
-		public UInt256 weight()
-		{
-			return this.voteWeight;
-		}
-
-		public Collection<BlockVote> votes()
-		{
-			synchronized(this.votes)
-			{
-				return this.votes.values().stream().collect(Collectors.toList());
-			}
-		}
-	}
+	private final ReentrantLock lock = new ReentrantLock(true);
 
 	private final VoteRegulator 				voteRegulator;
-	private final Map<Hash, PendingBlock>		pending;
+	private final Map<Hash, PendingBlock>		pendingBlocks;
+	private final Set<PendingBranch>			pendingBranches;
+	
 	private final AtomicLong					voteClock;
 	private final AtomicReference<BlockHeader> 	currentVote;
 	private final AtomicReference<BlockHeader> 	lastGenerated;
-	private final LinkedList<PendingBlock> 		bestBranch;
-	
+	private PendingBranch 						bestBranch;
+
 	private final BlockingQueue<Hash> blockInventory = new LinkedBlockingQueue<Hash>();
 	private final Executable blockInventoryProcessor = new Executable()
 	{
@@ -384,7 +217,7 @@ public class BlockHandler implements Service
 					BlockHeaderInventoryMessage blockHeaderInventoryMessage = new BlockHeaderInventoryMessage(blockInventory);
 					for (ConnectedPeer connectedPeer : BlockHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
 					{
-						if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode()) == false)
+						if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
 							continue;
 								
 						for (Hash blockHash : blockHeaderInventoryMessage.getInventory())
@@ -432,7 +265,7 @@ public class BlockHandler implements Service
 					BlockVoteInventoryMessage blockVoteInventoryMessage = new BlockVoteInventoryMessage(blockVoteInventory);
 					for (ConnectedPeer connectedPeer : BlockHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
 					{
-						if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode()) == false)
+						if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
 							continue;
 								
 						for (Hash blockVoteHash : blockVoteInventoryMessage.getInventory())
@@ -462,12 +295,13 @@ public class BlockHandler implements Service
 	BlockHandler(Context context, VoteRegulator voteRegulator)
 	{
 		this.context = Objects.requireNonNull(context);
-		this.pending = Collections.synchronizedMap(new HashMap<Hash, PendingBlock>());
+		this.pendingBlocks = Collections.synchronizedMap(new HashMap<Hash, PendingBlock>());
+		this.pendingBranches = Collections.synchronizedSet(new HashSet<PendingBranch>());
 		this.voteRegulator = Objects.requireNonNull(voteRegulator, "Vote regulator is null");
 		this.voteClock = new AtomicLong(0);
 		this.currentVote = new AtomicReference<BlockHeader>();
 		this.lastGenerated = new AtomicReference<BlockHeader>();
-		this.bestBranch = new LinkedList<PendingBlock>();
+		this.bestBranch = null;
 	}
 
 	@Override
@@ -480,63 +314,61 @@ public class BlockHandler implements Service
 			@Override
 			public void process(final BlockHeaderMessage blockHeaderMessage, final ConnectedPeer peer)
 			{
+				BlockHandler.this.lock.lock();
 				try
 				{
 					if (blockHeaderMessage.getBlockHeader().getHeight() <= BlockHandler.this.context.getLedger().getHead().getHeight())
 					{
 						blocksLog.warn(BlockHandler.this.context.getName()+": Block header is old "+blockHeaderMessage.getBlockHeader()+" from "+peer);
-						BlockHandler.this.pending.remove(blockHeaderMessage.getBlockHeader().getHash());
+						BlockHandler.this.pendingBlocks.remove(blockHeaderMessage.getBlockHeader().getHash());
 						return;
 					}
 
-					synchronized(BlockHandler.this.pending)
+					if (BlockHandler.this.context.getLedger().getLedgerStore().has(blockHeaderMessage.getBlockHeader().getHash()) == false)
 					{
-						if (BlockHandler.this.context.getLedger().getLedgerStore().has(blockHeaderMessage.getBlockHeader().getHash()) == false)
-						{
-							if (blocksLog.hasLevel(Logging.DEBUG) == true)
-								blocksLog.debug(BlockHandler.this.context.getName()+": Block header "+blockHeaderMessage.getBlockHeader().getHash()+" from "+peer);
+						if (blocksLog.hasLevel(Logging.DEBUG) == true)
+							blocksLog.debug(BlockHandler.this.context.getName()+": Block header "+blockHeaderMessage.getBlockHeader().getHash()+" from "+peer);
 							
-							// Try to build the block from known atoms
-							List<Atom> atoms = new ArrayList<Atom>();
-							for (Hash atomHash : blockHeaderMessage.getBlockHeader().getInventory())
+						// Try to build the block from known atoms
+						List<Atom> atoms = new ArrayList<Atom>();
+						for (Hash atomHash : blockHeaderMessage.getBlockHeader().getInventory())
+						{
+							Atom atom = BlockHandler.this.context.getLedger().get(atomHash, Atom.class);
+							if (atom == null)
+								break;
+							
+							atoms.add(atom);
+						}
+
+						if (atoms.size() == blockHeaderMessage.getBlockHeader().getInventory().size())
+						{
+							Block block = new Block(blockHeaderMessage.getBlockHeader(), atoms);
+
+							// TODO needs block verification
+							
+							BlockHandler.this.context.getLedger().getLedgerStore().store(block);
+
+							PendingBlock pendingBlock = BlockHandler.this.pendingBlocks.get(block.getHeader().getHash());
+							if (pendingBlock == null)
 							{
-								Atom atom = BlockHandler.this.context.getLedger().get(atomHash, Atom.class);
-								if (atom == null)
-									break;
-								
-								atoms.add(atom);
-							}
-
-							if (atoms.size() == blockHeaderMessage.getBlockHeader().getInventory().size())
-							{
-								Block block = new Block(blockHeaderMessage.getBlockHeader(), atoms);
-
-								// TODO need a block validation / verification processor
-								
-								BlockHandler.this.context.getLedger().getLedgerStore().store(block);
-
-								PendingBlock pendingBlock = BlockHandler.this.pending.get(block.getHeader().getHash());
-								if (pendingBlock == null)
-								{
-									pendingBlock = new PendingBlock(block);
-									BlockHandler.this.pending.put(block.getHeader().getHash(), pendingBlock);
-								}
-								else
-									pendingBlock.setBlock(block);
-
-								BlockHandler.this.blockInventory.add(pendingBlock.getHash());
+								pendingBlock = new PendingBlock(BlockHandler.this.context, block);
+								BlockHandler.this.pendingBlocks.put(block.getHeader().getHash(), pendingBlock);
 							}
 							else
+								pendingBlock.setBlock(block);
+
+							BlockHandler.this.blockInventory.add(pendingBlock.getHash());
+						}
+						else
+						{
+							// Cant build it, need an explicit request
+							try
 							{
-								// Cant build it, need an explicit request
-								try
-								{
-									BlockHandler.this.context.getNetwork().getMessaging().send(new GetBlockMessage(blockHeaderMessage.getBlockHeader().getHash()), peer);
-								}
-								catch (IOException ex)
-								{
-									blocksLog.error(BlockHandler.this.context.getName()+": Unable to send GetBlockMessage for "+blockHeaderMessage.getBlockHeader().getHash()+" to "+peer, ex);
-								}
+								BlockHandler.this.context.getNetwork().getMessaging().send(new GetBlockMessage(blockHeaderMessage.getBlockHeader().getHash()), peer);
+							}
+							catch (IOException ex)
+							{
+								blocksLog.error(BlockHandler.this.context.getName()+": Unable to send GetBlockMessage for "+blockHeaderMessage.getBlockHeader().getHash()+" to "+peer, ex);
 							}
 						}
 					}
@@ -544,6 +376,10 @@ public class BlockHandler implements Service
 				catch (Exception ex)
 				{
 					blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.header "+peer, ex);
+				}
+				finally
+				{
+					BlockHandler.this.lock.unlock();
 				}
 			}
 		});
@@ -553,42 +389,44 @@ public class BlockHandler implements Service
 			@Override
 			public void process(final BlockMessage blockMessage, final ConnectedPeer peer)
 			{
+				BlockHandler.this.lock.lock();
 				try
 				{
 					if (blockMessage.getBlock().getHeader().getHeight() <= BlockHandler.this.context.getLedger().getHead().getHeight())
 					{
 						blocksLog.warn(BlockHandler.this.context.getName()+": Block is old "+blockMessage.getBlock().getHeader()+" from "+peer);
-						BlockHandler.this.pending.remove(blockMessage.getBlock().getHeader().getHash());
+						BlockHandler.this.pendingBlocks.remove(blockMessage.getBlock().getHeader().getHash());
 						return;
 					}
 
-					synchronized(BlockHandler.this.pending)
+					if (BlockHandler.this.context.getLedger().getLedgerStore().has(blockMessage.getBlock().getHeader().getHash()) == false)
 					{
-						if (BlockHandler.this.context.getLedger().getLedgerStore().has(blockMessage.getBlock().getHeader().getHash()) == false)
+						if (blocksLog.hasLevel(Logging.DEBUG) == true)
+							blocksLog.debug(BlockHandler.this.context.getName()+": Block "+blockMessage.getBlock().getHeader().getHash()+" from "+peer);
+
+						// TODO need a block validation / verification processor
+
+						BlockHandler.this.context.getLedger().getLedgerStore().store(blockMessage.getBlock());
+						
+						PendingBlock pendingBlock = BlockHandler.this.pendingBlocks.get(blockMessage.getBlock().getHeader().getHash());
+						if (pendingBlock == null)
 						{
-							if (blocksLog.hasLevel(Logging.DEBUG) == true)
-								blocksLog.debug(BlockHandler.this.context.getName()+": Block "+blockMessage.getBlock().getHeader().getHash()+" from "+peer);
-
-							// TODO need a block validation / verification processor
-	
-							BlockHandler.this.context.getLedger().getLedgerStore().store(blockMessage.getBlock());
-							
-							PendingBlock pendingBlock = BlockHandler.this.pending.get(blockMessage.getBlock().getHeader().getHash());
-							if (pendingBlock == null)
-							{
-								pendingBlock = new PendingBlock(blockMessage.getBlock());
-								BlockHandler.this.pending.put(blockMessage.getBlock().getHeader().getHash(), pendingBlock);
-							}
-							else
-								pendingBlock.setBlock(blockMessage.getBlock());
-
-							BlockHandler.this.blockInventory.add(pendingBlock.getHash());
+							pendingBlock = new PendingBlock(BlockHandler.this.context, blockMessage.getBlock());
+							BlockHandler.this.pendingBlocks.put(blockMessage.getBlock().getHeader().getHash(), pendingBlock);
 						}
+						else
+							pendingBlock.setBlock(blockMessage.getBlock());
+
+						BlockHandler.this.blockInventory.add(pendingBlock.getHash());
 					}
 				}
 				catch (Exception ex)
 				{
 					blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block "+peer, ex);
+				}
+				finally
+				{
+					BlockHandler.this.lock.unlock();
 				}
 			}
 		});
@@ -598,6 +436,7 @@ public class BlockHandler implements Service
 			@Override
 			public void process(final BlockVoteMessage blockVoteMessage, final ConnectedPeer peer)
 			{
+				BlockHandler.this.lock.lock();
 				try
 				{
 					if (OperationStatus.KEYEXIST.equals(BlockHandler.this.context.getLedger().getLedgerStore().store(blockVoteMessage.getVote())) == false)
@@ -606,7 +445,7 @@ public class BlockHandler implements Service
 						long pendingBlockHeight = Longs.fromByteArray(blockVoteMessage.getVote().getObject().toByteArray());
 						if (pendingBlockHeight > BlockHandler.this.context.getLedger().getHead().getHeight())
 						{
-							PendingBlock pendingBlock = BlockHandler.this.pending.computeIfAbsent(blockVoteMessage.getVote().getObject(), (h) -> new PendingBlock(blockVoteMessage.getVote().getObject()));
+							PendingBlock pendingBlock = BlockHandler.this.pendingBlocks.computeIfAbsent(blockVoteMessage.getVote().getObject(), (h) -> new PendingBlock(BlockHandler.this.context, blockVoteMessage.getVote().getObject()));
 							// If already have a vote recorded for the identity, then vote was already seen possibly selected and broadcast
 							if (pendingBlock.voted(blockVoteMessage.getVote().getOwner()) == false)
 							{
@@ -625,6 +464,10 @@ public class BlockHandler implements Service
 				{
 					blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.vote "+peer, ex);
 				}
+				finally
+				{
+					BlockHandler.this.lock.unlock();
+				}
 			}
 		});
 		
@@ -638,6 +481,7 @@ public class BlockHandler implements Service
 					@Override
 					public void execute()
 					{
+						BlockHandler.this.lock.lock();
 						try
 						{
 							if (blocksLog.hasLevel(Logging.DEBUG) == true)
@@ -678,6 +522,10 @@ public class BlockHandler implements Service
 						{
 							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.vote.get " + peer, ex);
 						}
+						finally
+						{
+							BlockHandler.this.lock.unlock();
+						}
 					}
 				});
 			}
@@ -693,6 +541,7 @@ public class BlockHandler implements Service
 					@Override
 					public void execute()
 					{
+						BlockHandler.this.lock.lock();
 						try
 						{
 							if (blocksLog.hasLevel(Logging.DEBUG) == true)
@@ -720,6 +569,10 @@ public class BlockHandler implements Service
 						{
 							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.get " + peer, ex);
 						}
+						finally
+						{
+							BlockHandler.this.lock.unlock();
+						}
 					}
 				});
 			}
@@ -735,6 +588,7 @@ public class BlockHandler implements Service
 					@Override
 					public void execute()
 					{
+						BlockHandler.this.lock.lock();
 						try
 						{
 							if (blocksLog.hasLevel(Logging.DEBUG) == true)
@@ -750,7 +604,7 @@ public class BlockHandler implements Service
 							for (Hash blockHash : getBlockHeaderMessage.getInventory())
 							{
 								BlockHeader blockHeader = null;
-								PendingBlock pendingBlock = BlockHandler.this.pending.get(blockHash);
+								PendingBlock pendingBlock = BlockHandler.this.pendingBlocks.get(blockHash);
 								if (pendingBlock != null)
 									blockHeader = pendingBlock.getBlockHeader();
 								else
@@ -778,6 +632,10 @@ public class BlockHandler implements Service
 						{
 							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.header.get " + peer, ex);
 						}
+						finally
+						{
+							BlockHandler.this.lock.unlock();
+						}
 					}
 				});
 			}
@@ -793,6 +651,7 @@ public class BlockHandler implements Service
 					@Override
 					public void execute()
 					{
+						BlockHandler.this.lock.lock();
 						try
 						{
 							if (blocksLog.hasLevel(Logging.DEBUG) == true)
@@ -826,6 +685,10 @@ public class BlockHandler implements Service
 						{
 							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.vote.inv "+peer, ex);
 						}
+						finally
+						{
+							BlockHandler.this.lock.unlock();
+						}
 					}
 				});
 			}
@@ -844,6 +707,7 @@ public class BlockHandler implements Service
 					@Override
 					public void execute()
 					{
+						BlockHandler.this.lock.lock();
 						try
 						{
 							if (blocksLog.hasLevel(Logging.DEBUG) == true)
@@ -859,7 +723,7 @@ public class BlockHandler implements Service
 							List<Hash> blockHeaderInventoryRequired = new ArrayList<Hash>();
 							for (Hash blockHash : blockHeaderInventoryMessage.getInventory())
 							{
-								PendingBlock pendingBlock = BlockHandler.this.pending.get(blockHash);
+								PendingBlock pendingBlock = BlockHandler.this.pendingBlocks.get(blockHash);
 								if ((pendingBlock != null && pendingBlock.getBlockHeader() != null) || 
 									BlockHandler.this.context.getLedger().getLedgerStore().has(blockHash) == true)
 									continue;
@@ -875,6 +739,10 @@ public class BlockHandler implements Service
 						catch (Exception ex)
 						{
 							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.header.inv "+peer, ex);
+						}
+						finally
+						{
+							BlockHandler.this.lock.unlock();
 						}
 					}
 				});
@@ -911,17 +779,17 @@ public class BlockHandler implements Service
 	
 	public int size()
 	{
-		return this.pending.size();
+		return this.pendingBlocks.size();
 	}
 	
-	private List<BlockVote> vote(final LinkedList<PendingBlock> branch) throws IOException, CryptoException, ValidationException
+	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
 	{
 		UInt128 votePower = BlockHandler.this.voteRegulator.getVotePower(BlockHandler.this.context.getNode().getIdentity(), Long.MAX_VALUE);
 
 		List<BlockVote> branchVotes = new ArrayList<BlockVote>();
 		synchronized(BlockHandler.this.voteClock)
 		{
-			Iterator<PendingBlock> reverseIterator = branch.descendingIterator();
+			Iterator<PendingBlock> reverseIterator = branch.getBlocks().iterator();
 			while(reverseIterator.hasNext())
 			{
 				PendingBlock pendingBlock = reverseIterator.next();
@@ -959,7 +827,7 @@ public class BlockHandler implements Service
 		BlockVoteMessage blockVoteMessage = new BlockVoteMessage(blockVote);
 		for (ConnectedPeer connectedPeer : BlockHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
 		{
-			if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode()) == false)
+			if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
 				continue;
 			
 //			if (connectedPeer.getDirection().equals(Direction.OUTBOUND) == false)
@@ -984,7 +852,7 @@ public class BlockHandler implements Service
 		BlockHeaderMessage blockCandidateMessage = new BlockHeaderMessage(blockHeader);
 		for (ConnectedPeer connectedPeer : BlockHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
 		{
-			if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode()) == false)
+			if (BlockHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
 				continue;
 			
 //			if (connectedPeer.getDirection().equals(Direction.OUTBOUND) == false)
@@ -1001,25 +869,28 @@ public class BlockHandler implements Service
 		}
 	}
 
-	private Block build(final PendingBlock head, final LinkedList<PendingBlock> branch) throws IOException
+	private Block build(final PendingBlock head, final PendingBranch branch) throws IOException
 	{
-		// TODO Bloom based exclusion is fine for now, but maybe want a concrete list of hashes later
-		final Set<Hash> branchExclusions = branch.isEmpty() == true ? Collections.emptySet() : new HashSet<Hash>(); 
-		for (PendingBlock block : branch)
-			branchExclusions.addAll(block.getBlockHeader().getInventory());
-		
-		if (branch.isEmpty() == false && head.equals(branch.getFirst()) == false)
-			throw new IllegalArgumentException("Head is not top of branch "+head);
+		final Set<Hash> branchExclusions = (branch == null || branch.isEmpty() == true) ? Collections.emptySet() : new HashSet<Hash>();
+		if (branch != null && branch.isEmpty() == false)
+		{
+			for (PendingBlock block : branch.getBlocks())
+				branchExclusions.addAll(block.getBlockHeader().getInventory());
+			
+			if (branch != null && branch.isEmpty() == false && head.equals(branch.getLast()) == false)
+				throw new IllegalArgumentException("Head is not top of branch "+head);
+		}
 		
 		final PendingBlock previous = head;
 		final long initialTarget = (this.context.getNode().getIdentity().asHash().asLong()+previous.getHash().asLong()); 
-		final List<Atom> seedAtoms = this.context.getLedger().getAtomPool().get(initialTarget-Long.MIN_VALUE, 8, branchExclusions);
+		final List<Atom> seedAtoms = this.context.getLedger().getAtomPool().get(initialTarget-Long.MIN_VALUE, initialTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 8, branchExclusions);
 
 		Block strongestBlock = null;
 		for (int i=0 ; i < this.context.getConfiguration().get("ledger.accumulator.iterations", 1) ; i++)
 		{
 			this.context.getMetaData().increment("ledger.accumulator.iterations");
 
+			StateAccumulator accumulator = new StateAccumulator(this.context);
 			List<Hash> exclusions = new ArrayList<Hash>(branchExclusions);
 			MerkleTree merkle = new MerkleTree();
 			long nextTarget = initialTarget;
@@ -1033,7 +904,7 @@ public class BlockHandler implements Service
 				if (nextTarget != initialTarget)
 				{
 					// Should only select atoms from the pool that have 2/3 agreement
-					atoms = this.context.getLedger().getAtomPool().get(nextTarget-Long.MIN_VALUE, 8, exclusions);
+					atoms = this.context.getLedger().getAtomPool().get(nextTarget-Long.MIN_VALUE, nextTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 8, exclusions);
 					Collections.shuffle(atoms);
 					if (atoms.isEmpty() == true)
 						break;
@@ -1043,23 +914,42 @@ public class BlockHandler implements Service
 				for (Atom atom : atoms)
 				{
 					// Discover an atom in range of nextTarget
-					if (withinRange(atom.getHash(), nextTarget, BlockHandler.BASELINE_DISTANCE_TARGET) == true)
+					if (withinRange(atom.getHash().asLong(), nextTarget, BlockHandler.BASELINE_DISTANCE_TARGET) == true)
 					{
-						merkle.appendLeaf(atom.getHash());
-						exclusions.add(atom.getHash());
-						candidateAtoms.add(atom);
-						nextTarget = atom.getHash().asLong();
-						foundAtom = true;
-						
-						// Try to build a block
-						Block discoveredBlock = new Block(previous.getBlockHeader().getHeight()+1, previous.getHash(), previous.getBlockHeader().getStepped(), previous.getBlockHeader().getNextIndex(), merkle.buildTree(), this.context.getNode().getIdentity(), candidateAtoms);
-						if (discoveredBlock.getHeader().getStep() >= BlockHandler.BLOCK_DISTANCE_TARGET) // TODO difficulty stuff
+						try
 						{
-							if (strongestBlock == null || strongestBlock.getAtoms().size() < discoveredBlock.getAtoms().size())
-								strongestBlock = discoveredBlock;
+							// FIXME this is junk
+							StateMachine stateMachine = new StateMachine(BlockHandler.this.context, head.getBlockHeader(), atom, accumulator);
+							stateMachine.execute();
+							merkle.appendLeaf(atom.getHash());
+							exclusions.add(atom.getHash());
+							candidateAtoms.add(atom);
+							nextTarget = atom.getHash().asLong();
+							foundAtom = true;
+							
+							// Try to build a block
+							Block discoveredBlock = new Block(previous.getBlockHeader().getHeight()+1, previous.getHash(), previous.getBlockHeader().getStepped(), previous.getBlockHeader().getNextIndex(), merkle.buildTree(), this.context.getNode().getIdentity(), candidateAtoms);
+							if (discoveredBlock.getHeader().getStep() >= BlockHandler.BLOCK_DISTANCE_TARGET) // TODO difficulty stuff
+							{
+								if (strongestBlock == null || strongestBlock.getAtoms().size() < discoveredBlock.getAtoms().size())
+									strongestBlock = discoveredBlock;
+							}
+							
+							break;
 						}
-						
-						break;
+						catch (IOException ioex)
+						{
+							blocksLog.error(this.context.getName(), ioex);
+							throw ioex;
+						}
+						catch (ValidationException vex)
+						{
+							// Skip the reporting of these here, they are reported on a discard event
+							if ((vex instanceof DependencyNotFoundException) == false)
+								blocksLog.error(this.context.getName(), vex);
+										
+							this.context.getEvents().post(new AtomErrorEvent(atom, vex));
+						}
 					}
 				}
 			}
@@ -1072,157 +962,156 @@ public class BlockHandler implements Service
 		return strongestBlock;
 	}
 	
-	private void commit(List<PendingBlock> commitBranch)
+	private void commit(PendingBlock block, PendingBranch branch) throws IOException
 	{
-		Collections.sort(commitBranch, PENDING_BRANCH_COMPARATOR);
-		Objects.requireNonNull(commitBranch, "Branch is null");
-		if (commitBranch.isEmpty() == true)
-			throw new IllegalArgumentException("Branch is empty");
-	
-		synchronized(BlockHandler.this.pending)
+		BlockHandler.this.lock.lock();
+		try
 		{
-			// Create the certificates
-			for (PendingBlock commitBlock : commitBranch)
-				commitBlock.certificate();
+			LinkedList<PendingBlock> committedBlocks = branch.commit(block.getBlockHeader());
+			for (PendingBlock committedBlock : committedBlocks)
+				blocksLog.info(BlockHandler.this.context.getName()+": Committed block "+committedBlock.getBlockHeader());
 
-			// Clear out pending of blocks that can't be committed due to this commit
-			long branchHeadHeight = commitBranch.get(0).getBlockHeader().getHeight();
-			Iterator<Entry<Hash, PendingBlock>> pendingIterator = BlockHandler.this.pending.entrySet().iterator();
-			while(pendingIterator.hasNext() == true)
+			// Clean or trim pending branches as a result of this commit
+			Iterator<PendingBranch> pendingBranchIterator = BlockHandler.this.pendingBranches.iterator();
+			while(pendingBranchIterator.hasNext() == true)
 			{
-				Entry<Hash, PendingBlock> pendingBlockEntry = pendingIterator.next();
-				if (Longs.fromByteArray(pendingBlockEntry.getValue().getHash().toByteArray()) <= branchHeadHeight)
-					pendingIterator.remove();
+				PendingBranch pendingBranch = pendingBranchIterator.next();
+				if (pendingBranch.intersects(branch.getHead()) == false)
+				{
+					for (PendingBlock pendingBlock : pendingBranch.getBlocks())
+						this.pendingBlocks.remove(pendingBlock.getHash());
+					
+					pendingBranchIterator.remove();
+				}
+				else
+					pendingBranch.trimTo(branch.getHead()); 
 			}
 			
-			// Need to do the commit in ascending order
-			List<PendingBlock> reversedCommitBranch = new ArrayList<PendingBlock>(commitBranch);
-			if (reversedCommitBranch.size() > 1)
-				Collections.reverse(reversedCommitBranch);
-			for (PendingBlock commitBlock : reversedCommitBranch)
+			// Clear out pending of blocks that may not be in a branch and can't be committed due to this commit
+			long branchHeadHeight = branch.getHead().getHeight();
+			Iterator<Entry<Hash, PendingBlock>> pendingBlocksIterator = BlockHandler.this.pendingBlocks.entrySet().iterator();
+			while(pendingBlocksIterator.hasNext() == true)
 			{
-				Block blockToCommit = commitBlock.getBlock();
-				BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(commitBlock.getBlockHeader());
+				Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
+				if (Longs.fromByteArray(pendingBlockEntry.getValue().getHash().toByteArray()) <= branchHeadHeight)
+					pendingBlocksIterator.remove();
+			}
+
+			// Signal the commit
+			for (PendingBlock committedBlock : committedBlocks)
+			{
+				BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock());
 				BlockHandler.this.context.getEvents().post(blockCommittedEvent); // TODO Might need to catch exceptions on this from synchronous listeners
 			}
 		}
+		finally
+		{
+			BlockHandler.this.lock.unlock();
+		}
 	}
 	
-	private List<PendingBlock> getBestBranch()
+	private void updateBranches()
 	{
-		List<PendingBlock> bestBranch = new ArrayList<PendingBlock>();
-		synchronized(BlockHandler.this.pending)
+		this.lock.lock();
+		try
 		{
-			PendingBlock bestBranchEntry = null;
-			Set<PendingBlock> branchSteps = new HashSet<PendingBlock>();
-			Multimap<Long, PendingBlock> blockHeaderHeights = HashMultimap.create();
-			for (PendingBlock pendingBlock : BlockHandler.this.pending.values())
-				if (pendingBlock.getBlockHeader() != null)
-					blockHeaderHeights.put(pendingBlock.getBlockHeader().getHeight(), pendingBlock);
-			
-			List<Long> sortedHeights = new ArrayList<Long>(blockHeaderHeights.keySet());
-			Collections.sort(sortedHeights);
-			for (long height : sortedHeights)
+			// Not very efficient, but simple
+			Iterator<PendingBlock> pendingBlockIterator = this.pendingBlocks.values().iterator();
+			while (pendingBlockIterator.hasNext() == true)
 			{
-				Set<PendingBlock> toRemove = new HashSet<PendingBlock>();
-				Set<PendingBlock> nextBranchSteps = new HashSet<PendingBlock>();
-				for (PendingBlock pendingBlock : blockHeaderHeights.get(height))
+				PendingBlock pendingBlock  = pendingBlockIterator.next();
+				if (pendingBlock.getBlock() == null)
+					continue;
+				
+				try
 				{
-					if (pendingBlock.getBlockHeader() == null)
-						continue;
-
-					// FIXME Quick fix to prevent pending blocks at the same height as the ledger being included in 
-					//		 the best branch creation.  Likely they have been received just after AFTER the commit
-					//		 AND managed the bypass the open checks.  Needs a lock on commit.
-					//		 They will be pruned away on next commit.
-					if (pendingBlock.getBlockHeader().getHeight() <= this.context.getLedger().getHead().getHeight())
-						continue;
-					
-					if (pendingBlock.getBlockHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == true)
+					PendingBranch newBranch = null;
+					for (PendingBranch pendingBranch : this.pendingBranches)
 					{
-						nextBranchSteps.add(pendingBlock);
-					}
-					else
-					{
-						PendingBlock prevPendingBlock = this.pending.get(pendingBlock.getBlockHeader().getPrevious());
-						if (prevPendingBlock == null || prevPendingBlock.getBlockHeader() == null || branchSteps.contains(prevPendingBlock) == false)
+						if (pendingBranch.contains(pendingBlock) == true)
 							continue;
-
-						nextBranchSteps.add(pendingBlock);
-						toRemove.add(prevPendingBlock);
-					}
-				}
-				
-				for (PendingBlock pendingBlock : toRemove)
-					branchSteps.remove(pendingBlock);
-				
-				branchSteps.addAll(nextBranchSteps);
-				
-				// Short circuit on any branch that has a commit possible
-				for (PendingBlock branchEntry : branchSteps)
-				{
-					if (branchEntry.weight().compareTo(this.voteRegulator.getVotePowerThreshold(branchEntry.getBlockHeader().getHeight())) >= 0)
-					{
-						if (bestBranchEntry != null)
-							throw new IllegalStateException("Found multiple commits possible on distinct branches");
 						
-						bestBranchEntry = branchEntry;
+						if (pendingBranch.getLast().getHash().equals(pendingBlock.getBlockHeader().getPrevious()) == true)
+							pendingBranch.add(pendingBlock);
+						else if (pendingBranch.intersects(pendingBlock.getBlockHeader()) == true)
+						{
+							newBranch = new PendingBranch(this.context);
+							for (PendingBlock branchBlock : pendingBranch.getBlocks())
+							{
+								if (branchBlock.getHash().equals(pendingBlock.getBlockHeader().getPrevious()) == true)
+									break;
+								
+								newBranch.add(branchBlock);
+							}
+							break;
+						}
 					}
+					
+					if (newBranch == null && this.context.getLedger().getHead().getHash().equals(pendingBlock.getBlockHeader().getPrevious()) == true)
+						newBranch = new PendingBranch(this.context, pendingBlock);
+					
+					if (newBranch != null)
+						this.pendingBranches.add(newBranch);
 				}
-				
-				if (bestBranchEntry != null)
-					break;
-			}
-			
-			if (bestBranchEntry == null && branchSteps.isEmpty() == false)
-			{
-				for (PendingBlock branchEntry : branchSteps)
+				catch (ValidationException e)
 				{
-					if (bestBranchEntry == null || 
-						bestBranchEntry.getBlockHeader().getAverageStep() < branchEntry.getBlockHeader().getAverageStep() ||
-						(bestBranchEntry.getBlockHeader().getAverageStep() == branchEntry.getBlockHeader().getAverageStep() && bestBranchEntry.getBlockHeader().getStep() < branchEntry.getBlockHeader().getStep()))
-						bestBranchEntry = branchEntry;
+					blocksLog.error(BlockHandler.this.context.getName()+": Branch validation block "+pendingBlock+" failed", e);
+					pendingBlockIterator.remove();
 				}
-			}
-			
-			if (bestBranchEntry != null)
-			{
-				PendingBlock bestBranchHead = bestBranchEntry;
-				do
+				catch (Exception e)
 				{
-					bestBranch.add(bestBranchHead);
-
-					// FIXME Quick fix to prevent pending blocks at the same height as the ledger being included in 
-					//		 the best branch creation.  Likely they have been received just after AFTER the commit
-					//		 AND managed the bypass the open checks.  Needs a lock on commit.
-					//		 They will be pruned away on next commit.
-					if (bestBranchHead.getBlockHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == true)
-						bestBranchHead = null;
-					else
-					{
-						bestBranchHead = this.pending.get(bestBranchHead.getBlockHeader().getPrevious());
-
-						if (bestBranchHead != null && bestBranchHead.getBlockHeader().getHeight() <= this.context.getLedger().getHead().getHeight())
-							bestBranchHead = null;
-					}
+					blocksLog.error(BlockHandler.this.context.getName()+": Branch injection / maintenence for block "+pendingBlock+" failed", e);
+					pendingBlockIterator.remove();
 				}
-				while(bestBranchHead != null);
-				
-				if (bestBranch.get(bestBranch.size()-1).getBlockHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == false)
-					if (blocksLog.hasLevel(Logging.DEBUG) == true)
-						blocksLog.debug(this.context.getName()+": Branch doesn't attach to ledger "+bestBranch.get(0));
-			}
-
-			if (bestBranch.isEmpty() == false)
-			{
-				Collections.sort(bestBranch, PENDING_BRANCH_COMPARATOR);
-				
-				if (blocksLog.hasLevel(Logging.DEBUG) == true)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.get(0).weight()+"/"+this.voteRegulator.getTotalVotePower(bestBranch.get(0).getBlockHeader().getHeight())+" "+bestBranch.stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
 			}
 		}
-		
-		return bestBranch;
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	private PendingBranch getBestBranch()
+	{
+		this.lock.lock();
+		try
+		{
+			PendingBranch bestBranch = null;
+			for (PendingBranch pendingBranch : this.pendingBranches)
+			{
+				// Short circuit on any branch that has a commit possible
+				if (pendingBranch.commitable() != null)
+				{
+					bestBranch = pendingBranch;
+					break;
+				}
+				
+				if (pendingBranch.getFirst().getBlockHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == false)
+				{
+					if (blocksLog.hasLevel(Logging.DEBUG) == true)
+						blocksLog.debug(this.context.getName()+": Branch doesn't attach to ledger "+pendingBranch.getFirst());
+					
+					continue;
+				}
+	
+				if (bestBranch == null || 
+					bestBranch.getLast().getBlockHeader().getAverageStep() < pendingBranch.getLast().getBlockHeader().getAverageStep() ||
+					(bestBranch.getLast().getBlockHeader().getAverageStep() == pendingBranch.getLast().getBlockHeader().getAverageStep() && bestBranch.getLast().getBlockHeader().getStep() < pendingBranch.getLast().getBlockHeader().getStep()))
+					bestBranch = pendingBranch;
+			}
+	
+			if (bestBranch != null)
+			{
+				if (blocksLog.hasLevel(Logging.DEBUG) == true)
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().weight()+"/"+this.voteRegulator.getTotalVotePower(bestBranch.getLast().getBlockHeader().getHeight())+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+			}
+			
+			return bestBranch;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
 	}
 	
 	// ASYNC ATOM LISTENER //
@@ -1236,9 +1125,9 @@ public class BlockHandler implements Service
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent)
 		{
-			if (BlockHandler.this.voteClock.get() < blockCommittedEvent.getBlockHeader().getHeight())
+			if (BlockHandler.this.voteClock.get() < blockCommittedEvent.getBlock().getHeader().getHeight())
 			{
-				BlockHandler.this.voteClock.set(blockCommittedEvent.getBlockHeader().getHeight());
+				BlockHandler.this.voteClock.set(blockCommittedEvent.getBlock().getHeader().getHeight());
 				BlockHandler.this.currentVote.set(null);
 			}
 		}

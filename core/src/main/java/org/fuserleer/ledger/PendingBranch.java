@@ -70,14 +70,19 @@ class PendingBranch
 		return false;
 	}
 	
-	void alignTo(BlockHeader header)
+	/**
+	 * Trims the branch to the block header (inclusive)
+	 * 
+	 * @param header
+	 */
+	void trimTo(BlockHeader header)
 	{
 		Iterator<PendingBlock> pendingBlockIterator = this.blocks.descendingIterator();
 		while(pendingBlockIterator.hasNext() == true)
 		{
 			PendingBlock pendingBlock = pendingBlockIterator.next();
-			if (pendingBlock.getBlockHeader().getPrevious().equals(header.getHash()) == true)
-				break;
+			if (pendingBlock.getBlockHeader().getHeight() <= header.getHeight())
+				pendingBlockIterator.remove();
 		}
 		
 		this.accumulator.alignTo(header);

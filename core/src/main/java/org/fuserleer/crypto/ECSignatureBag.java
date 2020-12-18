@@ -1,11 +1,10 @@
 package org.fuserleer.crypto;
 
-import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerConstants;
@@ -39,9 +38,9 @@ public final class ECSignatureBag
 		this.signatures = new LinkedHashMap<ECPublicKey, ECSignature>(signatures);
 	}
 	
-	public Collection<ECPublicKey> getSigners()
+	public Set<ECPublicKey> getSigners()
 	{
-		return Collections.unmodifiableCollection(this.signatures.keySet());
+		return Collections.unmodifiableSet(this.signatures.keySet());
 	}
 	
 	public boolean verify(Hash hash, ECPublicKey signer)

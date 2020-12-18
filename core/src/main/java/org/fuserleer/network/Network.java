@@ -174,6 +174,7 @@ public final class Network implements Service
 							URI uri = Agent.getURI(datagramPacket.getAddress().getHostAddress(), nodeMessage.getNode().getPort());
 							Peer persistedPeer = Network.this.peerStore.get(nodeMessage.getNode().getIdentity());
 							connectedPeer = new RUDPPeer(Network.this.context, Network.this.datagramChannel, uri, Direction.INBOUND, persistedPeer);
+							connectedPeer.connect();
 						}
 						
 	    				Network.this.messaging.received(message, connectedPeer);
@@ -216,6 +217,7 @@ public final class Network implements Service
 
 				Peer persistedPeer = Network.this.peerStore.get(node.getIdentity());
 				ConnectedPeer connectedPeer = new TCPPeer(Network.this.context, socket, uri, Direction.INBOUND, persistedPeer);
+				connectedPeer.connect();
     			return (T) connectedPeer;
     		}
     		finally
@@ -583,24 +585,22 @@ public final class Network implements Service
 			ConnectedPeer connectedPeer = get(uri, protocol);
 			if (connectedPeer == null)
 			{
-		    	if (protocol.toString().equalsIgnoreCase(Protocol.UDP.toString()) == true)
+				Peer persistedPeer = this.peerStore.get(uri);
+				if (protocol.toString().equalsIgnoreCase(Protocol.UDP.toString()) == true)
 		    	{
-					Peer persistedPeer = this.peerStore.get(uri);
 					connectedPeer = new RUDPPeer(this.context, this.datagramChannel, uri, direction, persistedPeer);
+					connectedPeer.connect();
 		    	}
 		    	else if (protocol.toString().equalsIgnoreCase(Protocol.TCP.toString()) == true)
 		    	{
 		    		if (direction.equals(Direction.OUTBOUND) == false)
 		    			throw new IllegalArgumentException("Can only specify OUTBOUND for TCP connections");
 		    		
-					Peer persistedPeer = this.peerStore.get(uri);
-
 					Socket socket = new Socket();
 					socket.setReceiveBufferSize(this.context.getConfiguration().get("network.tcp.buffer", 1<<18));
 					socket.setSendBufferSize(this.context.getConfiguration().get("network.tcp.buffer", 1<<18));
-					socket.connect(new InetSocketAddress(uri.getHost(), uri.getPort()), (int) TimeUnit.SECONDS.toMillis(this.context.getConfiguration().get("network.peer.connect.timeout", 5)));
-			
 					connectedPeer = new TCPPeer(this.context, socket, uri, Direction.OUTBOUND, persistedPeer);
+					connectedPeer.connect();
 		    	}
 			}
 

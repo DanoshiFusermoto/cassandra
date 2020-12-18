@@ -31,7 +31,6 @@ public final class UDPPeer extends ConnectedPeer implements Polymorphic
 
 		this.socket = socket;
 		addProtocol(Protocol.UDP);
-		connect();
 	}
 
 	@Override

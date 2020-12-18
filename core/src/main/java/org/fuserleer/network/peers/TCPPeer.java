@@ -1,8 +1,10 @@
 package org.fuserleer.network.peers;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.Context;
 import org.fuserleer.common.Direction;
@@ -28,45 +30,54 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 		{
 			Message message = null;
 
-			while (TCPPeer.this.socket.isClosed() == false && 
-				   TCPPeer.this.getState().equals(PeerState.DISCONNECTING) == false && 
-				   TCPPeer.this.getState().equals(PeerState.DISCONNECTED) == false)
+			try
 			{
-				try
+				internalConnect();
+	
+				while (TCPPeer.this.socket.isClosed() == false && 
+					   TCPPeer.this.getState().equals(PeerState.DISCONNECTING) == false && 
+					   TCPPeer.this.getState().equals(PeerState.DISCONNECTED) == false)
 				{
-					message = Message.parse(socket.getInputStream());
+					try
+					{
+						message = Message.parse(socket.getInputStream());
+					}
+					catch(IOException ioex)
+					{
+						disconnect(ioex.getMessage(), ioex);
+						return;
+					}
+					catch(BanException bex)
+					{
+						ban(bex.getMessage(), 60);  // TODO increase this!
+						return;
+					}
+					catch(InterruptedException iex)
+					{
+						continue;
+					}
+					catch ( Exception ex )
+					{
+						disconnect("Exception in message parsing", ex);
+						return;
+					}
+	
+					try
+					{
+						TCPPeer.this.getContext().getNetwork().getMessaging().received(message, TCPPeer.this);
+					}
+					catch(Exception ex)
+					{
+						messagingLog.error(TCPPeer.this+" receive error", ex);
+					}
 				}
-				catch(IOException ioex)
-				{
-					disconnect(ioex.getMessage(), ioex);
-					return;
-				}
-				catch(BanException bex)
-				{
-					ban(bex.getMessage(), 60);  // TODO increase this!
-					return;
-				}
-				catch(InterruptedException iex)
-				{
-					continue;
-				}
-				catch ( Exception ex )
-				{
-					disconnect("Exception in message parsing", ex);
-					return;
-				}
-
-				try
-				{
-					TCPPeer.this.getContext().getNetwork().getMessaging().received(message, TCPPeer.this);
-				}
-				catch(Exception ex)
-				{
-					messagingLog.error(TCPPeer.this+" receive error", ex);
-				}
+				
+				networkLog.warn("TCPProcessor thread "+TCPThread.getName()+" is quitting");
 			}
-			
-			networkLog.warn("TCPProcessor thread "+TCPThread.getName()+" is quitting");
+			catch (IOException ioex)
+			{
+				networkLog.error("TCPProcessor thread "+TCPThread.getName()+" threw "+ioex);
+			}
 		}
 	}
 
@@ -79,16 +90,46 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 		
 		this.socket = socket;
 		addProtocol(Protocol.TCP);
-		connect();
 	}
 	
 	@Override
 	public void connect() throws IOException
 	{
-		onConnecting();
+		try
+		{
+			onConnecting();
+	
+			if (getDirection().equals(Direction.OUTBOUND) == true)
+				listen();
+		}
+		catch (IOException ioex)
+		{
+			onDisconnected();
+			throw ioex;
+		}
+	}
 
-		if (getDirection().equals(Direction.OUTBOUND) == true)
-			listen();
+	private IOException internalConnectException = null;
+	private synchronized void internalConnect() throws IOException
+	{
+		if (this.internalConnectException != null)
+			throw this.internalConnectException;
+		
+		try
+		{
+			if (this.socket.isConnected() == false)
+				this.socket.connect(new InetSocketAddress(getURI().getHost(), getURI().getPort()), (int) TimeUnit.SECONDS.toMillis(getContext().getConfiguration().get("network.peer.connect.timeout", 5)));
+		}
+		catch (IOException ioex)
+		{
+			this.internalConnectException = ioex;
+			throw ioex;
+		}
+		catch(Throwable throwable)
+		{
+			this.internalConnectException = new IOException(throwable);
+			throw this.internalConnectException;
+		}
 	}
 	
 	@Override
@@ -126,6 +167,8 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 	@Override
 	public void send(Message message) throws IOException
 	{
+		internalConnect();
+		
 		try
 		{
 			byte[] bytes = Message.prepare(message, getContext().getNode().getKey());

@@ -112,7 +112,6 @@ public final class RUDPPeer extends ConnectedPeer implements Polymorphic
 
 		this.socket = socket;
 		addProtocol(Protocol.UDP);
-		connect();
 	}
 
 	@Override

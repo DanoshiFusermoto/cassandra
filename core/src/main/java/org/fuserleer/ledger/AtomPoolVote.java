@@ -16,7 +16,7 @@ public final class AtomPoolVote extends Vote<List<Hash>>
 	
 	public AtomPoolVote(final List<Hash> object, final long clock, final ECPublicKey owner)
 	{
-		super(object, clock, owner);
+		super(object, true, clock, owner);
 	}
 
 }

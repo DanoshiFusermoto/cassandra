@@ -24,8 +24,12 @@ abstract class Vote<T> extends BasicObject implements Primitive
 	@DsonOutput(Output.ALL)
 	private T object;
 	
-	@JsonProperty("owner")
+	@JsonProperty("decision")
 	@DsonOutput(Output.ALL)
+	private boolean decision;
+
+	@JsonProperty("owner")
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private ECPublicKey owner;
 
 	@JsonProperty("signature")
@@ -41,7 +45,7 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		// For serializer
 	}
 	
-	public Vote(final T object, final long clock, final ECPublicKey owner)
+	public Vote(final T object, final boolean decision, final long clock, final ECPublicKey owner)
 	{
 		if (clock < 0)
 			throw new IllegalArgumentException("Clock is negative");
@@ -51,9 +55,10 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		// TODO check object is serializable
 		
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
+		this.decision = decision;
 	}
 
-	public Vote(final T object, final long clock, final ECPublicKey owner, final ECSignature signature) throws CryptoException
+	public Vote(final T object, final boolean decision, final long clock, final ECPublicKey owner, final ECSignature signature) throws CryptoException
 	{
 		if (clock < 0)
 			throw new IllegalArgumentException("Clock is negative");
@@ -95,15 +100,15 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		if (key.getPublicKey().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign wrapped object with key that doesn't match owner");
 
-		Hash objectHash;
+/*		Hash objectHash;
 		if (this.object instanceof Hash)
 			objectHash = (Hash) this.object;
 		else if (this.object instanceof Hashable)
 			objectHash = ((Hashable)this.object).getHash();
 		else
-			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);
+			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);*/
 		
-		this.signature = key.sign(objectHash);
+		this.signature = key.sign(getHash());
 	}
 
 	public final synchronized boolean verify(ECPublicKey key) throws CryptoException, SerializationException
@@ -117,15 +122,7 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		if (key.equals(getOwner()) == false)
 			return false;
 
-		Hash objectHash;
-		if (this.object instanceof Hash)
-			objectHash = (Hash) this.object;
-		else if (this.object instanceof Hashable)
-			objectHash = ((Hashable)this.object).getHash();
-		else
-			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);
-
-		return key.verify(objectHash, this.signature);
+		return key.verify(getHash(), this.signature);
 	}
 
 	boolean requiresSignature()

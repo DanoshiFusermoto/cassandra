@@ -15,7 +15,7 @@ public final class BlockVote extends Vote<Hash>
 	
 	public BlockVote(final Hash object, final long clock, final ECPublicKey owner)
 	{
-		super(object, clock, owner);
+		super(object, true, clock, owner);
 	}
 
 }

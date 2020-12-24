@@ -16,8 +16,6 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.time.Time;
-import org.fuserleer.utils.UInt128;
-import org.fuserleer.utils.UInt256;
 
 class PendingBlock implements Hashable
 {
@@ -28,7 +26,7 @@ class PendingBlock implements Hashable
 
 	private Hash		hash;
 	private Block		block;
-	private UInt256		voteWeight;
+	private long		voteWeight;
 	private final Map<ECPublicKey, BlockVote> votes;
 
 	public PendingBlock(Context context, Hash block)
@@ -36,7 +34,7 @@ class PendingBlock implements Hashable
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.hash = Objects.requireNonNull(block);
 		this.witnessed = Time.getLedgerTimeMS();
-		this.voteWeight = UInt256.ZERO;
+		this.voteWeight = 0l;
 		this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, BlockVote>());
 	}
 
@@ -46,7 +44,7 @@ class PendingBlock implements Hashable
 		this.hash = Objects.requireNonNull(block).getHash();
 		this.block = block;
 		this.witnessed = Time.getLedgerTimeMS();
-		this.voteWeight = UInt256.ZERO;
+		this.voteWeight = 0l;
 		this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, BlockVote>());
 	}
 	
@@ -130,7 +128,7 @@ class PendingBlock implements Hashable
 		}
 	}
 
-	public UInt256 vote(BlockVote vote, UInt128 weight) throws ValidationException
+	public long vote(BlockVote vote, long weight) throws ValidationException
 	{
 		Objects.requireNonNull(vote, "Vote is null");
 		Objects.requireNonNull(weight, "Weight is null");
@@ -138,7 +136,7 @@ class PendingBlock implements Hashable
 		if (vote.getObject().equals(getHash()) == false)
 			throw new ValidationException("Vote from "+vote.getOwner()+" is not for "+getHash());
 		
-		if (vote.getOwner().verify(getHash(), vote.getSignature()) == false)
+		if (vote.getOwner().verify(vote.getHash(), vote.getSignature()) == false)
 			throw new ValidationException("Signature from "+vote.getOwner()+" did not verify against "+getHash());
 
 		synchronized(this.votes)
@@ -146,7 +144,7 @@ class PendingBlock implements Hashable
 			if (this.votes.containsKey(vote.getOwner()) == false)
 			{
 				this.votes.put(vote.getOwner(), vote);
-				this.voteWeight = this.voteWeight.add(weight);
+				this.voteWeight += weight;
 			}
 			else
 				blocksLog.warn(this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+this.hash);
@@ -156,7 +154,7 @@ class PendingBlock implements Hashable
 		return this.voteWeight;
 	}
 	
-	public UInt256 weight()
+	public long weight()
 	{
 		return this.voteWeight;
 	}

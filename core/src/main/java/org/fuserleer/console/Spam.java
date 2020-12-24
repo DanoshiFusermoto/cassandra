@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
-import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.peers.ConnectedPeer;
@@ -68,7 +68,7 @@ public class Spam extends Function
 				if (context.getLedger().getHead().getHeight() > lastCommittedBlockHeight)
 				{
 					long duration = System.currentTimeMillis()-start;
-					long committedAtoms = context.getLedger().getHead().getInventory(Atom.class).size();
+					long committedAtoms = context.getLedger().getHead().getInventory(InventoryType.ATOMS).size();
 					totalAtomsCommittedCount += committedAtoms;
 					printStream.println("Atoms: "+totalAtomsCommittedCount+" TPS: "+(totalAtomsCommittedCount / TimeUnit.MILLISECONDS.toSeconds(duration)));
 					lastCommittedBlockHeight = context.getLedger().getHead().getHeight();
@@ -84,7 +84,7 @@ public class Spam extends Function
 				if (context.getLedger().getHead().getHeight() > lastCommittedBlockHeight)
 				{
 					long duration = System.currentTimeMillis()-start;
-					long committedAtoms = context.getLedger().getHead().getInventory(Atom.class).size();
+					long committedAtoms = context.getLedger().getHead().getInventory(InventoryType.ATOMS).size();
 					totalAtomsCommittedCount += committedAtoms;
 					printStream.println("Atoms: "+totalAtomsCommittedCount+" TPS: "+(totalAtomsCommittedCount / TimeUnit.MILLISECONDS.toSeconds(duration)));
 					lastCommittedBlockHeight = context.getLedger().getHead().getHeight();

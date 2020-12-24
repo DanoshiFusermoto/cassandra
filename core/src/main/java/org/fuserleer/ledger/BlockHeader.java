@@ -1,6 +1,5 @@
 package org.fuserleer.ledger;
 
-import java.security.cert.Certificate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -8,7 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
@@ -17,7 +15,6 @@ import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
 import org.fuserleer.database.IndexablePrimitive;
-import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -32,12 +29,25 @@ import org.fuserleer.utils.UInt256;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.primitives.Longs;
 
 @SerializerId2("ledger.block.header")
 public final class BlockHeader implements Comparable<BlockHeader>, Hashable, IndexablePrimitive, Cloneable
 {
 	public final static int	MAX_ATOMS = 1024;
+	
+	public static enum InventoryType
+	{
+		CERTIFICATES, ATOMS;
+		
+		@JsonValue
+		@Override
+		public String toString() 
+		{
+			return this.name();
+		}
+	}
 
 	private static final Logger blocksLog = Logging.getLogger("blocks");
 
@@ -74,10 +84,10 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 	@DsonOutput(Output.ALL)
 	private ECPublicKey owner;
 
-	// TODO inventory of atoms, inefficient, find a better method
+	// TODO inventory of atoms, certificates etc, inefficient, find a better method
 	@JsonProperty("inventory")
-	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
-	private Map<Class<? extends Primitive>, List<Hash>> inventory;
+	@DsonOutput(Output.ALL)
+	private Map<InventoryType, List<Hash>> inventory;
 
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
@@ -96,7 +106,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 		super();
 	}
 	
-	BlockHeader(final long height, final Hash previous, final UInt256 stepped, final long index, final Map<Class<? extends Primitive>, List<Hash>> inventory, final Hash merkle, final long timestamp, final ECPublicKey owner)
+	BlockHeader(final long height, final Hash previous, final UInt256 stepped, final long index, final Map<InventoryType, List<Hash>> inventory, final Hash merkle, final long timestamp, final ECPublicKey owner)
 	{
 		if (height < 0)
 			throw new IllegalArgumentException("Height is negative");
@@ -122,17 +132,20 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 		this.index = index;
 		this.timestamp = timestamp;
 
-		this.inventory = new LinkedHashMap<Class<? extends Primitive>, List<Hash>>();
+		this.inventory = new LinkedHashMap<InventoryType, List<Hash>>();
 		Objects.requireNonNull(inventory, "Inventory is null");
 		if (inventory.isEmpty() == true)
 			throw new IllegalArgumentException("Inventory is empty");
 		
-		for (Class<? extends Primitive> primitive : inventory.keySet())
+		for (InventoryType primitive : inventory.keySet())
 		{
-			if (primitive.equals(Certificate.class) == false && primitive.equals(Atom.class) == false)
+			if (primitive.equals(InventoryType.CERTIFICATES) == true)
+				this.inventory.put(InventoryType.CERTIFICATES, inventory.containsKey(primitive) == true ? new ArrayList<Hash>(inventory.get(primitive)) : Collections.emptyList());
+			else if (primitive.equals(InventoryType.ATOMS) == true)
+				this.inventory.put(InventoryType.ATOMS, inventory.containsKey(primitive) == true ? new ArrayList<Hash>(inventory.get(primitive)) : Collections.emptyList());
+			else
 				throw new IllegalArgumentException("Inventory primitive "+primitive+" is not supported");
 			
-			this.inventory.put(primitive, inventory.containsKey(primitive) == true ? new ArrayList<Hash>(inventory.get(primitive)) : Collections.emptyList());
 		}
 	}
 
@@ -148,12 +161,12 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 
 	long getNextIndex() 
 	{
-		return this.index + this.inventory.size();
+		return this.index + this.inventory.getOrDefault(InventoryType.ATOMS, Collections.emptyList()).size();
 	}
 
-	public long getIndexOf(Hash hash)
+	public long getIndexOf(InventoryType type, Hash hash)
 	{
-		return this.index + this.inventory.getOrDefault(Atom.class, Collections.emptyList()).indexOf(hash);
+		return this.index + this.inventory.getOrDefault(type, Collections.emptyList()).indexOf(hash);
 	}
 
 	public long getTimestamp() 
@@ -237,9 +250,9 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 		return this.merkle;
 	}
 
-	public List<Hash> getInventory(Class<? extends Primitive> primitive)
+	public List<Hash> getInventory(InventoryType primitive)
 	{
-		return Collections.unmodifiableList(this.inventory.get(primitive));
+		return Collections.unmodifiableList(this.inventory.getOrDefault(primitive, Collections.emptyList()));
 	}
 
 	public Hash getPrevious() 

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.database.Indexable;
@@ -28,7 +29,8 @@ public final class IndexableCommit
 	public enum Path
 	{
 		BLOCK,
-		ATOM;
+		ATOM,
+		CERTIFICATE;
 
 		@JsonValue
 		@Override
@@ -95,6 +97,8 @@ public final class IndexableCommit
 			{
 				if (BlockHeader.class.isAssignableFrom(step.getContainer()) == true)
 					this.path.put(Path.BLOCK, step.getKey());
+				else if (Certificate.class.isAssignableFrom(step.getContainer()) == true)
+					this.path.put(Path.CERTIFICATE, step.getKey());
 				else if (Atom.class.isAssignableFrom(step.getContainer()) == true)
 					this.path.put(Path.ATOM, step.getKey());
 				else
@@ -113,14 +117,24 @@ public final class IndexableCommit
 
 		if (Atom.class.isAssignableFrom(this.indexable.getContainer()) == true)
 		{
-			if (this.path.size() != 1 || this.path.containsKey(Path.BLOCK) == false)
-				throw new IllegalStateException("Atom indexable commits must have only a Block path element");
+			if (this.path.size() == 1 && this.path.containsKey(Path.BLOCK) == false)
+				throw new IllegalStateException("Atom indexable pre-commit must have a Block path element");
+			else if (this.path.size() == 2 && (this.path.containsKey(Path.BLOCK) == false || this.path.containsKey(Path.CERTIFICATE) == false))
+				throw new IllegalStateException("Atom indexable commit must have a Block and Certificate path element");
+			else if (this.path.size() == 0 || this.path.size() > 2)
+				throw new IllegalStateException("Atom indexable commit is invalid");
 		}
 
 		if (Particle.class.isAssignableFrom(this.indexable.getContainer()) == true)
 		{
 			if (this.path.size() != 2 || this.path.containsKey(Path.BLOCK) == false || this.path.containsKey(Path.ATOM) == false)
 				throw new IllegalStateException("Padticle indexable commits must have both Block and Atom path elements");
+		}
+
+		if (Certificate.class.isAssignableFrom(this.indexable.getContainer()) == true)
+		{
+			if (this.path.size() != 1 || this.path.containsKey(Path.BLOCK) == false)
+				throw new IllegalStateException("Atom indexable commits with certificates must have only a Block path element");
 		}
 	}
 

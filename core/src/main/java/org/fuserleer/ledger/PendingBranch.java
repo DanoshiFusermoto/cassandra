@@ -27,7 +27,7 @@ class PendingBranch
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.blocks = new LinkedList<PendingBlock>();
 		this.head = context.getLedger().getHead();
-		this.accumulator = new StateAccumulator(context);
+		this.accumulator = new StateAccumulator(context, context.getLedger().getStateAccumulator());
 	}
 
 	PendingBranch(Context context, PendingBlock block) throws ValidationException, IOException
@@ -35,7 +35,7 @@ class PendingBranch
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.blocks = new LinkedList<PendingBlock>();
 		this.head = context.getLedger().getHead();
-		this.accumulator = new StateAccumulator(context);
+		this.accumulator = new StateAccumulator(context, context.getLedger().getStateAccumulator());
 
 		validate(block);
 		this.blocks.add(block);
@@ -46,7 +46,7 @@ class PendingBranch
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.blocks = new LinkedList<PendingBlock>();
 		this.head = context.getLedger().getHead();
-		this.accumulator = new StateAccumulator(context);
+		this.accumulator = new StateAccumulator(context, context.getLedger().getStateAccumulator());
 		
 		for (PendingBlock block : blocks)
 		{
@@ -104,8 +104,6 @@ class PendingBranch
 				break;
 		}
 			
-		this.accumulator.commit(header);
-		
 		pendingBlockIterator = this.blocks.descendingIterator();
 		while(pendingBlockIterator.hasNext() == true)
 		{
@@ -125,7 +123,7 @@ class PendingBranch
 		while(pendingBlockIterator.hasNext())
 		{
 			PendingBlock pendingBlock = pendingBlockIterator.next();
-			if (pendingBlock.weight().compareTo(this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pendingBlock.getBlockHeader().getHeight())) >= 0)
+			if (pendingBlock.weight() >= this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pendingBlock.getBlockHeader().getHeight()))
 			{
 				blocksLog.info(this.context.getName()+": Found commit at block with weight "+pendingBlock.weight()+"/"+this.context.getLedger().getVoteRegulator().getTotalVotePower(pendingBlock.getBlockHeader().getHeight())+" to commit list "+pendingBlock);
 				return pendingBlock;
@@ -140,7 +138,7 @@ class PendingBranch
 		for (Atom atom : block.getBlock().getAtoms())
 		{
 			StateMachine stateMachine = new StateMachine(this.context, block.getBlockHeader(), atom, this.accumulator);
-			stateMachine.execute();
+			stateMachine.lock();
 		}
 	}
 

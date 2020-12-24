@@ -7,16 +7,20 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.SerializerId2;
 
 @SerializerId2("ledger.vote.atom.pool")
-public final class AtomPoolVote extends Vote<List<Hash>>
+public final class AtomVote extends Vote<List<Hash>>
 {
-	private AtomPoolVote()
+	private AtomVote()
 	{
 		// SERIALIZER
 	}
 	
-	public AtomPoolVote(final List<Hash> object, final long clock, final ECPublicKey owner)
+	public AtomVote(final List<Hash> object, final ECPublicKey owner)
 	{
-		super(object, true, clock, owner);
+		super(object, true, owner);
 	}
-
+	
+	public List<Hash> getAtoms()
+	{
+		return getObject();
+	}
 }

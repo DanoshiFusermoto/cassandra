@@ -8,11 +8,7 @@ import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.ECSignature;
-import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.Hashable;
-import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.serialization.DsonOutput;
-import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializationException;
 import org.fuserleer.serialization.DsonOutput.Output;
 
@@ -29,27 +25,20 @@ abstract class Vote<T> extends BasicObject implements Primitive
 	private boolean decision;
 
 	@JsonProperty("owner")
-	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	@DsonOutput(Output.ALL)
 	private ECPublicKey owner;
 
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private ECSignature signature;
 	
-	@JsonProperty("clock")
-	@DsonOutput(Output.ALL)
-	private long clock;
-	
 	Vote()
 	{
 		// For serializer
 	}
 	
-	public Vote(final T object, final boolean decision, final long clock, final ECPublicKey owner)
+	public Vote(final T object, final boolean decision, final ECPublicKey owner)
 	{
-		if (clock < 0)
-			throw new IllegalArgumentException("Clock is negative");
-
 		this.object = Objects.requireNonNull(object, "Object is null");
 		
 		// TODO check object is serializable
@@ -58,11 +47,8 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		this.decision = decision;
 	}
 
-	public Vote(final T object, final boolean decision, final long clock, final ECPublicKey owner, final ECSignature signature) throws CryptoException
+	public Vote(final T object, final boolean decision, final ECPublicKey owner, final ECSignature signature) throws CryptoException
 	{
-		if (clock < 0)
-			throw new IllegalArgumentException("Clock is negative");
-		
 		this.object = Objects.requireNonNull(object, "Object is null");
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
 		this.signature = Objects.requireNonNull(signature, "Signature is null");
@@ -80,14 +66,14 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		}
 	}
 
-	public final T getObject()
+	final T getObject()
 	{
 		return this.object;
 	}
 
-	public final long getClock()
+	public final boolean getDecision()
 	{
-		return this.clock;
+		return this.decision;
 	}
 
 	public final ECPublicKey getOwner()
@@ -99,14 +85,6 @@ abstract class Vote<T> extends BasicObject implements Primitive
 	{
 		if (key.getPublicKey().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign wrapped object with key that doesn't match owner");
-
-/*		Hash objectHash;
-		if (this.object instanceof Hash)
-			objectHash = (Hash) this.object;
-		else if (this.object instanceof Hashable)
-			objectHash = ((Hashable)this.object).getHash();
-		else
-			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);*/
 		
 		this.signature = key.sign(getHash());
 	}

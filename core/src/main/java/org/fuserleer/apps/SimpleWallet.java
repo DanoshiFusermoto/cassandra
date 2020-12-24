@@ -23,6 +23,7 @@ import org.fuserleer.ledger.BlockHeader;
 import org.fuserleer.ledger.SearchQuery;
 import org.fuserleer.ledger.SearchResponse;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.TokenSpecification;
 import org.fuserleer.ledger.atoms.TransferParticle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
@@ -216,11 +217,11 @@ public class SimpleWallet implements AutoCloseable
 		}
 	}
 	
-	public Future<BlockHeader> submit(Atom atom) throws InterruptedException
+	public Future<AtomCertificate> submit(Atom atom) throws InterruptedException
 	{
 		synchronized(this.unconsumed)
 		{
-			Future<BlockHeader> future = SimpleWallet.this.context.getLedger().submit(atom);
+			Future<AtomCertificate> future = SimpleWallet.this.context.getLedger().submit(atom);
 			
 			atom.getParticles(TransferParticle.class).forEach(tp -> 
 			{

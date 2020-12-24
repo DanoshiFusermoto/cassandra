@@ -104,8 +104,8 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
-								UInt256 blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getHeight(), block.getHeader().getCertificate().getSigners());
-								if (blockVotePower.compareTo(SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(block.getHeader().getHeight())) < 0)
+								long blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getHeight(), block.getHeader().getCertificate().getSigners());
+								if (blockVotePower >= SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(block.getHeader().getHeight()))
 									continue;
 								
 								if (bestBlock == null || 
@@ -164,7 +164,7 @@ public class SyncHandler implements Service
 									{
 										Hash block = inventoryIterator.next();
 										if (SyncHandler.this.blocks.containsKey(block) == true || 
-											SyncHandler.this.context.getLedger().getLedgerStore().has(Indexable.from(block, BlockHeader.class)) == true || 
+											SyncHandler.this.context.getLedger().getLedgerStore().state(Indexable.from(block, BlockHeader.class)) == CommitState.COMMITTED || 
 											Longs.fromByteArray(block.toByteArray()) <= SyncHandler.this.context.getLedger().getHead().getHeight())
 											inventoryIterator.remove();
 									}
@@ -247,7 +247,7 @@ public class SyncHandler implements Service
 						return;
 					}
 
-					if (SyncHandler.this.context.getLedger().getLedgerStore().has(Indexable.from(syncBlockMessage.getBlock().getHeader().getHash(), BlockHeader.class)) == true)
+					if (SyncHandler.this.context.getLedger().getLedgerStore().state(Indexable.from(syncBlockMessage.getBlock().getHeader().getHash(), BlockHeader.class)) == CommitState.COMMITTED)
 					{
 						syncLog.warn(SyncHandler.this.context.getName()+": Block is committed "+syncBlockMessage.getBlock().getHeader()+" from "+peer);
 						return;
@@ -529,7 +529,7 @@ public class SyncHandler implements Service
 	
 	void commit(LinkedList<Block> branch) throws IOException, ValidationException
 	{
-		StateAccumulator accumulator = new StateAccumulator(this.context);
+		StateAccumulator accumulator = this.context.getLedger().getStateAccumulator();
 
 		// TODO the blocks will be committed separately when sharded
 		List<Block> committedBlocks = new ArrayList<Block>();
@@ -537,17 +537,17 @@ public class SyncHandler implements Service
 		while(blockIterator.hasNext() == true)
 		{
 			Block block = blockIterator.next();
+			this.context.getLedger().getLedgerStore().commit(block);
+			committedBlocks.add(block);
+			
 			for (Atom atom : block.getAtoms())
 			{
 				StateMachine stateMachine = new StateMachine(this.context, block.getHeader(), atom, accumulator);
-				stateMachine.execute();
+				stateMachine.lock();
+				stateMachine.precommit();
+				accumulator.commit(atom);
 			}
-
-			this.context.getLedger().getLedgerStore().commit(block);
-			committedBlocks.add(block);
 		}
-			
-		accumulator.commit(branch.getFirst().getHeader());
 		
 		for (Block committedBlock : committedBlocks)
 		{

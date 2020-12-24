@@ -3,6 +3,7 @@ package org.fuserleer.ledger;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,7 +35,9 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
@@ -332,7 +335,7 @@ public class BlockHandler implements Service
 							
 						// Try to build the block from known atoms and certificates
 						List<Atom> atoms = new ArrayList<Atom>();
-						for (Hash atomHash : blockHeaderMessage.getBlockHeader().getInventory(Atom.class))
+						for (Hash atomHash : blockHeaderMessage.getBlockHeader().getInventory(InventoryType.ATOMS))
 						{
 							Atom atom = BlockHandler.this.context.getLedger().get(atomHash, Atom.class);
 							if (atom == null)
@@ -341,18 +344,18 @@ public class BlockHandler implements Service
 							atoms.add(atom);
 						}
 
-						List<Certificate> certificates = new ArrayList<Certificate>();
-						for (Hash certificateHash : blockHeaderMessage.getBlockHeader().getInventory(Certificate.class))
+						List<AtomCertificate> certificates = new ArrayList<AtomCertificate>();
+						for (Hash certificateHash : blockHeaderMessage.getBlockHeader().getInventory(InventoryType.CERTIFICATES))
 						{
-							Certificate certificate = BlockHandler.this.context.getLedger().get(certificateHash, Certificate.class);
+							AtomCertificate certificate = BlockHandler.this.context.getLedger().get(certificateHash, AtomCertificate.class);
 							if (certificate == null)
 								break;
 							
 							certificates.add(certificate);
 						}
 
-						if (atoms.size() == blockHeaderMessage.getBlockHeader().getInventory(Atom.class).size() && 
-							certificates.size() == blockHeaderMessage.getBlockHeader().getInventory(Certificate.class).size())
+						if (atoms.size() == blockHeaderMessage.getBlockHeader().getInventory(InventoryType.ATOMS).size() && 
+							certificates.size() == blockHeaderMessage.getBlockHeader().getInventory(InventoryType.CERTIFICATES).size())
 						{
 							Block block = new Block(blockHeaderMessage.getBlockHeader(), atoms, certificates);
 
@@ -796,7 +799,7 @@ public class BlockHandler implements Service
 	
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
 	{
-		UInt128 votePower = BlockHandler.this.voteRegulator.getVotePower(BlockHandler.this.context.getNode().getIdentity(), Long.MAX_VALUE);
+		long votePower = BlockHandler.this.voteRegulator.getVotePower(BlockHandler.this.context.getNode().getIdentity(), Long.MAX_VALUE);
 
 		List<BlockVote> branchVotes = new ArrayList<BlockVote>();
 		synchronized(BlockHandler.this.voteClock)
@@ -810,7 +813,7 @@ public class BlockHandler implements Service
 					BlockHandler.this.voteClock.set(pendingBlock.getBlockHeader().getHeight());
 					BlockHandler.this.currentVote.set(pendingBlock.getBlockHeader());
 					
-					if (votePower.compareTo(UInt128.ZERO) > 0)
+					if (votePower > 0)
 					{
 						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getBlockHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity());
 						blockHeaderVote.sign(BlockHandler.this.context.getNode().getKey());
@@ -883,11 +886,15 @@ public class BlockHandler implements Service
 
 	private Block build(final PendingBlock head, final PendingBranch branch) throws IOException
 	{
-		final Set<Hash> branchExclusions = (branch == null || branch.isEmpty() == true) ? Collections.emptySet() : new HashSet<Hash>();
+		final Set<Hash> branchAtomExclusions = (branch == null || branch.isEmpty() == true) ? Collections.emptySet() : new HashSet<Hash>();
+		final Set<Hash> branchCertificateExclusions = (branch == null || branch.isEmpty() == true) ? Collections.emptySet() : new HashSet<Hash>();
 		if (branch != null && branch.isEmpty() == false)
 		{
 			for (PendingBlock block : branch.getBlocks())
-				branchExclusions.addAll(block.getBlockHeader().getInventory(Atom.class));
+			{
+				branchAtomExclusions.addAll(block.getBlockHeader().getInventory(InventoryType.ATOMS));
+				branchCertificateExclusions.addAll(block.getBlockHeader().getInventory(InventoryType.CERTIFICATES));
+			}
 			
 			if (branch != null && branch.isEmpty() == false && head.equals(branch.getLast()) == false)
 				throw new IllegalArgumentException("Head is not top of branch "+head);
@@ -895,15 +902,16 @@ public class BlockHandler implements Service
 		
 		final PendingBlock previous = head;
 		final long initialTarget = (this.context.getNode().getIdentity().asHash().asLong()+previous.getHash().asLong()); 
-		final List<Atom> seedAtoms = this.context.getLedger().getAtomPool().get(initialTarget-Long.MIN_VALUE, initialTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 8, branchExclusions);
+		final List<Atom> seedAtoms = this.context.getLedger().getAtomPool().get(initialTarget-Long.MIN_VALUE, initialTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 8, branchAtomExclusions);
 
 		Block strongestBlock = null;
 		for (int i=0 ; i < this.context.getConfiguration().get("ledger.accumulator.iterations", 1) ; i++)
 		{
 			this.context.getMetaData().increment("ledger.accumulator.iterations");
 
-			StateAccumulator accumulator = new StateAccumulator(this.context);
-			List<Hash> exclusions = new ArrayList<Hash>(branchExclusions);
+			StateAccumulator accumulator = new StateAccumulator(this.context, this.context.getLedger().getStateAccumulator());
+			List<Hash> atomExclusions = new ArrayList<Hash>(branchAtomExclusions);
+			List<Hash> certificateExclusions = new ArrayList<Hash>(branchCertificateExclusions);
 			long nextTarget = initialTarget;
 			
 			final LinkedList<Atom> candidateAtoms = new LinkedList<Atom>();
@@ -915,7 +923,7 @@ public class BlockHandler implements Service
 				if (nextTarget != initialTarget)
 				{
 					// Should only select atoms from the pool that have 2/3 agreement
-					atoms = this.context.getLedger().getAtomPool().get(nextTarget-Long.MIN_VALUE, nextTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 8, exclusions);
+					atoms = this.context.getLedger().getAtomPool().get(nextTarget-Long.MIN_VALUE, nextTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 8, atomExclusions);
 					Collections.shuffle(atoms);
 					if (atoms.isEmpty() == true)
 						break;
@@ -931,18 +939,21 @@ public class BlockHandler implements Service
 						{
 							// FIXME this is junk
 							StateMachine stateMachine = new StateMachine(BlockHandler.this.context, head.getBlockHeader(), atom, accumulator);
-							stateMachine.execute();
-							exclusions.add(atom.getHash());
+							stateMachine.lock();
+							atomExclusions.add(atom.getHash());
 							candidateAtoms.add(atom);
 							nextTarget = atom.getHash().asLong();
 							foundAtom = true;
 							
 							// Try to build a block
-							Block discoveredBlock = new Block(previous.getBlockHeader().getHeight()+1, previous.getHash(), previous.getBlockHeader().getStepped(), previous.getBlockHeader().getNextIndex(), this.context.getNode().getIdentity(), candidateAtoms, Collections.emptyList());
+							Collection<AtomCertificate> candidateCertificates = this.context.getLedger().getStateHandler().get(BlockHeader.MAX_ATOMS, certificateExclusions);
+							Block discoveredBlock = new Block(previous.getBlockHeader().getHeight()+1, previous.getHash(), previous.getBlockHeader().getStepped(), previous.getBlockHeader().getNextIndex(), this.context.getNode().getIdentity(), candidateAtoms, candidateCertificates);
 							if (discoveredBlock.getHeader().getStep() >= BlockHandler.BLOCK_DISTANCE_TARGET) // TODO difficulty stuff
 							{
 								if (strongestBlock == null || strongestBlock.getAtoms().size() < discoveredBlock.getAtoms().size())
 									strongestBlock = discoveredBlock;
+								
+								certificateExclusions.addAll(candidateCertificates.stream().map(c -> c.getHash()).collect(Collectors.toSet()));
 							}
 							
 							break;

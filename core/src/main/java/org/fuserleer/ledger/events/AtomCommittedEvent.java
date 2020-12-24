@@ -2,24 +2,28 @@ package org.fuserleer.ledger.events;
 
 import java.util.Objects;
 
-import org.fuserleer.ledger.BlockHeader;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.AtomCertificate;
 
 public final class AtomCommittedEvent extends AtomEvent 
 {
-	private final BlockHeader block;
+	// TODO dont believe a block reference is needed on the atom commit.  It will
+	//		be referenced in the state accumulator and in order to pre-commit we
+	//		must have a block with a certificate anyway.  CHECK
+//	private final BlockHeader block;
+	private final AtomCertificate certificate;
 	
-	public AtomCommittedEvent(BlockHeader block, Atom atom)
+	public AtomCommittedEvent(Atom atom, AtomCertificate certificate)
 	{
 		super(atom);
 		
-		this.block = Objects.requireNonNull(block);
-		if (this.block.getInventory(Atom.class).contains(atom.getHash()) == false)
-			throw new IllegalArgumentException("Block "+block+" doesnt reference atom "+atom);
+		this.certificate = Objects.requireNonNull(certificate);
+		if (this.certificate.getAtom().equals(atom.getHash()) == false)
+			throw new IllegalArgumentException("Certificate "+certificate.getHash()+" doesnt reference atom "+atom.getHash());
 	}
 	
-	public BlockHeader getBlockHeader()
+	public AtomCertificate getCertificate()
 	{
-		return this.block;
+		return this.certificate;
 	}
 }

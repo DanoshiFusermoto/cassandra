@@ -53,8 +53,6 @@ import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.CustomInteger;
 import org.fuserleer.utils.Longs;
-import org.fuserleer.utils.UInt128;
-import org.fuserleer.utils.UInt256;
 
 import com.google.common.eventbus.Subscribe;
 import com.sleepycat.je.OperationStatus;
@@ -74,8 +72,8 @@ public final class AtomPool implements Service
 		private Atom 		atom;
 		private long 		delay;
 
-		private UInt256		voteWeight;
-		private final Map<ECPublicKey, UInt128> votes;
+		private long		voteWeight;
+		private final Map<ECPublicKey, Long> votes;
 
 		public PendingAtom(Hash atom)
 		{
@@ -83,8 +81,8 @@ public final class AtomPool implements Service
 			this.witnessed = Time.getSystemTime();
 			this.seen = AtomPool.this.context.getLedger().getHead().getHeight();
 			this.delay = 0;
-			this.voteWeight = UInt256.ZERO;
-			this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, UInt128>());
+			this.voteWeight = 0l;
+			this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, Long>());
 		}
 
 		public PendingAtom(Atom atom)
@@ -94,8 +92,8 @@ public final class AtomPool implements Service
 			this.witnessed = Time.getSystemTime();
 			this.seen = AtomPool.this.context.getLedger().getHead().getHeight();
 			this.delay = 0;
-			this.voteWeight = UInt256.ZERO;
-			this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, UInt128>());
+			this.voteWeight = 0l;
+			this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, Long>());
 		}
 		
 		@Override
@@ -166,14 +164,14 @@ public final class AtomPool implements Service
 			return this.votes.containsKey(Objects.requireNonNull(identity, "Vote identity is null"));
 		}
 
-		public UInt256 vote(ECPublicKey identity, UInt128 weight)
+		public long vote(ECPublicKey identity, long weight)
 		{
 			synchronized(this.votes)
 			{
 				if (this.votes.containsKey(Objects.requireNonNull(identity, "Vote identity is null")) == false)
 				{
-					this.votes.put(identity, Objects.requireNonNull(weight, "Vote weight is null"));
-					this.voteWeight = this.voteWeight.add(weight);
+					this.votes.put(identity, weight);
+					this.voteWeight += weight;
 				}
 				else
 					atomsLog.warn(AtomPool.this.context.getName()+": "+identity+" has already cast a vote for "+this.hash);
@@ -182,7 +180,7 @@ public final class AtomPool implements Service
 			}
 		}
 		
-		public UInt256 votes()
+		public long votes()
 		{
 			return this.voteWeight;
 		}
@@ -210,8 +208,8 @@ public final class AtomPool implements Service
 							try
 							{
 								// Dont vote if we have no power!
-								UInt128 localVotePower = AtomPool.this.context.getLedger().getVoteRegulator().getVotePower(AtomPool.this.context.getNode().getIdentity(), pendingAtom.getValue().getSeen());
-								if (localVotePower.compareTo(UInt128.ZERO) > 0)
+								long localVotePower = AtomPool.this.context.getLedger().getVoteRegulator().getVotePower(AtomPool.this.context.getNode().getIdentity(), pendingAtom.getValue().getSeen());
+								if (localVotePower > 0)
 								{
 									pendingAtom.getValue().vote(AtomPool.this.context.getNode().getIdentity(), localVotePower);
 									votes.add(pendingAtom.getValue().getHash());
@@ -257,7 +255,7 @@ public final class AtomPool implements Service
 		
 		private void broadcast(List<Hash> votes) throws IOException, CryptoException
 		{
-			AtomPoolVote atomPoolVote = new AtomPoolVote(votes, AtomPool.this.context.getLedger().getHead().getHeight(), AtomPool.this.context.getNode().getIdentity());
+			AtomVote atomPoolVote = new AtomVote(votes,AtomPool.this.context.getNode().getIdentity());
 			atomPoolVote.sign(AtomPool.this.context.getNode().getKey());
 			AtomPool.this.context.getLedger().getLedgerStore().store(atomPoolVote);
 			
@@ -481,7 +479,7 @@ public final class AtomPool implements Service
 							
 							for (Hash atomPoolVoteHash : getAtomPoolVoteMessage.getInventory())
 							{
-								AtomPoolVote atomPoolVote = AtomPool.this.context.getLedger().getLedgerStore().get(atomPoolVoteHash, AtomPoolVote.class);
+								AtomVote atomPoolVote = AtomPool.this.context.getLedger().getLedgerStore().get(atomPoolVoteHash, AtomVote.class);
 								if (atomPoolVote == null)
 								{
 									if (atomsLog.hasLevel(Logging.DEBUG) == true)
@@ -546,7 +544,7 @@ public final class AtomPool implements Service
 									for (Hash atom : atomPoolVoteMessage.getVotes().getObject())
 									{
 										PendingAtom pendingAtom = AtomPool.this.pending.get(atom);
-										if (pendingAtom == null && AtomPool.this.context.getLedger().state(Indexable.from(atom, Atom.class)) == false)
+										if (pendingAtom == null && AtomPool.this.context.getLedger().getStateAccumulator().state(Indexable.from(atom, Atom.class)).equals(CommitState.COMMITTED) == false)
 										{
 											pendingAtom = new PendingAtom(atom);
 											add(pendingAtom);
@@ -573,8 +571,8 @@ public final class AtomPool implements Service
 										
 										pendingAtom.vote(atomPoolVoteMessage.getVotes().getOwner(), AtomPool.this.context.getLedger().getVoteRegulator().getVotePower(atomPoolVoteMessage.getVotes().getOwner(), pendingAtom.getSeen()));
 										
-										UInt256 voteThresold = AtomPool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pendingAtom.getSeen());
-										if (pendingAtom.votes().compareTo(voteThresold) >= 0)
+										long voteThresold = AtomPool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pendingAtom.getSeen());
+										if (pendingAtom.votes() >= voteThresold)
 											atomsLog.info(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.votes()+"/"+AtomPool.this.context.getLedger().getVoteRegulator().getTotalVotePower(pendingAtom.getSeen()));
 									}
 								}
@@ -605,7 +603,7 @@ public final class AtomPool implements Service
 
 		Thread voteProcessorThread = new Thread(this.voteProcessor);
 		voteProcessorThread.setDaemon(true);
-		voteProcessorThread.setName(this.context.getName()+" Vote Processor");
+		voteProcessorThread.setName(this.context.getName()+" Atom Vote Processor");
 		voteProcessorThread.start();
 		
 		this.context.getEvents().register(this.atomEventListener);
@@ -890,8 +888,8 @@ public final class AtomPool implements Service
 					return false;
 				}
 				
-				UInt256 voteThresold = AtomPool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pa.getSeen());
-				if (pa.votes().compareTo(voteThresold) < 0)
+				long voteThresold = AtomPool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pa.getSeen());
+				if (pa.votes() < voteThresold)
 					return false;
 
 				if (systemTime > pa.getWitnessed() + pa.delay && systemTime < pa.getWitnessed() + AtomPool.this.commitTimeout)

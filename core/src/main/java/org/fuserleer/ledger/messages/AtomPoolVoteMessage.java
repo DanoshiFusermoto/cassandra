@@ -2,7 +2,7 @@ package org.fuserleer.ledger.messages;
 
 import java.util.Objects;
 
-import org.fuserleer.ledger.AtomPoolVote;
+import org.fuserleer.ledger.AtomVote;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -17,25 +17,25 @@ public final class AtomPoolVoteMessage extends Message
 
 	@JsonProperty("votes")
 	@DsonOutput(Output.ALL)
-	private AtomPoolVote votes;
+	private AtomVote votes;
 
 	AtomPoolVoteMessage()
 	{
 		super();
 	}
 
-	public AtomPoolVoteMessage(AtomPoolVote votes)
+	public AtomPoolVoteMessage(AtomVote votes)
 	{
 		super();
 
 		Objects.requireNonNull(votes, "Votes is null");
-		if (votes.getObject().size() > AtomPoolVoteMessage.MAX_VOTES == true)
+		if (votes.getAtoms().size() > AtomPoolVoteMessage.MAX_VOTES == true)
 			throw new IllegalArgumentException("Too many votes cast");
 		
 		this.votes = votes;
 	}
 
-	public AtomPoolVote getVotes()
+	public AtomVote getVotes()
 	{
 		return this.votes;
 	}

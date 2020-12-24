@@ -118,7 +118,21 @@ public class StateMachine implements LedgerInterface
 		return true;
 	}*/
 	
-	public void execute() throws ValidationException, IOException
+	public void lock() throws IOException, ValidationException
+	{
+		execute(CommitState.LOCKED);
+		
+		this.stateAccumulator.lock(this.block, this.atom);
+	}
+	
+	public void precommit() throws IOException, ValidationException
+	{
+		execute(CommitState.PRECOMMITTED);
+		
+		this.stateAccumulator.precommit(this.atom);
+	}
+	
+	private void execute(CommitState state) throws ValidationException, IOException
 	{
 		if (this.prepared == false)
 			prepare();
@@ -128,46 +142,24 @@ public class StateMachine implements LedgerInterface
 			if (ledgerLog.hasLevel(Logging.DEBUG) == true)
 				ledgerLog.debug(this.context.getName()+": Validating particle "+particle);
 			
-			if (this.stateAccumulator.state(Indexable.from(particle.getHash(), Particle.class)) == true)
-				if (this.stateAccumulator.state(Indexable.from(particle.getHash(), Particle.class)) == true)
-					throw new ValidationException("Particle "+particle+" is already in states");
+			if (this.stateAccumulator.state(Indexable.from(particle.getHash(), Particle.class)).index() > state.index())
+				throw new ValidationException("Particle "+particle+" is already in states");
 	
 			if (particle.getSpin().equals(Spin.DOWN) == true &&
 				this.atom.getParticle(Indexable.from(particle.getHash(Spin.UP), Particle.class)) == null && 
-				this.stateAccumulator.state(Indexable.from(particle.getHash(Spin.UP), Particle.class)) == false)
+				this.stateAccumulator.state(Indexable.from(particle.getHash(Spin.UP), Particle.class)).equals(CommitState.COMMITTED) == false)
 				throw new ValidationException("Attempting to spin DOWN particle "+particle+" without a corresponding UP "+particle.getHash(Spin.UP));
 
 			if (particle.getSpin().equals(Spin.DOWN) == true && ledgerLog.hasLevel(Logging.DEBUG) == true)
 				ledgerLog.debug(this.context.getName()+": Attempting to spin DOWN particle "+particle.getHash(Spin.UP)+" -> "+particle.getHash());
 				
 			for (Indexable indexable : particle.getIndexables())
-				if (this.stateAccumulator.state(indexable) == true)
+				if (this.stateAccumulator.state(indexable).index() > state.index())
 					throw new ValidationException("Indexable "+indexable+" within particle "+particle+" is already in state");
 
 			if (Universe.getDefault().getGenesis().contains(particle.getHash()) == false)
 				particle.execute(this);
 		}
-		
-		this.stateAccumulator.store(this.block, this.atom);
-	}
-	
-	public void unexecute() throws ValidationException, IOException
-	{
-		if (this.prepared == false)
-			prepare();
-
-		// TODO need to check for head branch canonicalism here?
-
-		for (Particle particle : this.atom.getParticles())
-		{
-			// TODO need any spin rollback logic here?
-
-			if (this.block.getHash().equals(Universe.getDefault().getGenesis().getHash()) == false)
-				particle.unexecute(this);
-		}
-
-		
-		this.stateAccumulator.delete(this.block, this.atom);
 	}
 	
 	@Override
@@ -183,7 +175,7 @@ public class StateMachine implements LedgerInterface
 	}
 
 	@Override
-	public boolean state(Indexable indexable) throws IOException
+	public CommitState state(Indexable indexable) throws IOException
 	{
 		return this.stateAccumulator.state(indexable);
 	}

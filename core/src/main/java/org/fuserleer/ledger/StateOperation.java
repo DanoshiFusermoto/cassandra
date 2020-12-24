@@ -13,32 +13,32 @@ import org.fuserleer.time.Time;
 
 public class StateOperation
 {
-	public static enum Type 
-	{
-		NOP, STORE, DELETE, PRUNE;
-	}
-	
-	private final Type 			type;
 	private final BlockHeader	head;
 	private final Atom			atom;
 	private final long 			timestamp;
 	
-	private transient Set<Indexable> indexables = null;
-	private transient Set<Identifier> identifiers = null;
+	private transient CommitState		state;
+	private transient Set<Indexable> 	indexables = null;
+	private transient Set<Identifier> 	identifiers = null;
 
-	StateOperation(Type type, BlockHeader head, Atom atom)
+	StateOperation(BlockHeader head, Atom atom, CommitState state)
 	{
-		this.type = Objects.requireNonNull(type);
 		this.head = Objects.requireNonNull(head);
 		this.atom = Objects.requireNonNull(atom);
 		this.timestamp = Time.getLedgerTimeMS();
+		this.state = Objects.requireNonNull(state);
 	}
 
-	public Type getType() 
+	public CommitState getState() 
 	{
-		return this.type;
+		return this.state;
 	}
-	
+
+	void setState(CommitState state) 
+	{
+		this.state = Objects.requireNonNull(state);
+	}
+
 	public long getTimestamp() 
 	{
 		return this.timestamp;
@@ -59,7 +59,6 @@ public class StateOperation
 		if (this.indexables == null)
 		{
 			Set<Indexable> indexables = new HashSet<Indexable>(this.atom.getIndexables()); 
-			indexables.add(Indexable.from(this.atom.getHash(), Atom.class));
 			this.indexables = Collections.unmodifiableSet(indexables);
 		}
 		
@@ -100,9 +99,6 @@ public class StateOperation
 		
 		if (object instanceof StateOperation)
 		{
-			if (this.type.equals(((StateOperation)object).getType()) == false)
-				return false;
-
 			if (this.head.equals(((StateOperation)object).getHead()) == false)
 				return false;
 			
@@ -118,7 +114,7 @@ public class StateOperation
 	@Override
 	public String toString() 
 	{
-		return this.head.getHash()+" "+this.atom.getHash()+" ["+getIndexables().toString()+"] ("+(getIdentifiers() == null ? "" : getIdentifiers())+")";
+		return this.state+" "+this.head.getHash()+" "+this.atom.getHash()+" ["+getIndexables().toString()+"] ("+(getIdentifiers() == null ? "" : getIdentifiers())+")";
 	}
 
 }

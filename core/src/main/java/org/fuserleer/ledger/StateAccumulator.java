@@ -1,19 +1,17 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.common.Primitive;
@@ -30,39 +28,25 @@ public final class StateAccumulator implements LedgerInterface
 {
 	private static final Logger stateLog = Logging.getLogger("state");
 
-	private final Context context ;
+	private final Context context;
 
-	private final List<StateOperation> stateOperationQueue;
+	private final StateProvider parent;
 	private final Map<Hash, Fields> fields;
+	private final Map<Hash, StateOperation> operations;
 	private final Map<Indexable, StateOperation> indexables;
 	private final ReentrantLock lock = new ReentrantLock(true);
 	
-	StateAccumulator(Context context)
+	StateAccumulator(Context context, StateProvider parent)
 	{
 		this.context = Objects.requireNonNull(context);
-		this.stateOperationQueue = new ArrayList<StateOperation>();
+		this.parent = Objects.requireNonNull(parent);
 		this.fields = new LinkedHashMap<Hash, Fields>();
+		this.operations = new HashMap<Hash, StateOperation>();
 		this.indexables = new LinkedHashMap<Indexable, StateOperation>();
 		
-		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
+//		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
 	}
 	
-	StateAccumulator(StateAccumulator other)
-	{
-		other.lock.lock();
-		try
-		{
-			this.context = other.context;
-			this.stateOperationQueue = new ArrayList<StateOperation>(other.stateOperationQueue);
-			this.fields = new LinkedHashMap<Hash, Fields>(other.fields);
-			this.indexables = new LinkedHashMap<Indexable, StateOperation>(other.indexables);
-		}
-		finally
-		{
-			other.lock.unlock();
-		}
-	}
-
 	public void reset()
 	{
 		this.lock.lock();
@@ -70,7 +54,6 @@ public final class StateAccumulator implements LedgerInterface
 		{
 			this.indexables.clear();
 			this.fields.clear();
-			this.stateOperationQueue.clear();
 		}
 		finally
 		{
@@ -78,19 +61,6 @@ public final class StateAccumulator implements LedgerInterface
 		}
 	}
 	
-	Collection<StateOperation> getOperations()
-	{
-		this.lock.lock();
-		try
-		{
-			return Collections.unmodifiableList(new ArrayList<StateOperation>(this.stateOperationQueue));
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-
 	// TODO needs to return a map
 	Set<Entry<Hash, Fields>> getFields()
 	{
@@ -106,7 +76,7 @@ public final class StateAccumulator implements LedgerInterface
 	}
 	
 	@Override
-	public boolean state(Indexable indexable) throws IOException
+	public CommitState state(Indexable indexable) throws IOException
 	{
 		Objects.requireNonNull(indexable);
 		
@@ -115,19 +85,9 @@ public final class StateAccumulator implements LedgerInterface
 		{
 			StateOperation stateOperation = this.indexables.get(indexable);
 			if (stateOperation != null)
-			{
-				if (stateOperation.getType().equals(StateOperation.Type.DELETE) == true)
-					return false;
-				else if (stateOperation.getType().equals(StateOperation.Type.STORE) == true)
-					return true;
-			}
+				return stateOperation.getState();
 
-			// TODO will need a distributed search here when sharded
-			IndexableCommit search = this.context.getLedger().getLedgerStore().search(indexable);
-			if (search != null)
-				return true;
-						
-			return false;
+			return this.parent.state(indexable);
 		}
 		finally
 		{
@@ -154,9 +114,9 @@ public final class StateAccumulator implements LedgerInterface
 			StateOperation stateOperation = this.indexables.get(indexable);
 			if (stateOperation != null)
 			{
-				if (stateOperation.getType().equals(StateOperation.Type.DELETE) == true)
-					return null;
-				else if (stateOperation.getType().equals(StateOperation.Type.STORE) == true)
+//				if (stateOperation.getType().equals(StateOperation.Type.DELETE) == true)
+//					return null;
+//				else if (stateOperation.getType().equals(StateOperation.Type.STORE) == true)
 				{
 					if (Block.class.isAssignableFrom(container) == true)
 					{
@@ -255,32 +215,7 @@ public final class StateAccumulator implements LedgerInterface
 		}
 	}
 
-	void delete(final BlockHeader block, final Atom atom) throws IOException
-	{
-		Objects.requireNonNull(block);
-		
-		this.lock.lock();
-		try
-		{
-			StateOperation operation = new StateOperation(StateOperation.Type.DELETE, block, atom);
-			for (Indexable indexable : operation.getIndexables())
-			{
-				this.indexables.put(indexable, operation);
-
-				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Deleted state "+indexable+" via "+operation);
-			}
-				
-			this.stateOperationQueue.add(operation);
-			this.fields.remove(operation.getAtom().getHash());
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-
-	void store(final BlockHeader block, final Atom atom) throws IOException
+	void lock(final BlockHeader block, final Atom atom)
 	{
 		Objects.requireNonNull(block);
 		Objects.requireNonNull(atom);
@@ -288,16 +223,25 @@ public final class StateAccumulator implements LedgerInterface
 		this.lock.lock();
 		try
 		{
-			StateOperation operation = new StateOperation(StateOperation.Type.STORE, block, atom);
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Locking state in "+atom.getHash());
+
+			StateOperation operation = new StateOperation(block, atom, CommitState.LOCKED);
+			for (Indexable indexable : operation.getIndexables())
+			{
+				if (this.indexables.containsKey(indexable) == true)
+					throw new IllegalStateException("Indexable "+indexable+" is locked");
+			}
+			
 			for (Indexable indexable : operation.getIndexables())
 			{
 				this.indexables.put(indexable, operation);
 
 				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Stored state "+indexable+" via "+operation);
+					stateLog.debug(this.context.getName()+": Locked state "+indexable+" via "+operation);
 			}
-			
-			this.stateOperationQueue.add(operation);
+
+			this.operations.put(atom.getHash(), operation);
 		}
 		finally
 		{
@@ -305,15 +249,91 @@ public final class StateAccumulator implements LedgerInterface
 		}
 	}
 	
-	void store(final Block block) throws IOException
+	void precommit(final Atom atom) throws IOException
 	{
-		Objects.requireNonNull(block);
+		Objects.requireNonNull(atom);
 		
 		this.lock.lock();
 		try
 		{
-			for (Atom atom : block.getAtoms())
-				store(block.getHeader(), atom);
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Precommitting state in "+atom.getHash());
+
+			StateOperation operation = this.operations.get(atom.getHash());
+			if (operation == null)
+				throw new IllegalStateException("Operation for atom "+atom.getHash()+" not found");
+
+			operation.setState(CommitState.PRECOMMITTED);
+
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				for (Indexable indexable : operation.getIndexables())
+					stateLog.debug(this.context.getName()+": Precommitted state "+indexable+" via "+operation);
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	void commit(final Atom atom) throws IOException
+	{
+		Objects.requireNonNull(atom);
+		
+		this.lock.lock();
+		try
+		{
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Committing state in "+atom.getHash());
+
+			StateOperation operation = this.operations.remove(atom.getHash());
+			if (operation == null)
+				throw new IllegalStateException("Operation for atom "+atom.getHash()+" not found");
+
+			operation.setState(CommitState.COMMITTED);
+
+			Fields fields = this.fields.remove(operation.getAtom().getHash());
+			if (fields != null)
+				operation.getAtom().setFields(fields);
+
+			this.context.getLedger().getLedgerStore().commit(Collections.singletonList(operation), this.fields.entrySet());
+
+			for (Indexable indexable : operation.getIndexables())
+			{
+				this.indexables.remove(indexable);
+				if (stateLog.hasLevel(Logging.DEBUG) == true)
+					stateLog.debug(this.context.getName()+": Committed state "+indexable+" via "+operation);
+			}
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	void abort(final Atom atom) throws IOException
+	{
+		Objects.requireNonNull(atom);
+		
+		this.lock.lock();
+		try
+		{
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Aborting state in "+atom.getHash());
+
+			StateOperation operation = this.operations.remove(atom.getHash());
+			if (operation == null)
+				throw new IllegalStateException("Operation for atom "+atom.getHash()+" not found");
+
+			operation.setState(CommitState.ABORTED);
+
+			for (Indexable indexable : operation.getIndexables())
+			{
+				this.indexables.remove(indexable);
+				if (stateLog.hasLevel(Logging.DEBUG) == true)
+					stateLog.debug(this.context.getName()+": Aborted state "+indexable+" via "+operation);
+			}
+			
+			this.fields.remove(operation.getAtom().getHash());
 		}
 		finally
 		{
@@ -326,15 +346,60 @@ public final class StateAccumulator implements LedgerInterface
 		this.lock.lock();
 		try
 		{
-			Iterator<StateOperation> stateOperationIterator = this.stateOperationQueue.iterator();
+			Set<Atom> atomsRemoved = new HashSet<Atom>();
+			Iterator<Indexable> stateOperationIterator = this.indexables.keySet().iterator();
 			while(stateOperationIterator.hasNext() == true)
 			{
-				StateOperation stateOperation = stateOperationIterator.next();
+				Indexable indexable = stateOperationIterator.next();
+				StateOperation stateOperation = this.indexables.get(indexable);
 				if (stateOperation.getHead().getHeight() <= header.getHeight())
 				{
-					for (Indexable indexable : stateOperation.getIndexables())
-						this.indexables.remove(indexable);
+					atomsRemoved.add(stateOperation.getAtom());
+					stateOperationIterator.remove();
+				}
+			}
 
+			for (Atom atom : atomsRemoved)
+				this.fields.remove(atom.getHash());
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	void commits(BlockHeader header) throws IOException
+	{
+		this.lock.lock();
+		try
+		{
+			LinkedHashSet<StateOperation> stateOperationsToCommit = new LinkedHashSet<StateOperation>();
+			Iterator<Indexable> stateOperationIterator = this.indexables.keySet().iterator();
+			while(stateOperationIterator.hasNext() == true)
+			{
+				Indexable indexable = stateOperationIterator.next();
+				StateOperation stateOperation = this.indexables.get(indexable);
+				if (stateOperation.getHead().getHeight() > header.getHeight() && 
+					stateOperation.getState().equals(CommitState.PRECOMMITTED) && 
+					stateOperationsToCommit.contains(stateOperation) == false)
+				{						
+					Fields fields = this.fields.get(stateOperation.getAtom().getHash());
+					if (fields != null)
+						stateOperation.getAtom().setFields(fields);
+
+					stateOperationsToCommit.add(stateOperation);
+				}
+			}
+			
+			this.context.getLedger().getLedgerStore().commit(stateOperationsToCommit, this.fields.entrySet());
+
+			stateOperationIterator = this.indexables.keySet().iterator();
+			while(stateOperationIterator.hasNext() == true)
+			{
+				Indexable indexable = stateOperationIterator.next(); 
+				StateOperation stateOperation = this.indexables.get(indexable);
+				if (stateOperationsToCommit.contains(stateOperation))
+				{
 					this.fields.remove(stateOperation.getAtom().getHash());
 					stateOperationIterator.remove();
 				}
@@ -346,69 +411,8 @@ public final class StateAccumulator implements LedgerInterface
 		}
 	}
 
-	void commit(BlockHeader header) throws IOException
-	{
-		this.lock.lock();
-		try
-		{
-			List<StateOperation> stateOperationsToCommit = new ArrayList<StateOperation>();
-			Iterator<StateOperation> stateOperationIterator = this.stateOperationQueue.iterator();
-			while(stateOperationIterator.hasNext() == true)
-			{
-				StateOperation stateOperation = stateOperationIterator.next();
-				if (stateOperation.getType().equals(StateOperation.Type.STORE))
-				{						
-					Fields fields = this.fields.get(stateOperation.getAtom().getHash());
-					if (fields != null)
-						stateOperation.getAtom().setFields(fields);
-				}
-				else if (stateOperation.getType().equals(StateOperation.Type.DELETE))
-				{
-					// TODO need to do anything with the fields on a delete?
-				}
-				else 
-					throw new IllegalStateException("Illegal StateOperation "+stateOperation);
-				
-				if (stateOperation.getHead().getHeight() > header.getHeight())
-					break;
-				
-				stateOperationsToCommit.add(stateOperation);
-			}
-			
-			this.context.getLedger().getLedgerStore().commit(stateOperationsToCommit, this.fields.entrySet());
-
-			stateOperationIterator = this.stateOperationQueue.iterator();
-			while(stateOperationIterator.hasNext() == true)
-			{
-				StateOperation stateOperation = stateOperationIterator.next();
-				if (stateOperation.getHead().getHeight() <= header.getHeight())
-				{
-					for (Indexable indexable : stateOperation.getIndexables())
-						this.indexables.remove(indexable);
-
-//					this.fields.remove(stateOperation.getAtom().getHash());
-					stateOperationIterator.remove();
-				}
-			}
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-
-	public int storing() 
-	{
-		return this.stateOperationQueue.stream().filter(op -> op.getType().equals(StateOperation.Type.STORE)).collect(Collectors.counting()).intValue();
-	}
-
-	public int deleting() 
-	{
-		return this.stateOperationQueue.stream().filter(op -> op.getType().equals(StateOperation.Type.DELETE)).collect(Collectors.counting()).intValue();
-	}
-
 	public int size() 
 	{
-		return this.stateOperationQueue.size();
+		return this.indexables.size();
 	}
 }

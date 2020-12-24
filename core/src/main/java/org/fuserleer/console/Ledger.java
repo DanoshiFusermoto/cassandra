@@ -28,6 +28,7 @@ public class Ledger extends Function
 			printStream.println("Current head: "+context.getLedger().getHead());
 			printStream.println("Ledger timestamp: "+Time.getLedgerTimeSeconds()+" / "+new Date(Time.getLedgerTimeMS())); // TODO only accurate for simulated time
 			printStream.println("Committed atoms: "+context.getMetaData().get("ledger.commits.atoms", 0l));
+			printStream.println("Committed certs: "+context.getMetaData().get("ledger.commits.certificates", 0l));
 			printStream.println("Commit gets: "+context.getMetaData().get("ddb.commit.gets", 0l));
 			printStream.println("Accumulation (I/A/T): "+context.getMetaData().get("ledger.accumulator.iterations", 0l)+"/"+(context.getMetaData().get("ledger.accumulator.duration", 0l) / Math.max(1, context.getMetaData().get("ledger.accumulator.iterations", 0l)))+"/"+context.getMetaData().get("ledger.accumulator.duration", 0l));
 			printStream.println("Block throughput: "+context.getMetaData().get("ledger.throughput.blocks", 0l));

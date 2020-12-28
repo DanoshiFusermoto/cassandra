@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -33,12 +34,12 @@ import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.ParticleCertificate;
 import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomCommittedEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
-import org.fuserleer.ledger.events.AtomPreCommittedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.messages.GetAtomPoolMessage;
 import org.fuserleer.logging.Logger;
@@ -93,7 +94,7 @@ public final class Ledger implements Service, LedgerInterface
 		this.statePool = new StatePool(this.context);
 		
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
-		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
+//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
 	}
 	
 	@Override
@@ -503,6 +504,14 @@ public final class Ledger implements Service, LedgerInterface
 				atomFuture.completeExceptionally(ex);
 		}
 
+		@Subscribe
+		public void on(AtomCommitTimeoutEvent atomTimeoutEvent)
+		{
+			AtomFuture atomFuture = Ledger.this.atomFutures.remove(atomTimeoutEvent.getAtom().getHash());
+			if (atomFuture != null)
+				atomFuture.completeExceptionally(new TimeoutException("Atom "+atomTimeoutEvent.getAtom().getHash()+" timedout"));
+		}
+
 		// TODO want to float up to listeners registered here about onTimeout, onVerified etc for application domain?
 	};
 	
@@ -515,37 +524,15 @@ public final class Ledger implements Service, LedgerInterface
 			if (Ledger.this.atomPool.add(atomPersistedEvent.getAtom()) == false)
 				ledgerLog.error(Ledger.this.context.getName()+": Atom "+atomPersistedEvent.getAtom().getHash()+" not added to atom pool");
 		}
-
-		private long lastThroughputUpdate = System.currentTimeMillis();
-		private long lastThroughputAtoms = 0;
-		private long lastThroughputParticles = 0;
-		
-		@Subscribe
-		public void on(final AtomPreCommittedEvent atomPreCommittedEvent) 
-		{
-			Ledger.this.atomPool.remove(atomPreCommittedEvent.getAtom().getHash());
-			
-			if (ledgerLog.hasLevel(Logging.DEBUG))
-				ledgerLog.debug(Ledger.this.context.getName()+": Committed atom "+atomPreCommittedEvent.getAtom().getHash());
-			
-			Ledger.this.context.getMetaData().increment("ledger.processed.atoms");
-			this.lastThroughputAtoms++;
-
-			if (System.currentTimeMillis() - this.lastThroughputUpdate > TimeUnit.SECONDS.toMillis(10))
-			{
-				int seconds = (int) TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - this.lastThroughputUpdate);
-				Ledger.this.context.getMetaData().put("ledger.throughput.atoms", (this.lastThroughputAtoms / seconds));
-				Ledger.this.context.getMetaData().put("ledger.throughput.particles", (this.lastThroughputParticles / seconds));
-				
-				this.lastThroughputUpdate = System.currentTimeMillis();
-				this.lastThroughputAtoms = this.lastThroughputParticles = 0;
-			}
-		}
 	};
 	
 	// SYNCHRONOUS BLOCK LISTENER //
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
+		private long lastThroughputUpdate = System.currentTimeMillis();
+		private long lastThroughputAtoms = 0;
+		private long lastThroughputParticles = 0;
+
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent) 
 		{
@@ -567,10 +554,26 @@ public final class Ledger implements Service, LedgerInterface
 			// Lock atom states
 			for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
 			{
+				if (ledgerLog.hasLevel(Logging.DEBUG))
+					ledgerLog.debug(Ledger.this.context.getName()+": Pre-committed atom "+atom.getHash()+" in "+blockCommittedEvent.getBlock().getHeader());
+				
+				Ledger.this.context.getMetaData().increment("ledger.processed.atoms");
+				this.lastThroughputAtoms++;
+
+				if (System.currentTimeMillis() - this.lastThroughputUpdate > TimeUnit.SECONDS.toMillis(10))
+				{
+					int seconds = (int) TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - this.lastThroughputUpdate);
+					Ledger.this.context.getMetaData().put("ledger.throughput.atoms", (this.lastThroughputAtoms / seconds));
+					Ledger.this.context.getMetaData().put("ledger.throughput.particles", (this.lastThroughputParticles / seconds));
+					
+					this.lastThroughputUpdate = System.currentTimeMillis();
+					this.lastThroughputAtoms = this.lastThroughputParticles = 0;
+				}
+
 				try
 				{
+					Ledger.this.atomPool.remove(atom.getHash());
 					Ledger.this.stateAccumulator.lock(blockCommittedEvent.getBlock().getHeader(), atom);
-					Ledger.this.context.getEvents().post(new AtomPreCommittedEvent(blockCommittedEvent.getBlock().getHeader(), atom));
 				}
 				catch (Exception ex)
 				{
@@ -583,6 +586,9 @@ public final class Ledger implements Service, LedgerInterface
 			{
 				try
 				{
+					if (ledgerLog.hasLevel(Logging.DEBUG) == true)
+						ledgerLog.debug(Ledger.this.context.getName()+": Committed certificate "+certificate.getHash()+" for atom "+certificate.getAtom());
+					
 					Atom atom = Ledger.this.getLedgerStore().get(certificate.getAtom(), Atom.class);
 					if (certificate.getDecision() == true)
 					{

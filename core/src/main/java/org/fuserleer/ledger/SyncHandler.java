@@ -105,7 +105,7 @@ public class SyncHandler implements Service
 								}
 								
 								long blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getHeight(), block.getHeader().getCertificate().getSigners());
-								if (blockVotePower >= SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(block.getHeader().getHeight()))
+								if (blockVotePower < SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(block.getHeader().getHeight()))
 									continue;
 								
 								if (bestBlock == null || 

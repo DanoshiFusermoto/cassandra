@@ -25,7 +25,6 @@ import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
-import org.fuserleer.ledger.events.AtomTimeoutEvent;
 import org.fuserleer.ledger.messages.AtomBroadcastMessage;
 import org.fuserleer.ledger.messages.AtomsMessage;
 import org.fuserleer.ledger.messages.GetAtomsMessage;
@@ -379,8 +378,10 @@ public class AtomHandler implements Service
 							
 							if (failedAtomRequests.isEmpty() == false)
 							{
-								for (Hash failedAtomRequest : failedAtomRequests)
-									AtomHandler.this.context.getEvents().post(new AtomTimeoutEvent(failedAtomRequest));
+								// TODO need to do something with failedAtomRequests?
+								// If so AtomTimeoutEvent is probably wrong
+//								for (Hash failedAtomRequest : failedAtomRequests)
+//									AtomHandler.this.context.getEvents().post(new AtomTimeoutEvent(failedAtomRequest));
 								
 								if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
 								{

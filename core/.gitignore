@@ -11,7 +11,7 @@ bin/
 # execution stuff
 *.key
 *.wallet
-/database/
-/logs/
+database/
+logs/
 /default.config
 /logger.config

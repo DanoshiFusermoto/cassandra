@@ -19,7 +19,6 @@ import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.events.EventListener;
-import org.fuserleer.ledger.BlockHeader;
 import org.fuserleer.ledger.SearchQuery;
 import org.fuserleer.ledger.SearchResponse;
 import org.fuserleer.ledger.atoms.Atom;
@@ -27,6 +26,7 @@ import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.TokenSpecification;
 import org.fuserleer.ledger.atoms.TransferParticle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomCommittedEvent;
 import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
@@ -271,6 +271,22 @@ public class SimpleWallet implements AutoCloseable
 			});
 		}
 		
+		@Subscribe
+		public void on(final AtomCommitTimeoutEvent event) 
+		{
+			event.getAtom().getParticles(TransferParticle.class).forEach(tp -> 
+			{
+				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
+					return;
+				
+				if (tp.getSpin().equals(Spin.UP) == true)
+					SimpleWallet.this.unconsumed.remove(tp);
+				
+				if (tp.getSpin().equals(Spin.DOWN) == true)
+					SimpleWallet.this.unconsumed.add(tp.get(Spin.UP));
+			});
+		}
+
 		@Subscribe
 		public void on(final AtomExceptionEvent event) 
 		{

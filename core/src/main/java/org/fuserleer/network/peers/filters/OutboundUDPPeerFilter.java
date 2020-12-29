@@ -3,18 +3,17 @@ package org.fuserleer.network.peers.filters;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.Context;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.UInt128;
 
-public class OutboundTCPPeerFilter extends StandardPeerFilter
+public final class OutboundUDPPeerFilter extends StandardPeerFilter
 {
 	private final Set<UInt128>	shardGroups;
 	
-	public OutboundTCPPeerFilter(Context context, Set<UInt128> shardGroups)
+	public OutboundUDPPeerFilter(Context context, Set<UInt128> shardGroups)
 	{
 		super(context);
 		
@@ -32,10 +31,6 @@ public class OutboundTCPPeerFilter extends StandardPeerFilter
 			if (getContext().getLedger().getShardGroup(peer.getNode().getIdentity(), getContext().getLedger().getHead().getHeight()).compareTo(shardGroup) != 0)
 				return true;
 		}
-
-		if (peer.getAttemptedAt() > 0 && peer.getDisconnectedAt() > 0 && 
-			Time.getSystemTime() - peer.getDisconnectedAt() < TimeUnit.SECONDS.toMillis(getContext().getConfiguration().get("network.peer.inactivity", 30)))
-			return true;
 		
 		if (peer.getAttemptAt() > 0 && 
 			Time.getSystemTime() < peer.getAttemptAt())

@@ -30,12 +30,23 @@ import org.fuserleer.ledger.messages.AtomsMessage;
 import org.fuserleer.ledger.messages.GetAtomsMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.Network;
 import org.fuserleer.network.Protocol;
+import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
+import org.fuserleer.network.discovery.RemoteShardDiscovery;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
+import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
+import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
+import org.fuserleer.network.peers.filters.OutboundUDPPeerFilter;
 import org.fuserleer.node.Node;
+import org.fuserleer.utils.UInt128;
+import org.fuserleer.utils.UInt256;
+
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
 
 public class AtomHandler implements Service
 {
@@ -50,7 +61,8 @@ public class AtomHandler implements Service
 	
 	private Executable atomProcessor = new Executable()
 	{
-		private List<Hash> atomsToBroadcast = new ArrayList<>();
+		private List<Hash> atomsToBroadcastLocal = new ArrayList<>();
+		private Multimap<UInt128, Hash> atomsToBroadcastRemote = HashMultimap.create();
 		
 		@Override
 		public void execute()
@@ -79,7 +91,17 @@ public class AtomHandler implements Service
 								
 			                	AtomHandler.this.context.getLedger().getLedgerStore().store(atom.getValue());  // TODO handle failure
 			                	AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(atom.getValue()));
-			                	this.atomsToBroadcast.add(atom.getValue().getHash());
+
+			                	this.atomsToBroadcastLocal.add(atom.getValue().getHash());
+			                	for (UInt256 shard : atom.getValue().getShards())
+			                	{
+			                		UInt128 shardGroup = AtomHandler.this.context.getLedger().getShardGroup(shard);
+			                		if (shardGroup.compareTo(AtomHandler.this.context.getLedger().getShardGroup(AtomHandler.this.context.getNode().getIdentity())) == 0)
+			                			continue;
+			                		
+			                		this.atomsToBroadcastRemote.put(shardGroup, atom.getKey());
+			                	}
+			                		
 			                	AtomHandler.this.atomQueue.remove(atom.getKey());
 							}
 	/*						catch (ValidationException vex)
@@ -94,15 +116,14 @@ public class AtomHandler implements Service
 							}
 						}
 						
-						if (this.atomsToBroadcast.size() == AtomBroadcastMessage.MAX_ATOMS ||
-							(System.currentTimeMillis() - lastBroadcast > TimeUnit.SECONDS.toMillis(1) && this.atomsToBroadcast.isEmpty() == false))
+						if (this.atomsToBroadcastLocal.size() == AtomBroadcastMessage.MAX_ATOMS ||
+							(System.currentTimeMillis() - lastBroadcast > TimeUnit.SECONDS.toMillis(1) && this.atomsToBroadcastLocal.isEmpty() == false))
 						{
-							if (atomsLog.hasLevel(Logging.DEBUG))
-								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+this.atomsToBroadcast.size()+" atoms");
-							
 							lastBroadcast = System.currentTimeMillis();
-							broadcast(this.atomsToBroadcast);
-							this.atomsToBroadcast.clear();
+							broadcastLocal(this.atomsToBroadcastLocal);
+							broadcastRemote(this.atomsToBroadcastRemote);
+							this.atomsToBroadcastLocal.clear();
+							this.atomsToBroadcastRemote.clear();
 						}
 					} 
 					catch (InterruptedException e) 
@@ -119,9 +140,12 @@ public class AtomHandler implements Service
 			}
 		}
 		
-		private void broadcast(List<Hash> atomsToBroadcast)
+		private void broadcastLocal(List<Hash> atomsToBroadcastLocal)
 		{
-			AtomBroadcastMessage atomBroadcastMessage = new AtomBroadcastMessage(atomsToBroadcast);
+			if (atomsLog.hasLevel(Logging.DEBUG)) 
+				atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+atomsToBroadcastLocal.size()+" atoms locally");
+
+			AtomBroadcastMessage atomBroadcastMessage = new AtomBroadcastMessage(atomsToBroadcastLocal);
 			for (ConnectedPeer connectedPeer : AtomHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
 			{
 				if (AtomHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
@@ -137,7 +161,40 @@ public class AtomHandler implements Service
 				}
 				catch (IOException ex)
 				{
-					atomsLog.error(AtomHandler.this.context.getName()+": Unable to send AtomBroadcastMessage for broadcast of " + atomsToBroadcast.size() + " atoms to " + connectedPeer, ex);
+					atomsLog.error(AtomHandler.this.context.getName()+": Unable to send AtomBroadcastMessage for broadcast of " + atomsToBroadcastLocal.size() + " atoms to " + connectedPeer, ex);
+				}
+			}
+
+		}
+		
+		private void broadcastRemote(Multimap<UInt128, Hash> atomsToBroadcastRemote)
+		{
+			if (atomsLog.hasLevel(Logging.DEBUG)) 
+				atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+atomsToBroadcastRemote.size()+" atoms remotely");
+
+			for (UInt128 shardGroup : atomsToBroadcastRemote.keySet())
+			{
+				AtomBroadcastMessage atomBroadcastMessage = new AtomBroadcastMessage(atomsToBroadcastRemote.get(shardGroup));
+				OutboundUDPPeerFilter outboundUDPPeerFilter = new OutboundUDPPeerFilter(AtomHandler.this.context, Collections.singleton(shardGroup));
+				try
+				{
+					Collection<Peer> preferred = new RemoteShardDiscovery(AtomHandler.this.context).discover(outboundUDPPeerFilter);
+					for (Peer preferredPeer : preferred)
+					{
+						try
+						{
+							ConnectedPeer connectedPeer = AtomHandler.this.context.getNetwork().connect(preferredPeer.getURI(), Direction.OUTBOUND, Protocol.UDP);
+							AtomHandler.this.context.getNetwork().getMessaging().send(atomBroadcastMessage, connectedPeer);
+						}
+						catch (IOException ex)
+						{
+							atomsLog.error(AtomHandler.this.context.getName()+": Unable to send AtomBroadcastMessage of " + atomsToBroadcastRemote.get(shardGroup) + " atoms to " + preferredPeer, ex);
+						}
+					}
+				}
+				catch (IOException ex)
+				{
+					atomsLog.error(AtomHandler.this.context.getName()+": Discovery of preferred peers in shard group "+shardGroup+" for AtomBroadcastMessage of " + atomsToBroadcastRemote.get(shardGroup) + " atoms failed", ex);
 				}
 			}
 		}

@@ -34,6 +34,7 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
@@ -1049,6 +1050,12 @@ public final class AtomPool implements Service
 		
 		@Subscribe
 		public void on(AtomExceptionEvent event)
+		{
+			AtomPool.this.remove(event.getAtom().getHash());
+		}
+
+		@Subscribe
+		public void on(AtomCommitTimeoutEvent event)
 		{
 			AtomPool.this.remove(event.getAtom().getHash());
 		}

@@ -65,6 +65,8 @@ import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
+import org.fuserleer.utils.UInt128;
+import org.fuserleer.utils.UInt256;
 
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -116,7 +118,7 @@ public final class Network implements Service
 					buffer.get(data);
 					DatagramPacket datagramPacket = new DatagramPacket(data, data.length, socketAddress);
 		    		if (Network.this.datagramQueue.offer(datagramPacket) == false)
-		    			networkLog.error("UDP datagram could not be queued");
+		    			networkLog.error(Network.this.context.getName()+": UDP datagram could not be queued");
 
 		    		datagramPacket = null;
 		    		buffer.clear();
@@ -166,7 +168,7 @@ public final class Network implements Service
 						{
 							if ((message instanceof NodeMessage) == false)
 							{
-								networkLog.error(datagramPacket.getAddress().toString()+" did not send NodeMessage on connect");
+								networkLog.error(Network.this.context.getName()+": "+datagramPacket.getAddress().toString()+" did not send NodeMessage on connect");
 								continue;
 							}
 
@@ -181,7 +183,7 @@ public final class Network implements Service
 					}
 					catch (Exception ex)
 					{
-						networkLog.error("UDP "+datagramPacket.getAddress().toString()+" error", ex);
+						networkLog.error(Network.this.context.getName()+": UDP "+datagramPacket.getAddress().toString()+" error", ex);
 						continue;
 		    		}
 		    		finally
@@ -211,7 +213,7 @@ public final class Network implements Service
     			URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), node.getPort());
 				if (Network.this.has(node.getIdentity(), Protocol.TCP) == true)
 				{
-					networkLog.error(node.getIdentity()+" already has a socked assigned");
+					networkLog.error(Network.this.context.getName()+": "+node.getIdentity()+" already has a socked assigned");
 					return null;
 				}
 
@@ -250,7 +252,7 @@ public final class Network implements Service
 						Message message = Message.parse(socket.getInputStream());
 						if ((message instanceof NodeMessage) == false)
 						{
-							networkLog.error(socket.toString()+" did not send NodeMessage on connect");
+							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" did not send NodeMessage on connect");
 							socket.close();
 							continue;
 						}
@@ -258,7 +260,16 @@ public final class Network implements Service
 						NodeMessage nodeMessage = (NodeMessage)message;
 						if (nodeMessage.verify(nodeMessage.getNode().getIdentity()) == false)
 						{
-							networkLog.error(socket.toString()+" NodeMessage failed verification");
+							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" NodeMessage failed verification");
+							socket.close();
+							continue;
+						}
+						
+						UInt128 remoteShardGroup = Network.this.context.getLedger().getShardGroup(nodeMessage.getNode().getIdentity(), Network.this.context.getLedger().getHead().getHeight());
+						UInt128 localShardGroup = Network.this.context.getLedger().getShardGroup(Network.this.context.getNode().getIdentity(), Network.this.context.getLedger().getHead().getHeight());
+						if (remoteShardGroup.compareTo(localShardGroup) != 0)
+						{
+							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" Remote node is not located in expected shard group "+localShardGroup);
 							socket.close();
 							continue;
 						}
@@ -271,7 +282,7 @@ public final class Network implements Service
 						
 						if (Network.this.isWhitelisted(uri) == false)
 					    {
-							networkLog.debug(uri.getHost()+" is not whitelisted");
+							networkLog.debug(Network.this.context.getName()+": "+uri.getHost()+" is not whitelisted");
 							socket.close();
 							continue;
 					    }
@@ -279,7 +290,7 @@ public final class Network implements Service
 						List<ConnectedPeer> connected = Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.INBOUND)).collect(Collectors.toList());
 						if (connected.size() >= Network.this.context.getConfiguration().get("network.connections.in", 8))
 						{
-							networkLog.debug(socket.toString()+" all inbound slots occupied");
+							networkLog.debug(Network.this.context.getName()+": "+socket.toString()+" all inbound slots occupied");
 							socket.close();
 							continue;
 						}
@@ -292,7 +303,7 @@ public final class Network implements Service
 					}
 					catch (Exception ex)
 					{
-						networkLog.error("TCP "+socket.getInetAddress()+" error", ex);
+						networkLog.error(Network.this.context.getName()+": TCP "+socket.getInetAddress()+" error", ex);
 						continue;
 		    		}
 		    		finally
@@ -306,21 +317,21 @@ public final class Network implements Service
 	    			{
 	    				try
 	    				{
-	    					networkLog.error("TCPServerSocket died "+Network.this.TCPServerSocket);
+	    					networkLog.error(Network.this.context.getName()+": TCPServerSocket died "+Network.this.TCPServerSocket);
 		    				Network.this.TCPServerSocket = new ServerSocket(Network.this.TCPServerSocket.getLocalPort(), 16, Network.this.TCPServerSocket.getInetAddress());
 		    				Network.this.TCPServerSocket.setReceiveBufferSize(65536);
 		    				Network.this.TCPServerSocket.setSoTimeout(1000);
-		    				networkLog.info("Recreated TCPServerSocket on "+Network.this.TCPServerSocket);
+		    				networkLog.info(Network.this.context.getName()+": Recreated TCPServerSocket on "+Network.this.TCPServerSocket);
 	    				}
 	    				catch (Exception ex)
 	    				{
-	    					networkLog.fatal("TCPServerSocket death is fatal", ex);
+	    					networkLog.fatal(Network.this.context.getName()+": TCPServerSocket death is fatal", ex);
 	    				}
 	    			}
 	    		}
 	    		catch (Exception ex)
 	    		{
-	    			networkLog.fatal("TCPServerSocket exception ", ex);
+	    			networkLog.fatal(Network.this.context.getName()+": TCPServerSocket exception ", ex);
 	    		}
 	    	}
 		}
@@ -454,7 +465,8 @@ public final class Network implements Service
 					// Discovery / Rotation //
 					try
 					{
-						Collection<Peer> preferred = new RemoteLedgerDiscovery(Network.this.context).discover(new OutboundTCPPeerFilter(Network.this.context));
+						OutboundTCPPeerFilter outboundTCPPeerFilter = new OutboundTCPPeerFilter(Network.this.context, Collections.singleton(Network.this.context.getLedger().getShardGroup(Network.this.context.getNode().getIdentity())));
+						Collection<Peer> preferred = new RemoteLedgerDiscovery(Network.this.context).discover(outboundTCPPeerFilter);
 						preferred.removeAll(Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.INBOUND)).collect(Collectors.toList()));
 
 						List<ConnectedPeer> connected = Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.OUTBOUND)).collect(Collectors.toList());

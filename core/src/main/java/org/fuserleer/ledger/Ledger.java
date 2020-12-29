@@ -19,6 +19,7 @@ import org.fuserleer.Service;
 import org.fuserleer.Universe;
 import org.fuserleer.common.Match;
 import org.fuserleer.common.Primitive;
+import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
@@ -49,6 +50,8 @@ import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.node.Node;
+import org.fuserleer.utils.UInt128;
+import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
 import com.google.common.annotations.VisibleForTesting;
@@ -463,6 +466,55 @@ public final class Ledger implements Service, LedgerInterface
 		}
 
 		return this.synced.get();
+	}
+	
+	// SHARD FUNCTIONS //
+	public int numShardGroups(final long height)
+	{
+		// TODO dynamic shard group count from height / epoch
+		return Universe.getDefault().shardGroupCount();
+	}
+	
+	public UInt128 getShardGroup(final ECPublicKey identity)
+	{
+		return getShardGroup(Objects.requireNonNull(identity, "Identity is null").asHash(), getHead().getHeight());
+	}
+
+	public UInt128 getShardGroup(final ECPublicKey identity, final long height)
+	{
+		return getShardGroup(Objects.requireNonNull(identity, "Identity is null").asHash(), height);
+	}
+
+	public UInt128 getShardGroup(final Hash hash)
+	{
+		return getShardGroup(Objects.requireNonNull(hash, "Hash is null"), getHead().getHeight());
+	}
+	
+	public UInt128 getShardGroup(final Hash hash, final long height)
+	{
+		return getShardGroup(UInt256.from(Objects.requireNonNull(hash, "Hash is null").toByteArray()), height);
+	}
+
+	public UInt128 getShardGroup(final UInt256 shard)
+	{
+		return getShardGroup(Objects.requireNonNull(shard, "Shard is null"), getHead().getHeight());
+	}
+	
+	public UInt128 getShardGroup(final UInt256 shard, final long height)
+	{
+		Objects.requireNonNull(shard, "Shard is null");
+		if (shard.equals(UInt256.ZERO) == true)
+			throw new IllegalArgumentException("Shard is ZERO");
+		
+		if (height < 0)
+			throw new IllegalArgumentException("Height is negative");
+
+		int numShardGroups = numShardGroups(height);
+		UInt256 divisor = UInt256.ZERO.invert().divide(UInt256.from(numShardGroups)).add(UInt256.ONE);
+		if (divisor.compareTo(UInt256.ZERO) != 0)
+			return shard.divide(divisor).getLow();
+		else
+			return UInt128.ZERO;
 	}
 	
 	// ASYNC ATOM LISTENER //

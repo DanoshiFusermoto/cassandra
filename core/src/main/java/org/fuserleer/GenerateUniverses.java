@@ -4,7 +4,6 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.MerkleTree;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.Universe;
 import org.fuserleer.ledger.Block;
@@ -54,7 +53,8 @@ public final class GenerateUniverses
 		this.universeKey = ECKeyPair.fromFile(new File(deploymentKeyPath), true);
 
 		// TODO want to be able to specify multiple nodes to get the genesis mass as bootstrapping
-		String nodeKeys = this.configuration.get("node.keys", "A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf,AtOM21m9f9DxaR7i2zpM1HNfzazSziwJv9smNsg9JHsO,A8h8Em/ml6X5I5amEMg/Mdz0PgcBwAI3gTUTTPCcjDyU");
+//		String nodeKeys = this.configuration.get("node.keys", "A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf,AtOM21m9f9DxaR7i2zpM1HNfzazSziwJv9smNsg9JHsO,A8h8Em/ml6X5I5amEMg/Mdz0PgcBwAI3gTUTTPCcjDyU");
+		String nodeKeys = this.configuration.get("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5");
 		this.nodeKeys = new LinkedHashSet<ECPublicKey>();
 		
 		StringTokenizer nodeKeysTokenizer = new StringTokenizer(nodeKeys, ",");
@@ -80,16 +80,16 @@ public final class GenerateUniverses
 		long universeTimestampSeconds = this.configuration.get("universe.timestamp", 1136073600);
 		long universeTimestampMillis = TimeUnit.SECONDS.toMillis(universeTimestampSeconds);
 
-		universes.add(buildUniverse(10000, "Mainnet", "The public universe", Universe.Type.PRODUCTION, universeTimestampMillis, (int) TimeUnit.DAYS.toSeconds(1)));
-		universes.add(buildUniverse(20000, "Testnet", "The test universe", Universe.Type.TEST, universeTimestampMillis, (int) TimeUnit.HOURS.toSeconds(1)));
-		universes.add(buildUniverse(30000, "Devnet", "The development universe", Universe.Type.DEVELOPMENT, universeTimestampMillis, (int) TimeUnit.HOURS.toSeconds(1)));
+		universes.add(buildUniverse(10000, "Mainnet", "The public universe", Universe.Type.PRODUCTION, universeTimestampMillis, 2, (int) TimeUnit.DAYS.toSeconds(1)));
+		universes.add(buildUniverse(20000, "Testnet", "The test universe", Universe.Type.TEST, universeTimestampMillis, 2, (int) TimeUnit.HOURS.toSeconds(1)));
+		universes.add(buildUniverse(30000, "Devnet", "The development universe", Universe.Type.DEVELOPMENT, universeTimestampMillis, 2, (int) TimeUnit.HOURS.toSeconds(1)));
 
 		return universes;
 	}
 
-	private Universe buildUniverse(int port, String name, String description, Universe.Type type, long timestamp, int epoch) throws Exception 
+	private Universe buildUniverse(int port, String name, String description, Universe.Type type, long timestamp, int shardGroups, int epoch) throws Exception 
 	{
-		byte universeMagic = (byte) (Universe.computeMagic(this.universeKey.getPublicKey(), timestamp, epoch, port, type) & 0xFF);
+		byte universeMagic = (byte) (Universe.computeMagic(this.universeKey.getPublicKey(), timestamp, shardGroups, epoch, port, type) & 0xFF);
 		Block universeBlock = createGenesisBlock(universeMagic, timestamp);
 
 		Universe universe = Universe.newBuilder()
@@ -99,6 +99,7 @@ public final class GenerateUniverses
 			.type(type)
 			.timestamp(timestamp)
 			.epoch(epoch)
+			.shardGroups(shardGroups)
 			.creator(this.universeKey.getPublicKey())
 			.setGenesis(universeBlock)
 			.setGenodes(this.nodeKeys)
@@ -123,10 +124,7 @@ public final class GenerateUniverses
 		transferParticle.sign(this.universeKey);
 
 		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
-		final MerkleTree merkle = new MerkleTree();
-		atoms.forEach(a -> { merkle.appendLeaf(a.getHash()); });
-		
-		Block genesisBlock = new Block(0l, Hash.ZERO, UInt256.ZERO, 0, merkle.buildTree(), timestamp, this.universeKey.getPublicKey(), atoms);
+		Block genesisBlock = new Block(0l, Hash.ZERO, UInt256.ZERO, 0, timestamp, this.universeKey.getPublicKey(), atoms, Collections.emptyList());
 		genesisBlock.getHeader().sign(this.universeKey);
 		return genesisBlock;
 	}

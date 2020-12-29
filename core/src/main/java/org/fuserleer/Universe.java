@@ -76,6 +76,7 @@ public class Universe extends BasicObject
 		private Type type;
 		private Long timestamp;
 		private Integer epoch;
+		private Integer shardGroups;
 		private ECPublicKey creator;
 		private Block genesis;
 		private LinkedHashSet<ECPublicKey> genodes;
@@ -169,6 +170,21 @@ public class Universe extends BasicObject
 		}
 
 		/**
+		 * Sets the initial shard group count of the universe.
+		 *
+		 * @param shardGroups The quantity of initial shard groups.
+		 * @return A reference to {@code this} to allow method chaining.
+		 */
+		public Builder shardGroups(int shardGroups) 
+		{
+			if (shardGroups < 1)
+				throw new IllegalArgumentException("Invalid shard groups: " + shardGroups);
+			
+			this.shardGroups = shardGroups;
+			return this;
+		}
+
+		/**
 		 * Sets the universe creators public key.
 		 *
 		 * @param creator The universe creators public key.
@@ -221,6 +237,7 @@ public class Universe extends BasicObject
 			require(this.creator, "Creator");
 			require(this.genesis , "Genesis block");
 			require(this.genodes, "Genesis nodes");
+			require(this.shardGroups, "Initial shard groups");
 			return new Universe(this);
 		}
 
@@ -250,9 +267,9 @@ public class Universe extends BasicObject
 	 * @param type universe type to use when calculating universe magic
 	 * @return The universe magic
 	 */
-	public static long computeMagic(ECPublicKey creator, long timestamp, int epoch, int port, Type type) 
+	public static long computeMagic(ECPublicKey creator, long timestamp, int shardGroups, int epoch, int port, Type type) 
 	{
-		return 31l * Longs.fromByteArray(creator.getBytes()) * 19l * timestamp * 13l * epoch * 7l * port + type.ordinal();
+		return 31l * Longs.fromByteArray(creator.getBytes()) * 19l * timestamp * 13l * epoch * 7l * port * 5l * shardGroups + type.ordinal();
 	}
 
 	public enum Type
@@ -288,6 +305,10 @@ public class Universe extends BasicObject
 	@JsonProperty("epoch")
 	@DsonOutput(Output.ALL)
 	private int	epoch;
+
+	@JsonProperty("shard_groups")
+	@DsonOutput(Output.ALL)
+	private int	shardGroups;
 
 	@JsonProperty("type")
 	@DsonOutput(Output.ALL)
@@ -325,6 +346,7 @@ public class Universe extends BasicObject
 		this.creator = builder.creator;
 		this.genesis = builder.genesis;
 		this.genodes = builder.genodes;
+		this.shardGroups = builder.shardGroups;
 	}
 
 	/**
@@ -336,7 +358,7 @@ public class Universe extends BasicObject
 	@DsonOutput(value = Output.HASH, include = false)
 	public long getMagic() 
 	{
-		return computeMagic(this.creator, this.timestamp, this.epoch, this.port, this.type);
+		return computeMagic(this.creator, this.timestamp, this.shardGroups, this.epoch, this.port, this.type);
 	}
 
 	/**
@@ -352,6 +374,16 @@ public class Universe extends BasicObject
 	public long toEpoch(long height)
 	{
 		return height / this.epoch;
+	}
+
+	/**
+	 * The number of initial shard groups.
+	 *
+	 * @return
+	 */
+	public int shardGroupCount()
+	{
+		return this.shardGroups;
 	}
 
 	/**

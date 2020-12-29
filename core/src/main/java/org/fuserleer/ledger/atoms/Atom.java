@@ -17,9 +17,11 @@ import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.database.IndexablePrimitive;
+import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -171,5 +173,20 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 				particle.setField(field);
 		}
 	}
-
+	
+	public Set<UInt256> getShards()
+	{
+		Set<Indexable> indexables = new HashSet<Indexable>();
+		for (Particle particle : this.particles)
+		{
+			if (particle.getSpin().equals(Spin.UP) == true || particle.getSpin().equals(Spin.DOWN) == true)
+				indexables.add(Indexable.from(particle.getHash(Spin.UP), Particle.class));
+			
+			if (particle.getSpin().equals(Spin.DOWN) == true)
+				indexables.add(Indexable.from(particle.getHash(Spin.DOWN), Particle.class));
+		}
+		this.particles.stream().forEach(p -> indexables.addAll(p.getIndexables()));
+		this.particles.stream().forEach(p -> indexables.addAll(p.getParameters()));
+		return Collections.unmodifiableSet(indexables.stream().map(i -> UInt256.from(i.getHash().toByteArray())).collect(Collectors.toSet()));
+	}
 }

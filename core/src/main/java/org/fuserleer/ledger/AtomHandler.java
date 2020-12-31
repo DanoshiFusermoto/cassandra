@@ -30,20 +30,16 @@ import org.fuserleer.ledger.messages.AtomsMessage;
 import org.fuserleer.ledger.messages.GetAtomsMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Network;
 import org.fuserleer.network.Protocol;
-import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
 import org.fuserleer.network.discovery.RemoteShardDiscovery;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
-import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
 import org.fuserleer.network.peers.filters.OutboundUDPPeerFilter;
 import org.fuserleer.node.Node;
 import org.fuserleer.utils.UInt128;
-import org.fuserleer.utils.UInt256;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
@@ -89,18 +85,21 @@ public class AtomHandler implements Service
 
 								// TODO atom verification here (signatures etc)
 								
+								// Store all valid atoms even if they aren't within the local shard group.
+								// Those atoms will be broadcast the the relevant groups and it needs to be stored
+								// to be able to serve the requests for it.  Such atoms can be pruned per epoch
 			                	AtomHandler.this.context.getLedger().getLedgerStore().store(atom.getValue());  // TODO handle failure
-			                	AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(atom.getValue()));
-
-			                	this.atomsToBroadcastLocal.add(atom.getValue().getHash());
-			                	for (UInt256 shard : atom.getValue().getShards())
-			                	{
-			                		UInt128 shardGroup = AtomHandler.this.context.getLedger().getShardGroup(shard);
-			                		if (shardGroup.compareTo(AtomHandler.this.context.getLedger().getShardGroup(AtomHandler.this.context.getNode().getIdentity())) == 0)
-			                			continue;
-			                		
-			                		this.atomsToBroadcastRemote.put(shardGroup, atom.getKey());
-			                	}
+								
+			                	Set<UInt128> atomShardGroups = AtomHandler.this.context.getLedger().getShardGroups(atom.getValue().getShards());
+			                	if (atomShardGroups.contains(AtomHandler.this.context.getLedger().getShardGroup(AtomHandler.this.context.getNode().getIdentity())) == true)
+		                		{
+			                		atomShardGroups.remove(AtomHandler.this.context.getLedger().getShardGroup(AtomHandler.this.context.getNode().getIdentity()));
+				                	AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(atom.getValue()));
+				                	this.atomsToBroadcastLocal.add(atom.getValue().getHash());
+		                		}
+			                			
+			                	for (UInt128 shardGroup : atomShardGroups)
+		                			this.atomsToBroadcastRemote.put(shardGroup, atom.getKey());
 			                		
 			                	AtomHandler.this.atomQueue.remove(atom.getKey());
 							}
@@ -148,7 +147,7 @@ public class AtomHandler implements Service
 			AtomBroadcastMessage atomBroadcastMessage = new AtomBroadcastMessage(atomsToBroadcastLocal);
 			for (ConnectedPeer connectedPeer : AtomHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
 			{
-				if (AtomHandler.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
+				if (AtomHandler.this.context.getNode().isSynced() == false)
 					return;
 				
 				if (AtomHandler.this.context.getConfiguration().get("network.broadcast.type") != null)
@@ -224,7 +223,7 @@ public class AtomHandler implements Service
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug(AtomHandler.this.context.getName()+": Atom broadcast of " + atomBroadcastMessage.getAtoms().size() + " from " + peer);
 							
-							if (AtomHandler.this.context.getNode().isInSyncWith(peer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
+							if (AtomHandler.this.context.getLedger().isSynced() == false)
 								return;
 
 							synchronized(AtomHandler.this.atomsRequested)
@@ -449,6 +448,7 @@ public class AtomHandler implements Service
 						}
 					});
 
+					
 					this.atomRequestsCounter.incrementAndGet();
 					this.atomsRequestedCounter.addAndGet(atoms.size());
 					

@@ -2,11 +2,14 @@ package org.fuserleer.ledger;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -30,6 +33,7 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
+import org.fuserleer.ledger.IndexableCommit.Path;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.Particle;
@@ -114,6 +118,7 @@ public final class Ledger implements Service, LedgerInterface
 			this.context.getEvents().register(this.syncAtomListener);
 			this.context.getEvents().register(this.peerListener);
 
+			this.voteRegulator.start();
 			this.syncHandler.start();
 			this.blockHandler.start();
 			this.atomPool.start();
@@ -142,6 +147,7 @@ public final class Ledger implements Service, LedgerInterface
 		this.atomPool.stop();
 		this.blockHandler.stop();
 		this.syncHandler.stop();
+		this.voteRegulator.stop();
 		this.ledgerStore.stop();
 	}
 	
@@ -374,6 +380,66 @@ public final class Ledger implements Service, LedgerInterface
 	
 	@SuppressWarnings("unchecked")
 	@Override
+	public <T extends Primitive> T get(final Indexable indexable) throws IOException
+	{
+		final IndexableCommit commit = this.ledgerStore.search(indexable);
+		if (commit == null)
+			return null;
+		
+		if (Block.class.isAssignableFrom(indexable.getContainer()) == true)
+		{
+			Block block = this.ledgerStore.get(commit.getIndexable().getKey(), Block.class);
+			if (block == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate block");
+
+			return (T) block;
+		}
+		else if (BlockHeader.class.isAssignableFrom(indexable.getContainer()) == true)
+		{
+			BlockHeader blockHeader = this.ledgerStore.get(commit.getIndexable().getKey(), BlockHeader.class);
+			if (blockHeader == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate block header");
+
+			return (T) blockHeader;
+		}
+		else if (Atom.class.isAssignableFrom(indexable.getContainer()) == true)
+		{
+			Atom atom = this.ledgerStore.get(commit.getIndexable().getKey(), Atom.class);
+			if (atom == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate atom");
+
+			return (T) atom;
+		}
+		else if (AtomCertificate.class.isAssignableFrom(indexable.getContainer()) == true)
+		{
+			AtomCertificate certificate = this.ledgerStore.get(commit.get(IndexableCommit.Path.CERTIFICATE), AtomCertificate.class);
+			if (certificate == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate certificate");
+
+			return (T) certificate;
+		}
+		else if (Particle.class.isAssignableFrom(indexable.getContainer()) == true)
+		{
+			Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
+			if (atom == null)
+				throw new IllegalStateException("Found indexable commit but unable to locate atom");
+
+			Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
+			if (fields != null && fields.isEmpty() == false)
+				atom.setFields(fields);
+
+			for (Particle particle : atom.getParticles())
+			{
+				if (particle.getHash().equals(indexable.getKey()) == true)
+					return (T) particle;
+			}
+		}
+
+		return null;
+	}
+	
+	@SuppressWarnings("unchecked")
+	@Override
 	public <T extends Primitive> T get(final Indexable indexable, final Class<T> container) throws IOException
 	{
 		final IndexableCommit commit = this.ledgerStore.search(indexable);
@@ -405,11 +471,16 @@ public final class Ledger implements Service, LedgerInterface
 		}
 		else if (Atom.class.isAssignableFrom(container) == true)
 		{
-			Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
+			Atom atom = null;
+			if (Atom.class.isAssignableFrom(indexable.getContainer()) == true)
+				atom = this.ledgerStore.get(indexable.getKey(), Atom.class);
+			else
+				atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
+				
 			if (atom == null)
 				throw new IllegalStateException("Found indexable commit but unable to locate atom");
 
-			Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
+			Fields fields = this.ledgerStore.get(atom.getHash(), Fields.class);
 			if (fields != null && fields.isEmpty() == false)
 				atom.setFields(fields);
 
@@ -440,8 +511,8 @@ public final class Ledger implements Service, LedgerInterface
 	}
 	
 	@VisibleForTesting
-	private final AtomicBoolean synced = new AtomicBoolean(false);
-	public synchronized boolean isInSync()
+//	private final AtomicBoolean synced = new AtomicBoolean(false);
+	public synchronized boolean isSynced()
 	{
 		List<ConnectedPeer> syncPeers = this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED); 
 		if (syncPeers.isEmpty() == true)
@@ -449,9 +520,9 @@ public final class Ledger implements Service, LedgerInterface
 
 		// Out of sync?
 		// TODO need to deal with forks that don't converge with local chain due to safety break
-		if (this.synced.get() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), Node.OOS_TRIGGER_LIMIT)) == true)
-			this.synced.set(false);
-		else if (this.synced.get() == false)
+		if (this.context.getNode().isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), Node.OOS_TRIGGER_LIMIT)) == true)
+			this.context.getNode().setSynced(false);
+		else if (this.context.getNode().isSynced() == false)
 		{
 			ConnectedPeer strongestPeer = null;
 			for (ConnectedPeer syncPeer : syncPeers)
@@ -462,10 +533,10 @@ public final class Ledger implements Service, LedgerInterface
 			
 			if (strongestPeer != null && 
 				(strongestPeer.getNode().isInSyncWith(this.context.getNode(), 0) == true || this.context.getNode().isAheadOf(strongestPeer.getNode(), 0) == true))
-				this.synced.set(true);
+				this.context.getNode().setSynced(true);
 		}
 
-		return this.synced.get();
+		return this.context.getNode().isSynced();
 	}
 	
 	// SHARD FUNCTIONS //
@@ -480,7 +551,7 @@ public final class Ledger implements Service, LedgerInterface
 		return getShardGroup(Objects.requireNonNull(identity, "Identity is null").asHash(), getHead().getHeight());
 	}
 
-	public UInt128 getShardGroup(final ECPublicKey identity, final long height)
+	private UInt128 getShardGroup(final ECPublicKey identity, final long height)
 	{
 		return getShardGroup(Objects.requireNonNull(identity, "Identity is null").asHash(), height);
 	}
@@ -490,9 +561,27 @@ public final class Ledger implements Service, LedgerInterface
 		return getShardGroup(Objects.requireNonNull(hash, "Hash is null"), getHead().getHeight());
 	}
 	
-	public UInt128 getShardGroup(final Hash hash, final long height)
+	private UInt128 getShardGroup(final Hash hash, final long height)
 	{
 		return getShardGroup(UInt256.from(Objects.requireNonNull(hash, "Hash is null").toByteArray()), height);
+	}
+
+	public Set<UInt128> getShardGroups(final Collection<UInt256> shards)
+	{
+		Set<UInt128> shardGroups = new HashSet<UInt128>();
+		for (UInt256 shard : Objects.requireNonNull(shards, "Shards is null"))
+			shardGroups.add(getShardGroup(shard, getHead().getHeight()));
+		
+		return shardGroups;
+	}
+
+	private Set<UInt128> getShardGroups(final Collection<UInt256> shards, final long height)
+	{
+		Set<UInt128> shardGroups = new HashSet<UInt128>();
+		for (UInt256 shard : Objects.requireNonNull(shards, "Shards is null"))
+			shardGroups.add(getShardGroup(shard, height));
+		
+		return shardGroups;
 	}
 
 	public UInt128 getShardGroup(final UInt256 shard)
@@ -500,7 +589,7 @@ public final class Ledger implements Service, LedgerInterface
 		return getShardGroup(Objects.requireNonNull(shard, "Shard is null"), getHead().getHeight());
 	}
 	
-	public UInt128 getShardGroup(final UInt256 shard, final long height)
+	private UInt128 getShardGroup(final UInt256 shard, final long height)
 	{
 		Objects.requireNonNull(shard, "Shard is null");
 		if (shard.equals(UInt256.ZERO) == true)
@@ -601,7 +690,7 @@ public final class Ledger implements Service, LedgerInterface
 			Ledger.this.context.getMetaData().increment("ledger.commits.atoms", blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS).size());
 			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.CERTIFICATES).size());
 			
-			Ledger.this.voteRegulator.addVotePower(blockCommittedEvent.getBlock().getHeader().getOwner(), blockCommittedEvent.getBlock().getHeader().getHeight());
+			Ledger.this.voteRegulator.addVotePower(blockCommittedEvent.getBlock().getHeader().getOwner());
 			
 			// Lock atom states
 			for (Atom atom : blockCommittedEvent.getBlock().getAtoms())

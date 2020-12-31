@@ -15,6 +15,7 @@ import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.UniqueParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -53,17 +54,22 @@ public class Spamathon
 		@DsonOutput(Output.ALL)
 		private int rate;
 		
+		@JsonProperty("uniques")
+		@DsonOutput(Output.ALL)
+		private int uniques;
+
 		InitiateSpamMessage()
 		{
 			super();
 		}
 		
-		public InitiateSpamMessage(int iterations, int rate)
+		public InitiateSpamMessage(int iterations, int rate, int uniques)
 		{
 			super();
 			
 			this.iterations = iterations;
 			this.rate = rate;
+			this.uniques = uniques;
 		}
 
 		public int getIterations()
@@ -75,6 +81,11 @@ public class Spamathon
 		{
 			return this.rate;
 		}
+
+		public int getUniques()
+		{
+			return this.uniques;
+		}
 	}
 
 	
@@ -84,15 +95,17 @@ public class Spamathon
 	{
 		private final int iterations;
 		private final int rate;
+		private final int uniques;
 		private final CountDownLatch latch;
 		private volatile int processed = 0;
 
-		Spammer(int iterations, int rate)
+		Spammer(int iterations, int rate, int uniques)
 		{
 			super();
 			
 			this.iterations = iterations;
 			this.rate = rate;
+			this.uniques = uniques;
 			this.latch = new CountDownLatch(iterations);
 			Spamathon.this.spammer = this;
 			
@@ -129,13 +142,15 @@ public class Spamathon
 					{
 						try
 						{
-							long value = ThreadLocalRandom.current().nextLong();
-							Hash valueHash = new Hash(Longs.toByteArray(value), Mode.STANDARD);
-							Atom atom = new Atom(new UniqueParticle(valueHash, owners.get(ThreadLocalRandom.current().nextInt(owners.size())).getPublicKey()));
-	
-							if (spammerLog.hasLevel(Logging.DEBUG))
-								spammerLog.debug(i+": "+atom.getHash()+" "+valueHash+" "+value);
+							List<Particle> particles = new ArrayList<Particle>();
+							for (int u = 0 ; u < this.uniques ; u++)
+							{
+								long value = ThreadLocalRandom.current().nextLong();
+								Hash valueHash = new Hash(Longs.toByteArray(value), Mode.STANDARD);
+								particles.add(new UniqueParticle(valueHash, owners.get(ThreadLocalRandom.current().nextInt(owners.size())).getPublicKey()));
+							}
 							
+							Atom atom = new Atom(particles);
 							try
 							{
 								if (spammerLog.hasLevel(Logging.DEBUG))
@@ -215,7 +230,7 @@ public class Spamathon
 				if (Spamathon.this.spammer != null)
 					throw new IllegalStateException("Already an instance of spammer running");
 				
-				spam(message.getIterations(), message.getRate());
+				spam(message.getIterations(), message.getRate(), message.getUniques());
 			}
 		});
 	}
@@ -225,12 +240,12 @@ public class Spamathon
 		return this.spammer == null ? false : true;
 	}
 	
-	public Spammer spam(int iterations, int rate)
+	public Spammer spam(int iterations, int rate, int uniques)
 	{
 		if (Spamathon.getInstance().isSpamming() == true)
 			throw new IllegalStateException("Already an instance of spammer running");
 		
-		Spammer spammer = new Spammer(iterations, rate);
+		Spammer spammer = new Spammer(iterations, rate, uniques);
 		Executor.getInstance().submit(spammer);
 		return spammer;
 	}

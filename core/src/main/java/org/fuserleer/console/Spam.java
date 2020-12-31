@@ -23,6 +23,7 @@ public class Spam extends Function
 
 	private final static Options options = new Options().addRequiredOption("i", "iterations", true, "Quantity of spam iterations").
 														 addRequiredOption("r", "rate", true, "Rate at which to produce events").
+														 addOption("u", "uniques", true, "Unique elements per atom").
 														 addOption("n", "nodes", true, "Connected nodes count to instruct to spam").
 														 addOption("profile", false, "Profile the spam and output stats");
 
@@ -51,11 +52,14 @@ public class Spam extends Function
 				printStream.println((p+1)+"/"+Integer.parseInt(commandLine.getOptionValue("nodes"))+" sending spam request to "+connected.get(p));
 				
 				connected.get(p).send(new Spamathon.InitiateSpamMessage(Integer.parseInt(commandLine.getOptionValue("iterations")), 
-													  					Integer.parseInt(commandLine.getOptionValue("rate"))));
+													  					Integer.parseInt(commandLine.getOptionValue("rate")),
+													  					Integer.parseInt(commandLine.getOptionValue("uniques", "1"))));
 			}
 		}
 		
-		Spammer spammer = Spamathon.getInstance().spam(Integer.parseInt(commandLine.getOptionValue("iterations")), Integer.parseInt(commandLine.getOptionValue("rate")));
+		Spammer spammer = Spamathon.getInstance().spam(Integer.parseInt(commandLine.getOptionValue("iterations")), 
+													   Integer.parseInt(commandLine.getOptionValue("rate")),
+									  				   Integer.parseInt(commandLine.getOptionValue("uniques", "1")));
 		if (commandLine.hasOption("profile") == true)
 		{
 			long start = System.currentTimeMillis();

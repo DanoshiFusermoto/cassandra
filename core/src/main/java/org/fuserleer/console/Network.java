@@ -2,6 +2,7 @@ package org.fuserleer.console;
 
 import java.io.PrintStream;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.commons.cli.CommandLine;
@@ -20,7 +21,7 @@ public class Network extends Function
 	private final static Options options = new Options().addOption(Option.builder("disconnect").desc("Disconnect a peer").optionalArg(true).build())
 														.addOption("known", false, "Lists all known peers (can be very large)") // TODO pagination for this?
 														.addOption("best", false, "Lists all known peers by XOR ranking (can be very large)"); // TODO pagination for this?
-;
+
 
 	public Network()
 	{
@@ -55,7 +56,8 @@ public class Network extends Function
 				printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
 
 			printStream.println("-- Filtered ---");
-			bestPeers = new RemoteLedgerDiscovery(context).discover(new OutboundTCPPeerFilter(context));
+			OutboundTCPPeerFilter outboundTCPPeerFilter = new OutboundTCPPeerFilter(context, Collections.singleton(context.getLedger().getShardGroup(context.getNode().getIdentity())));
+			bestPeers = new RemoteLedgerDiscovery(context).discover(outboundTCPPeerFilter);
 			for (Peer bestPeer : bestPeers)
 				printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
 		}

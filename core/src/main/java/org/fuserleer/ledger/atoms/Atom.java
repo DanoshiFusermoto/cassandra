@@ -174,19 +174,13 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 		}
 	}
 	
+	@JsonProperty("shards")
+	@DsonOutput(Output.API)
 	public Set<UInt256> getShards()
 	{
-		Set<Indexable> indexables = new HashSet<Indexable>();
+		Set<UInt256> shards = new HashSet<UInt256>();
 		for (Particle particle : this.particles)
-		{
-			if (particle.getSpin().equals(Spin.UP) == true || particle.getSpin().equals(Spin.DOWN) == true)
-				indexables.add(Indexable.from(particle.getHash(Spin.UP), Particle.class));
-			
-			if (particle.getSpin().equals(Spin.DOWN) == true)
-				indexables.add(Indexable.from(particle.getHash(Spin.DOWN), Particle.class));
-		}
-		this.particles.stream().forEach(p -> indexables.addAll(p.getIndexables()));
-		this.particles.stream().forEach(p -> indexables.addAll(p.getParameters()));
-		return Collections.unmodifiableSet(indexables.stream().map(i -> UInt256.from(i.getHash().toByteArray())).collect(Collectors.toSet()));
+			shards.addAll(particle.getShards());
+		return shards;
 	}
 }

@@ -1,12 +1,14 @@
 package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 import org.fuserleer.BasicObject;
 import org.fuserleer.crypto.Hash;
@@ -19,10 +21,12 @@ import org.fuserleer.database.IndexablePrimitive;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateExecutor;
 import org.fuserleer.ledger.StateMachine;
+import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
+import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
@@ -147,6 +151,11 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 		return new HashSet<Indexable>(); 
 	}
 
+	public Set<Indexable> getParameters()
+	{
+		return new HashSet<Indexable>(); 
+	}
+	
 	public Set<Identifier> getIdentifiers()
 	{
 		return new HashSet<Identifier>(); 
@@ -194,6 +203,23 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 			jsonified.put(field.getName(), ImmutableMap.<String, Object>of("scope", field.getScope(), "value", field.getValue()));
 			
 		return jsonified;
+	}
+	
+	@JsonProperty("shards")
+	@DsonOutput(Output.API)
+	public Set<UInt256> getShards()
+	{
+		Set<Indexable> indexables = new HashSet<Indexable>();
+		if (getSpin().equals(Spin.UP) == true || getSpin().equals(Spin.DOWN) == true)
+			indexables.add(Indexable.from(getHash(Spin.UP), Particle.class));
+			
+		if (getSpin().equals(Spin.DOWN) == true)
+			indexables.add(Indexable.from(getHash(Spin.DOWN), Particle.class));
+
+		// TODO PUT BACK IN FOR STATE
+//		indexables.addAll(getIndexables());
+//		indexables.addAll(getParameters());
+		return Collections.unmodifiableSet(indexables.stream().map(i -> UInt256.from(i.getHash().toByteArray())).collect(Collectors.toSet()));
 	}
 
 	public String toString()

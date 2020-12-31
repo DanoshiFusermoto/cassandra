@@ -63,7 +63,7 @@ public final class LocalNode extends Node implements Polymorphic
 
 	public LocalNode(ECKeyPair key, int port, BlockHeader block, String agent, int agentVersion, int protocolVersion)
 	{
-		super(Objects.requireNonNull(key, "Key is null").getPublicKey(), block, agent, agentVersion, protocolVersion, port);
+		super(Objects.requireNonNull(key, "Key is null").getPublicKey(), block, agent, agentVersion, protocolVersion, port, false);
 		
 		this.key = key;
 	}
@@ -76,6 +76,7 @@ public final class LocalNode extends Node implements Polymorphic
 		
 		setHead(persisted.getHead());
 		setPort(persisted.getPort());
+		setSynced(false);
 	}
 
 	public ECKeyPair getKey() 

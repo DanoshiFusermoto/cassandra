@@ -34,6 +34,13 @@ public class Node extends BasicObject
 	@DsonOutput(Output.ALL)
 	private BlockHeader	head;
 
+	/**
+	 * Whether the node is signalling it is synced with respect to its shard group
+	 */
+	@JsonProperty("synced")
+	@DsonOutput(value = {Output.API, Output.WIRE})
+	private boolean	synced;
+
 	private ECPublicKey		identity;
 	
 	public Node()
@@ -46,6 +53,7 @@ public class Node extends BasicObject
 		this.protocolVersion = 0;
 		this.port = 0;
 		this.identity = null;
+		this.synced = false;
 	}
 
 	public Node(Node node)
@@ -60,9 +68,10 @@ public class Node extends BasicObject
 		this.protocolVersion = node.getProtocolVersion();
 		this.port = node.getPort();
 		this.identity = node.getIdentity();
+		this.synced = node.isSynced();
 	}
 
-	public Node(ECPublicKey identity, BlockHeader head, String agent, int agentVersion, int protocolVersion, int port)
+	public Node(ECPublicKey identity, BlockHeader head, String agent, int agentVersion, int protocolVersion, int port, boolean synced)
 	{
 		this();
 
@@ -82,6 +91,7 @@ public class Node extends BasicObject
 		this.agentVersion = agentVersion;
 		this.protocolVersion = protocolVersion;
 		this.port = port;
+		this.synced = synced;
 	}
 
 	public String getAgent()
@@ -125,6 +135,16 @@ public class Node extends BasicObject
 	}
 	
 	// SYNC //
+	public final boolean isSynced()
+	{
+		return this.synced;
+	}
+	
+	public final void setSynced(boolean synced)
+	{
+		this.synced = synced;
+	}
+
 	public final boolean isInSyncWith(Node other, int limit)
 	{
 		Objects.requireNonNull(other, "Other node is null");

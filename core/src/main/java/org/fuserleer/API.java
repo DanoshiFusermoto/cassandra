@@ -22,6 +22,7 @@ import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.SearchQuery;
 import org.fuserleer.ledger.SearchResponse;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.UniqueParticle;
@@ -236,12 +237,15 @@ public class API implements Service
 				
 				try
 				{
-					Atom atom = API.this.context.getLedger().get(Indexable.from(req.params("hash"), Atom.class), Atom.class);
+					Atom atom = API.this.context.getLedger().get(Indexable.from(decodeQueryValue(req.params("hash")), Atom.class));
 					if (atom == null)
 						status(responseJSON, 404, "Atom "+req.params("hash")+" not found");
 					else
 					{
-						responseJSON.put("action", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						AtomCertificate certificate = API.this.context.getLedger().get(Indexable.from(atom.getHash(), AtomCertificate.class));
+						if (certificate != null)
+							responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
 						status(responseJSON, 200);
 					}
 				}
@@ -265,7 +269,7 @@ public class API implements Service
 						status(responseJSON, 404, "Particle "+req.params("hash")+" not found");
 					else
 					{
-						responseJSON.put("action", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
 						status(responseJSON, 200);
 					}
 				}

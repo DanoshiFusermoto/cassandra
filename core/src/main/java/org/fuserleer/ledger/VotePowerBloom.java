@@ -26,10 +26,6 @@ public final class VotePowerBloom
 	@DsonOutput(Output.ALL)
 	private SerializerDummy serializer = SerializerDummy.DUMMY;
 
-	@JsonProperty("height")
-	@DsonOutput(Output.ALL)
-    private long 	height;
-
 	@JsonProperty("bloom")
 	@DsonOutput(Output.ALL)
     private Bloom	bloom;
@@ -38,16 +34,8 @@ public final class VotePowerBloom
 	@DsonOutput(Output.ALL)
     private long	totalPower;
 	
-	private VotePowerBloom()
+	public VotePowerBloom()
 	{
-		// FOR SERIALIZER //
-	}
-	
-	VotePowerBloom(long height)
-	{
-		if (height < 0)
-			throw new IllegalArgumentException("Height is negative");
-		
 		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, EXPECTED_VOTE_POWER_ENTRIES);
 		this.totalPower = 0l;
 	}

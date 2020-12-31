@@ -41,7 +41,6 @@ import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
-import org.fuserleer.utils.UInt256;
 
 import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
@@ -75,7 +74,7 @@ public class SyncHandler implements Service
 						if (syncPeers.isEmpty() == true)
 							continue;
 
-						if (SyncHandler.this.context.getLedger().isInSync() == true)
+						if (SyncHandler.this.context.getLedger().isSynced() == true)
 							continue;
 
 						SyncHandler.this.lock.lock();
@@ -104,8 +103,8 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
-								long blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getHeight(), block.getHeader().getCertificate().getSigners());
-								if (blockVotePower < SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(block.getHeader().getHeight()))
+								long blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getCertificate().getSigners());
+								if (blockVotePower < SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(Collections.singleton(SyncHandler.this.context.getLedger().getShardGroup(SyncHandler.this.context.getNode().getIdentity()))))
 									continue;
 								
 								if (bestBlock == null || 

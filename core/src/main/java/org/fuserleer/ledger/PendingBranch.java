@@ -2,6 +2,7 @@ package org.fuserleer.ledger;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.Objects;
@@ -123,9 +124,9 @@ class PendingBranch
 		while(pendingBlockIterator.hasNext())
 		{
 			PendingBlock pendingBlock = pendingBlockIterator.next();
-			if (pendingBlock.weight() >= this.context.getLedger().getVoteRegulator().getVotePowerThreshold(pendingBlock.getBlockHeader().getHeight()))
+			if (pendingBlock.weight() >= this.context.getLedger().getVoteRegulator().getVotePowerThreshold(Collections.singleton(this.context.getLedger().getShardGroup(this.context.getNode().getIdentity()))))
 			{
-				blocksLog.info(this.context.getName()+": Found commit at block with weight "+pendingBlock.weight()+"/"+this.context.getLedger().getVoteRegulator().getTotalVotePower(pendingBlock.getBlockHeader().getHeight())+" to commit list "+pendingBlock);
+				blocksLog.info(this.context.getName()+": Found commit at block with weight "+pendingBlock.weight()+"/"+this.context.getLedger().getVoteRegulator().getTotalVotePower(Collections.singleton(this.context.getLedger().getShardGroup(this.context.getNode().getIdentity())))+" to commit list "+pendingBlock);
 				return pendingBlock;
 			}
 		}

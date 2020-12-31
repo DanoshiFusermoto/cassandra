@@ -7,6 +7,7 @@ import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.CommitState;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -84,7 +85,7 @@ public final class TransferParticle extends SignedParticle
 			token = stateMachine.get(Indexable.from(this.token, TokenSpecification.class), TokenSpecification.class);
 			if (token != null)
 			{
-				if (stateMachine.state(Indexable.from(token.getHash(Spin.DOWN), TokenSpecification.class)) == true)
+				if (stateMachine.state(Indexable.from(token.getHash(Spin.DOWN), TokenSpecification.class)).equals(CommitState.NONE) == false)
 					throw new ValidationException("Transfer token "+token+" is in DOWN state");
 					
 				stateMachine.put("token", token);

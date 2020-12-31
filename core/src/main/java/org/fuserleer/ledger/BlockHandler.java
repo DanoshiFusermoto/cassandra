@@ -24,10 +24,8 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
-import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.MerkleTree;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.exceptions.DependencyNotFoundException;
 import org.fuserleer.exceptions.StartupException;
@@ -59,7 +57,6 @@ import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.node.Node;
 import org.fuserleer.serialization.SerializationException;
 import org.fuserleer.utils.MathUtils;
-import org.fuserleer.utils.UInt128;
 
 import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Longs;
@@ -105,7 +102,7 @@ public class BlockHandler implements Service
 					{
 						Thread.sleep(1000);
 						
-						if (BlockHandler.this.context.getLedger().isInSync() == false)
+						if (BlockHandler.this.context.getLedger().isSynced() == false)
 							continue;
 						
 						// TODO do clean up of old pending blocks / committed / orphans etc
@@ -467,7 +464,7 @@ public class BlockHandler implements Service
 								if (blocksLog.hasLevel(Logging.DEBUG) == true)
 									blocksLog.debug(BlockHandler.this.context.getName()+": Block vote "+blockVoteMessage.getVote().getHash()+"/"+blockVoteMessage.getVote().getObject()+" for "+blockVoteMessage.getVote().getOwner()+" from "+peer);
 		
-								pendingBlock.vote(blockVoteMessage.getVote(), BlockHandler.this.voteRegulator.getVotePower(blockVoteMessage.getVote().getOwner(), Long.MAX_VALUE));
+								pendingBlock.vote(blockVoteMessage.getVote(), BlockHandler.this.voteRegulator.getVotePower(blockVoteMessage.getVote().getOwner()));
 								BlockHandler.this.blockVoteInventory.add(blockVoteMessage.getVote().getHash());
 							}
 						}
@@ -799,7 +796,7 @@ public class BlockHandler implements Service
 	
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
 	{
-		long votePower = BlockHandler.this.voteRegulator.getVotePower(BlockHandler.this.context.getNode().getIdentity(), Long.MAX_VALUE);
+		long votePower = BlockHandler.this.voteRegulator.getVotePower(BlockHandler.this.context.getNode().getIdentity());
 
 		List<BlockVote> branchVotes = new ArrayList<BlockVote>();
 		synchronized(BlockHandler.this.voteClock)
@@ -1124,7 +1121,7 @@ public class BlockHandler implements Service
 			if (bestBranch != null)
 			{
 				if (blocksLog.hasLevel(Logging.DEBUG) == true)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().weight()+"/"+this.voteRegulator.getTotalVotePower(bestBranch.getLast().getBlockHeader().getHeight())+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().weight()+"/"+this.voteRegulator.getTotalVotePower(Collections.singleton(BlockHandler.this.context.getLedger().getShardGroup(BlockHandler.this.context.getNode().getIdentity())))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
 			}
 			
 			return bestBranch;

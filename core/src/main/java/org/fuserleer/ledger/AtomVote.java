@@ -1,5 +1,7 @@
 package org.fuserleer.ledger;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 import org.fuserleer.crypto.ECPublicKey;
@@ -14,9 +16,9 @@ public final class AtomVote extends Vote<List<Hash>>
 		// SERIALIZER
 	}
 	
-	public AtomVote(final List<Hash> object, final ECPublicKey owner)
+	public AtomVote(final Collection<Hash> object, final ECPublicKey owner)
 	{
-		super(object, true, owner);
+		super(new ArrayList<Hash>(object), true, owner);
 	}
 	
 	public List<Hash> getAtoms()

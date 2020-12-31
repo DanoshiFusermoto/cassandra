@@ -23,7 +23,7 @@ public class Ledger extends Function
 		CommandLine commandLine = Function.parser.parse(options, arguments);
 
 		{
-			printStream.println("Synced: "+context.getLedger().isInSync());
+			printStream.println("Synced: "+context.getLedger().isSynced());
 			printStream.println("Identity: "+context.getNode().getIdentity());
 			printStream.println("Current head: "+context.getLedger().getHead());
 			printStream.println("Ledger timestamp: "+Time.getLedgerTimeSeconds()+" / "+new Date(Time.getLedgerTimeMS())); // TODO only accurate for simulated time

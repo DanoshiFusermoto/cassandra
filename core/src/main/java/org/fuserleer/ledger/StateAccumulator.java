@@ -103,6 +103,71 @@ public final class StateAccumulator implements LedgerInterface
 
 	@SuppressWarnings("unchecked")
 	@Override
+	public <T extends Primitive> T get(final Indexable indexable) throws IOException
+	{
+		Objects.requireNonNull(indexable);
+		
+		this.lock.lock();
+		try
+		{
+			StateOperation stateOperation = this.indexables.get(indexable);
+			if (stateOperation != null)
+			{
+//				if (stateOperation.getType().equals(StateOperation.Type.DELETE) == true)
+//					return null;
+//				else if (stateOperation.getType().equals(StateOperation.Type.STORE) == true)
+				{
+					if (Block.class.isAssignableFrom(indexable.getContainer()) == true)
+					{
+						Block block = this.context.getLedger().get(stateOperation.getHead().getHash(), Block.class);
+						if (block == null)
+							throw new IllegalStateException("Found indexable state operation but unable to locate block");
+
+						return (T) block;
+					}
+					else if (BlockHeader.class.isAssignableFrom(indexable.getContainer()) == true)
+					{
+						BlockHeader blockHeader = this.context.getLedger().get(stateOperation.getHead().getHash(), BlockHeader.class);
+						if (blockHeader == null)
+							throw new IllegalStateException("Found indexable state operation but unable to locate block header");
+
+						return (T) blockHeader;
+					}
+					else if (Atom.class.isAssignableFrom(indexable.getContainer()) == true)
+					{
+						Atom atom = this.context.getLedger().get(stateOperation.getAtom().getHash(), Atom.class);
+						if (atom == null)
+							throw new IllegalStateException("Found indexable state operation but unable to locate atom");
+
+						return (T) atom;
+					}
+					else if (Particle.class.isAssignableFrom(indexable.getContainer()) == true)
+					{
+						Atom atom = this.context.getLedger().get(stateOperation.getAtom().getHash(), Atom.class);
+						if (atom == null)
+							throw new IllegalStateException("Found indexable state operation but unable to locate atom");
+
+						for (Particle particle : atom.getParticles())
+						{
+							if (particle.getHash().equals(indexable.getKey()) == true)
+								return (T) particle;
+						}
+					}
+				}
+			}
+			else
+				return this.context.getLedger().get(indexable);
+
+			return null;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+	
+	@SuppressWarnings("unchecked")
+	@Override
 	public <T extends Primitive> T get(final Indexable indexable, final Class<T> container) throws IOException
 	{
 		Objects.requireNonNull(indexable);

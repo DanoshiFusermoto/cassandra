@@ -163,6 +163,12 @@ public class StateMachine implements LedgerInterface
 	}
 	
 	@Override
+	public <T extends Primitive> T get(Indexable indexable) throws IOException
+	{
+		return this.stateAccumulator.get(indexable);
+	}
+
+	@Override
 	public <T extends Primitive> T get(Indexable indexable, Class<T> container) throws IOException
 	{
 		return this.stateAccumulator.get(indexable, container);

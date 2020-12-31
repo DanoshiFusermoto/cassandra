@@ -62,14 +62,10 @@ import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerConnectingEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
 import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
-import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.UInt128;
-import org.fuserleer.utils.UInt256;
 
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
 import com.google.common.eventbus.Subscribe;
 
 public final class Network implements Service
@@ -265,8 +261,8 @@ public final class Network implements Service
 							continue;
 						}
 						
-						UInt128 remoteShardGroup = Network.this.context.getLedger().getShardGroup(nodeMessage.getNode().getIdentity(), Network.this.context.getLedger().getHead().getHeight());
-						UInt128 localShardGroup = Network.this.context.getLedger().getShardGroup(Network.this.context.getNode().getIdentity(), Network.this.context.getLedger().getHead().getHeight());
+						UInt128 remoteShardGroup = Network.this.context.getLedger().getShardGroup(nodeMessage.getNode().getIdentity());
+						UInt128 localShardGroup = Network.this.context.getLedger().getShardGroup(Network.this.context.getNode().getIdentity());
 						if (remoteShardGroup.compareTo(localShardGroup) != 0)
 						{
 							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" Remote node is not located in expected shard group "+localShardGroup);

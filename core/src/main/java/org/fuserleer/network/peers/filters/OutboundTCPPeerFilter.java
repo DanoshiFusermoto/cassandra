@@ -29,7 +29,7 @@ public class OutboundTCPPeerFilter extends StandardPeerFilter
 	{
 		for (UInt128 shardGroup : this.shardGroups)
 		{
-			if (getContext().getLedger().getShardGroup(peer.getNode().getIdentity(), getContext().getLedger().getHead().getHeight()).compareTo(shardGroup) != 0)
+			if (getContext().getLedger().getShardGroup(peer.getNode().getIdentity()).compareTo(shardGroup) != 0)
 				return true;
 		}
 

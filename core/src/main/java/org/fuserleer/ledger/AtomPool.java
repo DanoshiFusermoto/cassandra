@@ -326,7 +326,8 @@ public final class AtomPool implements Service
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 	private final Map<Hash, PendingAtom> pending = new HashMap<Hash, PendingAtom>();
-	private final Map<Hash, Hash> indexables = new HashMap<Hash, Hash>();
+	private final Map<Hash, Hash> stateLocks = new HashMap<Hash, Hash>();
+	// TODO still need to lock indexables?  probably prudent
 	private final Map<Long, Set<PendingAtom>> buckets = new HashMap<Long, Set<PendingAtom>>();
 	private final BlockingQueue<PendingAtom> voteQueue;
 
@@ -587,7 +588,7 @@ public final class AtomPool implements Service
 									for (Hash atom : atomPoolVoteMessage.getVotes().getObject())
 									{
 										PendingAtom pendingAtom = AtomPool.this.pending.get(atom);
-										if (pendingAtom == null && AtomPool.this.context.getLedger().getStateAccumulator().state(Indexable.from(atom, Atom.class)).equals(CommitState.COMMITTED) == false)
+										if (pendingAtom == null && AtomPool.this.context.getLedger().getStateAccumulator().has(Indexable.from(atom, Atom.class)).equals(CommitState.COMMITTED) == false)
 										{
 											pendingAtom = new PendingAtom(atom);
 											add(pendingAtom);
@@ -671,7 +672,7 @@ public final class AtomPool implements Service
 		try
 		{
 			this.pending.clear();
-			this.indexables.clear();
+			this.stateLocks.clear();
 			for (Set<PendingAtom> pendingAtom : this.buckets.values())
 				pendingAtom.clear();
 		}
@@ -747,12 +748,12 @@ public final class AtomPool implements Service
 					
 					// TODO want to allow multiple indexable definitions in pool?
 					// TODO indexable management here is disabled
-					for (Indexable indexable : pendingAtom.getAtom().getIndexables())
+					for (Hash state : pendingAtom.getAtom().getStates())
 					{
-						if (this.indexables.containsKey(indexable.getHash()) == true)
-							atomsLog.debug("Indexable "+indexable+" defined by "+pendingAtom.getAtom().getHash()+" already defined in pending pool");
+						if (this.stateLocks.containsKey(state) == true)
+							atomsLog.debug("State "+state+" referenced in "+pendingAtom.getAtom().getHash()+" already locked in pending pool");
 						else
-							this.indexables.put(indexable.getHash(), atom.getHash());
+							this.stateLocks.put(state, atom.getHash());
 					}
 
 					this.voteQueue.add(pendingAtom);
@@ -805,10 +806,10 @@ public final class AtomPool implements Service
 			
 			if (pendingAtom.getAtom() != null)
 			{
-				for (Indexable indexable : pendingAtom.getAtom().getIndexables())
+				for (Hash state : pendingAtom.getAtom().getStates())
 				{
-					if (this.indexables.remove(indexable.getHash(), atom) == false)
-						atomsLog.debug(AtomPool.this.context.getName()+": Indexable "+indexable+" defined by "+atom+" not found");
+					if (this.stateLocks.remove(state, atom) == false)
+						atomsLog.debug(AtomPool.this.context.getName()+": State "+state+"referenced by "+atom+" not found");
 				}
 			}
 
@@ -1056,7 +1057,7 @@ public final class AtomPool implements Service
 					// Check if the dependency is also pending.  If the atom is recently witnessed, it may be dependent 
 					// on an atom that is also recent and hasn't been seen by the local node yet.  Allow some "maturity" 
 					// time before pruning, enabling any recent dependent atoms to be seen.
-					if (AtomPool.this.indexables.containsKey(((DependencyNotFoundException)event.getError()).getDependency()) == false &&
+					if (AtomPool.this.stateLocks.containsKey(((DependencyNotFoundException)event.getError()).getDependency()) == false &&
 						Time.getSystemTime() - pendingAtom.getWitnessed() > AtomPool.this.dependencyTimeout)
 					{
 						if (AtomPool.this.remove(event.getAtom().getHash()) == true)

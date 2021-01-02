@@ -14,7 +14,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fuserleer.Context;
@@ -33,11 +32,9 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
-import org.fuserleer.ledger.IndexableCommit.Path;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.Particle;
-import org.fuserleer.ledger.atoms.ParticleCertificate;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomCommittedEvent;
@@ -342,7 +339,7 @@ public final class Ledger implements Service, LedgerInterface
 									(spin.equals(Spin.UP) == true && particle.getSpin().equals(Spin.UP)))
 								{
 									// TODO put a toggle in this so that function can return UP operations even if there is a DOWN
-									if (this.ledgerStore.state(Indexable.from(particle.getHash(Spin.DOWN), Particle.class)) == CommitState.NONE)
+									if (this.ledgerStore.has(Indexable.from(particle.getHash(Spin.DOWN), Particle.class)) == CommitState.NONE)
 										continue;
 									
 									if (Atom.class.isAssignableFrom(container) == true)
@@ -372,11 +369,11 @@ public final class Ledger implements Service, LedgerInterface
 		return new SearchResponse<T>(query, nextOffset, results, searchResponse.isEOR());
 	}
 
-	@Override
+/*	@Override
 	public CommitState state(Indexable indexable) throws IOException 
 	{
 		return this.ledgerStore.search(indexable) == null ? CommitState.NONE: CommitState.COMMITTED;
-	}
+	}*/
 	
 	@SuppressWarnings("unchecked")
 	@Override
@@ -739,11 +736,11 @@ public final class Ledger implements Service, LedgerInterface
 					else
 					{
 						Ledger.this.stateAccumulator.abort(atom);
-						for (ParticleCertificate particleCertificate : certificate.getAll())
+						for (StateCertificate voteCertificate : certificate.getAll())
 						{
-							if (particleCertificate.getDecision() == false)
+							if (voteCertificate.getDecision() == false)
 							{
-								Ledger.this.context.getEvents().post(new AtomErrorEvent(atom, new ValidationException("Rejection certificate for particle "+atom.getParticle(particleCertificate.getParticle()))));
+								Ledger.this.context.getEvents().post(new AtomErrorEvent(atom, new ValidationException("Rejection certificate for state "+voteCertificate.getState())));
 								break;
 							}
 						}

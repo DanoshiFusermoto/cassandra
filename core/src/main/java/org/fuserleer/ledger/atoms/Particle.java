@@ -4,12 +4,14 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
+import org.bouncycastle.util.Arrays;
 import org.fuserleer.BasicObject;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
@@ -19,9 +21,9 @@ import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.database.IndexablePrimitive;
 import org.fuserleer.exceptions.ValidationException;
-import org.fuserleer.ledger.StateExecutor;
 import org.fuserleer.ledger.StateMachine;
-import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.StateOp;
+import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializerId2;
@@ -33,7 +35,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.collect.ImmutableMap;
 
 @SerializerId2("ledger.atoms.particle")
-public abstract class Particle extends BasicObject implements StateExecutor, IndexablePrimitive
+public abstract class Particle extends BasicObject implements IndexablePrimitive
 {
 	public enum Spin
 	{
@@ -44,6 +46,17 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 		public String toString() 
 		{
 			return this.name();
+		}
+		
+		public static Hash spin(Hash hash, Spin spin)
+		{
+			byte[] hashBytes = Arrays.clone(hash.toByteArray());
+			if (spin.equals(Spin.DOWN) == true)
+				hashBytes[0] &= ~1;
+			else if (spin.equals(Spin.UP) == true)
+				hashBytes[0] |= 1;
+			
+			return new Hash(hashBytes);
 		}
 	}
 	
@@ -125,11 +138,7 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 		try
 		{
 			byte[] hashBytes = Serialization.getInstance().toDson(this, Output.HASH);
-			
-			if (spin.equals(Spin.DOWN) == true)
-				return new Hash(hashBytes, Mode.DOUBLE).invert();
-			else
-				return new Hash(hashBytes, Mode.DOUBLE);
+			return Spin.spin(new Hash(hashBytes, Mode.DOUBLE), spin);
 		}
 		catch (Exception e)
 		{
@@ -151,16 +160,36 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 		return new HashSet<Indexable>(); 
 	}
 
-	public Set<Indexable> getParameters()
-	{
-		return new HashSet<Indexable>(); 
-	}
-	
 	public Set<Identifier> getIdentifiers()
 	{
 		return new HashSet<Identifier>(); 
 	}
 	
+	public final Set<Hash> getStates()
+	{
+		final Set<Hash> states = new LinkedHashSet<Hash>();
+		getStateOps().forEach(sop -> states.add(sop.key()));
+		return states;
+	}
+	
+	public Set<StateOp> getStateOps()
+	{
+		Set<StateOp> stateops = new LinkedHashSet<StateOp>();
+		if (getSpin().equals(Spin.UP) == true)
+		{
+			stateops.add(new StateOp(getHash(Spin.UP), Instruction.NOT_EXISTS));
+			stateops.add(new StateOp(getHash(Spin.UP), UInt256.from(getHash(Spin.UP).toByteArray()), Instruction.SET));
+		}
+		else if (getSpin().equals(Spin.DOWN) == true)
+		{
+			stateops.add(new StateOp(getHash(Spin.UP), Instruction.EXISTS));
+			stateops.add(new StateOp(getHash(Spin.DOWN), Instruction.NOT_EXISTS));
+			stateops.add(new StateOp(getHash(Spin.DOWN), UInt256.from(getHash(Spin.DOWN).toByteArray()), Instruction.SET));
+		}
+
+		return stateops;
+	}
+
 	public final boolean hasIndexable(Indexable indexable)
 	{
 		Set<Indexable> indexables = getIndexables();
@@ -207,19 +236,10 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 	
 	@JsonProperty("shards")
 	@DsonOutput(Output.API)
-	public Set<UInt256> getShards()
+	public final Set<UInt256> getShards()
 	{
-		Set<Indexable> indexables = new HashSet<Indexable>();
-		if (getSpin().equals(Spin.UP) == true || getSpin().equals(Spin.DOWN) == true)
-			indexables.add(Indexable.from(getHash(Spin.UP), Particle.class));
-			
-		if (getSpin().equals(Spin.DOWN) == true)
-			indexables.add(Indexable.from(getHash(Spin.DOWN), Particle.class));
-
-		// TODO PUT BACK IN FOR STATE
-//		indexables.addAll(getIndexables());
-//		indexables.addAll(getParameters());
-		return Collections.unmodifiableSet(indexables.stream().map(i -> UInt256.from(i.getHash().toByteArray())).collect(Collectors.toSet()));
+		Set<StateOp> stateOps = getStateOps();
+		return Collections.unmodifiableSet(stateOps.stream().map(sop -> UInt256.from(sop.key().toByteArray())).collect(Collectors.toSet()));
 	}
 
 	public String toString()
@@ -230,7 +250,6 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 	// STATE MACHINE //
 	// FIXME need a better way to ensure that all super class prepare / execute elements are
 	// actually executed, and catch any failures.  Shouldn't rely on explicit super calls.
-	@Override
 	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		if (this.spin == null)
@@ -244,7 +263,6 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 		return this.prepared;
 	}
 
-	@Override
 	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		this.executed = true;
@@ -255,7 +273,6 @@ public abstract class Particle extends BasicObject implements StateExecutor, Ind
 		return this.executed;
 	}
 	
-	@Override
 	public void unexecute(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		this.unexecuted = true;

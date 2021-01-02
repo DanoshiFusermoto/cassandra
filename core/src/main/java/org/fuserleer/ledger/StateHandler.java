@@ -27,13 +27,11 @@ import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.atoms.Particle;
-import org.fuserleer.ledger.atoms.ParticleCertificate;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomCommittedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
-import org.fuserleer.ledger.events.ParticleCertificateEvent;
-import org.fuserleer.ledger.messages.ParticleCertificateMessage;
+import org.fuserleer.ledger.events.StateCertificateEvent;
+import org.fuserleer.ledger.messages.StateCertificateMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.messaging.MessageProcessor;
@@ -56,7 +54,7 @@ public final class StateHandler implements Service
 		private final long	seen;
 		private	Atom		atom;
 		private AtomCertificate certificate;
-		private final Map<Hash, ParticleCertificate> certificates;
+		private final Map<Hash, StateCertificate> certificates;
 
 		public PendingAtom(final Hash atom, final long seen)
 		{
@@ -65,7 +63,7 @@ public final class StateHandler implements Service
 
 			this.seen = seen;
 			this.hash = Objects.requireNonNull(atom);
-			this.certificates = Collections.synchronizedMap(new HashMap<Hash, ParticleCertificate>());
+			this.certificates = Collections.synchronizedMap(new HashMap<Hash, StateCertificate>());
 		}
 
 		public Hash getHash()
@@ -128,9 +126,9 @@ public final class StateHandler implements Service
 			return this.hash.toString();
 		}
 		
-		public void add(final ParticleCertificate certificate)
+		public void add(final StateCertificate certificate)
 		{
-			this.certificates.putIfAbsent(certificate.getParticle(), certificate);
+			this.certificates.putIfAbsent(certificate.getState(), certificate);
 		}
 	}
 	
@@ -145,10 +143,10 @@ public final class StateHandler implements Service
 	@Override
 	public void start() throws StartupException
 	{
-		this.context.getNetwork().getMessaging().register(ParticleCertificateMessage.class, this.getClass(), new MessageProcessor<ParticleCertificateMessage>()
+		this.context.getNetwork().getMessaging().register(StateCertificateMessage.class, this.getClass(), new MessageProcessor<StateCertificateMessage>()
 		{
 			@Override
-			public void process(final ParticleCertificateMessage particleCertificateMessage, final ConnectedPeer peer)
+			public void process(final StateCertificateMessage stateCertificateMessage, final ConnectedPeer peer)
 			{
 				Executor.getInstance().submit(new Executable() 
 				{
@@ -158,13 +156,13 @@ public final class StateHandler implements Service
 						try
 						{
 							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
-								cerbyLog.debug(StateHandler.this.context.getName()+": Particle certificate "+particleCertificateMessage.getCertificate().getParticle()+" from " + peer);
+								cerbyLog.debug(StateHandler.this.context.getName()+": State certificate "+stateCertificateMessage.getCertificate().getState()+" from " + peer);
 							
-							processParticleCertificate(particleCertificateMessage.getCertificate());
+							processStateCertificate(stateCertificateMessage.getCertificate());
 						}
 						catch (Exception ex)
 						{
-							cerbyLog.error(StateHandler.this.context.getName()+": ledger.messages.particle.certificate " + peer, ex);
+							cerbyLog.error(StateHandler.this.context.getName()+": ledger.messages.state.certificate " + peer, ex);
 						}
 					}
 				});
@@ -174,13 +172,13 @@ public final class StateHandler implements Service
 		
 		this.context.getEvents().register(this.syncBlockListener);
 		this.context.getEvents().register(this.syncAtomListener);
-		this.context.getEvents().register(this.particleCertificateListener);
+		this.context.getEvents().register(this.stateCertificateListener);
 	}
 
 	@Override
 	public void stop() throws TerminationException
 	{
-		this.context.getEvents().unregister(this.particleCertificateListener);
+		this.context.getEvents().unregister(this.stateCertificateListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
 		
@@ -198,9 +196,9 @@ public final class StateHandler implements Service
 		{
 			
 			// TODO where does the validation of received certificates go? and what does it do?
-			for (Particle particle : pendingAtom.getAtom().getParticles())
+			for (Hash state : pendingAtom.getAtom().getStates())
 			{
-				if (pendingAtom.certificates.containsKey(particle.getHash()) == false)
+				if (pendingAtom.certificates.containsKey(state) == false)
 					return;
 			}
 
@@ -258,17 +256,17 @@ public final class StateHandler implements Service
 		return certificates;
 	}
 	
-	private void processParticleCertificate(ParticleCertificate certificate)
+	private void processStateCertificate(StateCertificate certificate)
 	{
 		// Creating pending atom from certificate if not seen // It should probably have been seen locally via a block committed event at this point, verify that is the case
 		StateHandler.this.lock.writeLock().lock();
 		try
 		{
 			PendingAtom pendingAtom = StateHandler.this.pending.get(certificate.getAtom());
-			CommitState commitState = StateHandler.this.context.getLedger().getStateAccumulator().state(Indexable.from(certificate.getAtom(), AtomCertificate.class));
+			CommitState commitState = StateHandler.this.context.getLedger().getStateAccumulator().has(Indexable.from(certificate.getAtom(), AtomCertificate.class));
 			if (pendingAtom == null && commitState.index() < CommitState.COMMITTED.index())
 			{
-				cerbyLog.warn(StateHandler.this.context.getName()+": Heard about Atom "+certificate.getAtom()+" via ParticleCertificateEvent before BlockCommittedEvent");
+				cerbyLog.warn(StateHandler.this.context.getName()+": Heard about Atom "+certificate.getAtom()+" via StateCertificateEvent before BlockCommittedEvent");
 				pendingAtom = new PendingAtom(certificate.getAtom(), StateHandler.this.context.getLedger().getHead().getHeight());
 				StateHandler.this.pending.put(certificate.getAtom(), pendingAtom);
 			}
@@ -288,7 +286,7 @@ public final class StateHandler implements Service
 		}
 		catch (Exception ex)
 		{
-			cerbyLog.error(StateHandler.class.getName()+": Failed to process ParticleCertificate for PendingAtom "+certificate.getAtom()+" on state "+certificate.getParticle(), ex);
+			cerbyLog.error(StateHandler.class.getName()+": Failed to process state certificate for PendingAtom "+certificate.getAtom()+" on state "+certificate.getState(), ex);
 			return;
 		}
 		finally
@@ -299,12 +297,15 @@ public final class StateHandler implements Service
 	
 	
 	// PARTICLE CERTIFICATE LISTENER //
-	private EventListener particleCertificateListener = new EventListener()
+	private EventListener stateCertificateListener = new EventListener()
 	{
 		@Subscribe
-		public void on(final ParticleCertificateEvent particleCertificateEvent) 
+		public void on(final StateCertificateEvent stateCertificateEvent) 
 		{
-			StateHandler.this.processParticleCertificate(particleCertificateEvent.getCertificate());
+			if (cerbyLog.hasLevel(Logging.DEBUG) == true)
+				cerbyLog.debug(StateHandler.this.context.getName()+": State certificate "+stateCertificateEvent.getCertificate().getState()+" from local");
+
+			StateHandler.this.processStateCertificate(stateCertificateEvent.getCertificate());
 		}
 	};
 		
@@ -340,7 +341,7 @@ public final class StateHandler implements Service
 				{
 					for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
 					{
-						CommitState commitState = StateHandler.this.context.getLedger().getStateAccumulator().state(Indexable.from(atom.getHash(), AtomCertificate.class));
+						CommitState commitState = StateHandler.this.context.getLedger().getStateAccumulator().has(Indexable.from(atom.getHash(), AtomCertificate.class));
 						if (commitState.index() == CommitState.COMMITTED.index())
 						{
 							cerbyLog.warn(StateHandler.this.context.getName()+": Already have a certificate for "+atom.getHash());
@@ -356,10 +357,7 @@ public final class StateHandler implements Service
 						}
 						
 						if (pendingAtom != null)
-//						{
 							pendingAtom.setAtom(atom);
-//							buildCertificate(pendingAtom);
-//						}
 					}
 				}
 				catch (Exception ex)

@@ -11,7 +11,6 @@ import org.fuserleer.Context;
 import org.fuserleer.Universe;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Fields;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.atoms.Atom;
@@ -105,26 +104,6 @@ public class StateMachine implements LedgerInterface
 		this.prepared = true;
 	}
 	
-/*	private boolean has(Indexable indexable, IndexableCommit indexableCommit)
-	{
-		Objects.requireNonNull(indexable);
-		Objects.requireNonNull(indexableCommit);
-		
-		if (indexableCommit.equals(IndexableCommit.NULL) == true)
-			return false;
-		
-		if (indexableCommit.equals(IndexableCommit.DELETED) == true)
-			return false;
-
-		if (indexable.getHash().equals(indexableCommit.getIndexable()) == false)
-			throw new IllegalArgumentException("IndexableCommit "+indexableCommit+" does not represent "+indexable);
-		
-		if (indexableCommit.getID() > this.head.getHeight())
-			return false;
-		
-		return true;
-	}*/
-	
 	public void lock() throws IOException, ValidationException
 	{
 		execute(CommitState.LOCKED);
@@ -195,9 +174,4 @@ public class StateMachine implements LedgerInterface
 	{
 		return this.stateAccumulator.state(indexable);
 	}*/
-
-	public void set(Hash action, Fields fields)
-	{
-		this.stateAccumulator.set(action, fields);
-	}
 }

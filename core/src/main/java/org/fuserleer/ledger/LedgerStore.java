@@ -6,9 +6,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map.Entry;
 import java.util.Objects;
-import java.util.Set;
 
 import org.bouncycastle.util.Arrays;
 import org.fuserleer.Context;
@@ -19,7 +17,6 @@ import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.DatabaseException;
 import org.fuserleer.database.DatabaseStore;
-import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.StartupException;
@@ -58,7 +55,6 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	private Database state;
 	private Database stateIndexables;
 	private Database stateIdentifiers;
-	private Database stateFields;
 	private Database syncChain;
 
 	public LedgerStore(Context context)
@@ -117,7 +113,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 				this.primitives = getEnvironment().openDatabase(transaction, "hackation.primitives", primitivesConfig);
 				this.syncChain = getEnvironment().openDatabase(transaction, "hackation.sync.chain", primitivesConfig);
 				this.state = getEnvironment().openDatabase(transaction, "hackation.state", stateConfig);
-				this.stateFields = getEnvironment().openDatabase(transaction, "hackation.state.fields", stateFieldsConfig);
+//				this.stateFields = getEnvironment().openDatabase(transaction, "hackation.state.fields", stateFieldsConfig);
 				this.stateIndexables = getEnvironment().openDatabase(transaction, "hackation.state.indexables", stateIndexablesConfig);
 				this.stateIdentifiers = getEnvironment().openDatabase(transaction, "hackation.state.identifiers", stateIdentifiersConfig);
 
@@ -164,7 +160,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 
 		if (this.stateIdentifiers != null) this.stateIdentifiers.close();
 		if (this.stateIndexables != null) this.stateIndexables.close();
-		if (this.stateFields != null) this.stateFields.close();
+//		if (this.stateFields != null) this.stateFields.close();
 		if (this.state != null) this.state.close();
 		if (this.syncChain != null) this.syncChain.close();
 		if (this.primitives != null) this.primitives.close();
@@ -183,7 +179,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			getEnvironment().truncateDatabase(transaction, "hackation.state", false);
 			getEnvironment().truncateDatabase(transaction, "hackation.state.indexables", false);
 			getEnvironment().truncateDatabase(transaction, "hackation.state.identifiers", false);
-			getEnvironment().truncateDatabase(transaction, "hackation.state.fields", false);
+//			getEnvironment().truncateDatabase(transaction, "hackation.state.fields", false);
 
 			transaction.commit();
 		}
@@ -284,25 +280,6 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 				}
 
 				return (T) new Block(header, atoms, certificates);
-			}
-			else if (primitive.equals(Fields.class) == true)
-			{
-				OperationStatus status = this.stateFields.get(null, key, value, LockMode.DEFAULT);
-				if (status.equals(OperationStatus.SUCCESS) != true)
-					return null;
-				
-				Fields fields;
-				try
-				{
-					fields = Serialization.getInstance().fromDson(value.getData(), Fields.class);
-				}
-				// FIXME Hack to catch this and convert to a SerializationException that is easier to handle.
-				catch (IllegalArgumentException iaex)
-				{
-					throw new SerializationException(iaex.getMessage());
-				}
-				
-				return (T) fields;
 			}
 			else 
 				throw new IllegalArgumentException();
@@ -667,15 +644,6 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		}
 	}
 
-	final void set(final Transaction transaction, final Hash atom, final Fields fields) throws IOException
-	{
-		DatabaseEntry key = new DatabaseEntry(atom.toByteArray());
-		DatabaseEntry value = new DatabaseEntry(Serialization.getInstance().toDson(fields, Output.PERSIST));
-		OperationStatus status = this.stateFields.put(transaction, key, value);
-		if (status.equals(OperationStatus.SUCCESS) == false)
-			throw new DatabaseException("Failed to update fields for atom "+atom+" due to "+status.name());
-	}
-
 	final OperationStatus commit(final Block block) throws IOException
 	{
 	    Objects.requireNonNull(block);
@@ -749,7 +717,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    	IndexableCommit atomIndexableCommit = new IndexableCommit(block.getHeader().getIndexOf(InventoryType.ATOMS, atom.getHash()), atomIndexable, Collections.emptyList(), block.getHeader().getTimestamp(), Indexable.from(block.getHeader().getHash(), BlockHeader.class));
 	    		DatabaseEntry 	atomIndexableKey = new DatabaseEntry(atomIndexable.toByteArray());
 	    		DatabaseEntry 	atomIndexableCommitValue = new DatabaseEntry(Serialization.getInstance().toDson(atomIndexableCommit, Output.PERSIST));
-				status = this.stateIndexables.put(transaction, atomIndexableKey, atomIndexableCommitValue);
+				status = this.stateIndexables.putNoOverwrite(transaction, atomIndexableKey, atomIndexableCommitValue);
 			    if (status.equals(OperationStatus.SUCCESS) != true) 
 		    		throw new DatabaseException("Failed to commit atom indexable "+atom.getHash()+" in block "+block.getHash()+" due to " + status.name());
 				else if (databaseLog.hasLevel(Logging.DEBUG) == true)
@@ -803,10 +771,9 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    } 
 	}
 	
-	final void commit(Collection<CommitOperation> commits, Set<Entry<Hash, Fields>> fields) throws IOException
+	final void commit(Collection<CommitOperation> commits) throws IOException
 	{
 	    Objects.requireNonNull(commits);
-	    Objects.requireNonNull(fields);
 		
 	    Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
 	    try 
@@ -915,10 +882,6 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    		}*/
 	    	}
 
-	    	// FIELDS // TODO 
-	    	for (Entry<Hash, Fields> field : fields)
-	    		set(transaction, field.getKey(), field.getValue());
-	    	
 	    	transaction.commit();
 	    } 
 	    catch (Exception ex) 

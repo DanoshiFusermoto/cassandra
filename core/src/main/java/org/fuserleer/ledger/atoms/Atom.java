@@ -12,13 +12,10 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.BasicObject;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Field;
-import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.database.IndexablePrimitive;
 import org.fuserleer.ledger.StateOp;
-import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
@@ -173,26 +170,6 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 				return true;
 		
 		return false;
-	}
-	
-	public Fields getFields()
-	{
-		Fields fields = new Fields();
-		for (Particle particle : this.particles)
-			for (Field field : particle.getFields())
-				fields.set(field);
-		
-		return fields;
-	}
-	
-	public void setFields(Fields fields)
-	{
-		for (Field field : fields)
-		{
-			Particle particle = getParticle(field.getScope());
-			if (particle != null)
-				particle.setField(field);
-		}
 	}
 	
 	@JsonProperty("shards")

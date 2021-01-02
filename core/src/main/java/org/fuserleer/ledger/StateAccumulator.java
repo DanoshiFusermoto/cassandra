@@ -8,7 +8,6 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
@@ -16,7 +15,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.fuserleer.Context;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Fields;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.Particle;
@@ -31,7 +29,6 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 	private final Context context;
 
 	private final LedgerProvider parent;
-	private final Map<Hash, Fields> fields;
 	private final Map<Hash, CommitOperation> operations;
 	private final Map<Hash, CommitOperation> stateLocks;
 	private final Map<Indexable, CommitOperation> indexables;
@@ -41,7 +38,6 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 	{
 		this.context = Objects.requireNonNull(context);
 		this.parent = Objects.requireNonNull(parent);
-		this.fields = new LinkedHashMap<Hash, Fields>();
 		this.operations = new HashMap<Hash, CommitOperation>();
 		this.indexables = new HashMap<Indexable, CommitOperation>();
 		this.stateLocks = new LinkedHashMap<Hash, CommitOperation>();
@@ -56,21 +52,6 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 		{
 			this.stateLocks.clear();
 			this.indexables.clear();
-			this.fields.clear();
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-	
-	// TODO needs to return a map
-	Set<Entry<Hash, Fields>> getFields()
-	{
-		this.lock.lock();
-		try
-		{
-			return Collections.unmodifiableSet(new HashSet<Entry<Hash, Fields>>(this.fields.entrySet()));
 		}
 		finally
 		{
@@ -240,48 +221,7 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 			else
 				result = this.context.getLedger().get(indexable, container);
 			
-			// TODO what about field within Block / BlockHeader containers and Particles? 
-			if (result instanceof Atom)
-				init(((Atom)result).getHash(), ((Atom)result).getFields());
-				
 			return result;
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-	
-	// FIELDS //
-	// TODO what happens with these on a DELETE op?  A DELETE could simply be part of a reorg, so don't want to actually delete them
-	private void init(final Hash hash, final Fields fields)
-	{
-		Objects.requireNonNull(hash);
-		Objects.requireNonNull(fields);
-		
-		this.lock.lock();
-		try
-		{
-			this.fields.put(hash, fields);
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-
-	public void set(final Hash hash, final Fields fields)
-	{
-		Objects.requireNonNull(hash);
-		Objects.requireNonNull(fields);
-		
-		this.lock.lock();
-		try
-		{
-			if (this.fields.containsKey(hash) == false)
-				throw new IllegalStateException("Fields for "+hash+" not initialized");
-
-			this.fields.put(hash, fields);
 		}
 		finally
 		{
@@ -386,11 +326,7 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 
 			operation.setState(CommitState.COMMITTED);
 
-			Fields fields = this.fields.remove(operation.getAtom().getHash());
-			if (fields != null)
-				operation.getAtom().setFields(fields);
-
-			this.context.getLedger().getLedgerStore().commit(Collections.singletonList(operation), this.fields.entrySet());
+			this.context.getLedger().getLedgerStore().commit(Collections.singletonList(operation));
 
 			for (Hash state : operation.getStates())
 			{
@@ -441,8 +377,6 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 				if (stateLog.hasLevel(Logging.DEBUG) == true)
 					stateLog.debug(this.context.getName()+": Aborted indexable "+indexable+" via "+operation);
 			}
-			
-			this.fields.remove(operation.getAtom().getHash());
 		}
 		finally
 		{
@@ -472,9 +406,6 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 					commitOperationIterator.remove();
 				}
 			}
-			
-			for (Atom atom : atomsRemoved)
-				this.fields.remove(atom.getHash());
 		}
 		finally
 		{
@@ -496,15 +427,11 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 					commitOperation.getState().equals(CommitState.PRECOMMITTED) && 
 					operationsToCommit.contains(commitOperation) == false)
 				{						
-					Fields fields = this.fields.get(commitOperation.getAtom().getHash());
-					if (fields != null)
-						commitOperation.getAtom().setFields(fields);
-
 					operationsToCommit.add(commitOperation);
 				}
 			}
 			
-			this.context.getLedger().getLedgerStore().commit(operationsToCommit, this.fields.entrySet());
+			this.context.getLedger().getLedgerStore().commit(operationsToCommit);
 
 			for (CommitOperation commitOperation : operationsToCommit)
 			{
@@ -513,8 +440,6 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 
 				for (Indexable indexable : commitOperation.getIndexables())
 					this.indexables.remove(indexable);
-
-				this.fields.remove(commitOperation.getAtom().getHash());
 			}
 		}
 		finally

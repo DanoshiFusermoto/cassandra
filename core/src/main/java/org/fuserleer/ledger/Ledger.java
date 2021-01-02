@@ -23,7 +23,6 @@ import org.fuserleer.common.Match;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.events.EventListener;
@@ -296,13 +295,7 @@ public final class Ledger implements Service, LedgerInterface
 						if (atom == null)
 							ledgerLog.error("Expected atom "+commit.get(IndexableCommit.Path.ATOM)+" was not found");
 						else
-						{
-							Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
-							if (fields != null && fields.isEmpty() == false)
-								atom.setFields(fields);
-
 							atoms.add(atom);
-						}
 					}
 					
 					for (Atom atom : atoms)
@@ -421,10 +414,6 @@ public final class Ledger implements Service, LedgerInterface
 			if (atom == null)
 				throw new IllegalStateException("Found indexable commit but unable to locate atom");
 
-			Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
-			if (fields != null && fields.isEmpty() == false)
-				atom.setFields(fields);
-
 			for (Particle particle : atom.getParticles())
 			{
 				if (particle.getHash().equals(indexable.getKey()) == true)
@@ -449,13 +438,6 @@ public final class Ledger implements Service, LedgerInterface
 			if (block == null)
 				throw new IllegalStateException("Found indexable commit but unable to locate block");
 			
-			for (Atom atom : block.getAtoms())
-			{
-				Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
-				if (fields != null && fields.isEmpty() == false)
-					atom.setFields(fields);
-			}
-
 			return (T) block;
 		}
 		else if (BlockHeader.class.isAssignableFrom(container) == true)
@@ -477,10 +459,6 @@ public final class Ledger implements Service, LedgerInterface
 			if (atom == null)
 				throw new IllegalStateException("Found indexable commit but unable to locate atom");
 
-			Fields fields = this.ledgerStore.get(atom.getHash(), Fields.class);
-			if (fields != null && fields.isEmpty() == false)
-				atom.setFields(fields);
-
 			return (T) atom;
 		}
 		else if (Particle.class.isAssignableFrom(container) == true)
@@ -488,10 +466,6 @@ public final class Ledger implements Service, LedgerInterface
 			Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
 			if (atom == null)
 				throw new IllegalStateException("Found indexable commit but unable to locate atom");
-
-			Fields fields = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Fields.class);
-			if (fields != null && fields.isEmpty() == false)
-				atom.setFields(fields);
 
 			for (Particle particle : atom.getParticles())
 			{

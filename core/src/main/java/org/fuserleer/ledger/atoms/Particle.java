@@ -3,9 +3,7 @@ package org.fuserleer.ledger.atoms;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
@@ -15,8 +13,6 @@ import org.bouncycastle.util.Arrays;
 import org.fuserleer.BasicObject;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
-import org.fuserleer.database.Field;
-import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.database.IndexablePrimitive;
@@ -32,7 +28,6 @@ import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
-import com.google.common.collect.ImmutableMap;
 
 @SerializerId2("ledger.atoms.particle")
 public abstract class Particle extends BasicObject implements IndexablePrimitive
@@ -68,8 +63,6 @@ public abstract class Particle extends BasicObject implements IndexablePrimitive
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private Spin spin;
 	
-	private Fields fields;
-	
 	private transient boolean prepared = false;
 	private transient boolean executed = true;
 	private transient boolean unexecuted = false;
@@ -77,8 +70,6 @@ public abstract class Particle extends BasicObject implements IndexablePrimitive
 	Particle()
 	{
 		super();
-		
-		this.fields = new Fields();
 	}
 
 	Particle(Spin spin)
@@ -196,33 +187,8 @@ public abstract class Particle extends BasicObject implements IndexablePrimitive
 		return indexables.contains(indexable);
 	}
 	
-	public Field getField(Indexable scope, String name)
-	{
-		return this.fields.get(scope, name);
-	}
-
-	public Field getField(Indexable scope, String name, Object value)
-	{
-		return this.fields.getOrDefault(scope, name, value);
-	}
-
-	public Field setField(Field field)
-	{
-		Objects.requireNonNull(field);
-		return this.fields.set(field);
-	}
-
-	public Field setField(Indexable scope, String name, Object value)
-	{
-		return setField(new Field(scope, name, value));
-	}
 	
-	public Fields getFields()
-	{
-		return this.fields;
-	}
-	
-	@JsonProperty("fields")
+/*	@JsonProperty("fields")
 	@DsonOutput(Output.API)
 	Map<String, Object> getJsonFields() 
 	{
@@ -232,7 +198,7 @@ public abstract class Particle extends BasicObject implements IndexablePrimitive
 			jsonified.put(field.getName(), ImmutableMap.<String, Object>of("scope", field.getScope(), "value", field.getValue()));
 			
 		return jsonified;
-	}
+	}*/
 	
 	@JsonProperty("shards")
 	@DsonOutput(Output.API)

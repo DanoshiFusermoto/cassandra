@@ -2,13 +2,14 @@ package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
 import java.util.Objects;
+import java.util.Set;
 
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
-import org.fuserleer.ledger.CommitState;
 import org.fuserleer.ledger.StateMachine;
+import org.fuserleer.ledger.StateOp;
+import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.utils.UInt256;
@@ -60,6 +61,15 @@ public final class TransferParticle extends SignedParticle
 	}
 
 	@Override
+	public Set<StateOp> getStateOps()
+	{
+		Set<StateOp> stateOps = super.getStateOps();
+		stateOps.add(new StateOp(Spin.spin(this.token, Spin.UP), Instruction.EXISTS));
+		stateOps.add(new StateOp(Spin.spin(this.token, Spin.DOWN), Instruction.NOT_EXISTS));
+		return stateOps;
+	}
+
+	@Override
 	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		if (this.token == null)
@@ -79,20 +89,8 @@ public final class TransferParticle extends SignedParticle
 	public void execute(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		TokenSpecification token = stateMachine.get("token");
-		// Discover the token if its not referenced in the state machine 
-		if (token == null)
-		{
-			token = stateMachine.get(Indexable.from(this.token, TokenSpecification.class), TokenSpecification.class);
-			if (token != null)
-			{
-				if (stateMachine.state(Indexable.from(token.getHash(Spin.DOWN), TokenSpecification.class)).equals(CommitState.NONE) == false)
-					throw new ValidationException("Transfer token "+token+" is in DOWN state");
-					
-				stateMachine.put("token", token);
-			}
-			else
-				throw new ValidationException("Transfer token "+token+" not found");
-		}
+		if (stateMachine.get("token") == null)
+			stateMachine.put("token", this.token);
 		
 		// Check all transfers within this state machine as using the same token
 		if (token.getHash().equals(this.token) == false)

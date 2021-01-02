@@ -9,9 +9,11 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
+import org.fuserleer.ledger.StateOp;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -37,6 +39,15 @@ public final class UniqueParticle extends SignedParticle
 	public Hash getValue()
 	{
 		return this.value;
+	}
+	
+	@Override
+	public Set<StateOp> getStateOps()
+	{
+		Set<StateOp> stateOps = super.getStateOps();
+		stateOps.add(new StateOp(this.value, StateOp.Instruction.NOT_EXISTS));
+		stateOps.add(new StateOp(this.value, UInt256.from(this.value.toByteArray()), StateOp.Instruction.SET));
+		return stateOps;
 	}
 
 	@Override

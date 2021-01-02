@@ -1,15 +1,21 @@
 package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Set;
 
 import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Hash;
+import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
+import org.fuserleer.ledger.StateOp;
+import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.UInt256;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -57,6 +63,16 @@ public final class TokenSpecification extends SignedParticle
 		return this.description;
 	}
 	
+	@Override
+	public Set<StateOp> getStateOps()
+	{
+		Set<StateOp> stateOps = super.getStateOps();
+		Hash ISOHash = new Hash(this.ISO.toLowerCase().getBytes(StandardCharsets.UTF_8), Mode.STANDARD);
+		stateOps.add(new StateOp(ISOHash, Instruction.NOT_EXISTS));
+		stateOps.add(new StateOp(ISOHash, UInt256.from(getHash().toByteArray()), Instruction.SET));
+		return stateOps;
+	}
+
 	@Override
 	public Set<Indexable> getIndexables()
 	{

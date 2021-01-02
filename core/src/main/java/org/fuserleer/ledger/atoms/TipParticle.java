@@ -1,17 +1,18 @@
 package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Set;
 
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Field;
-import org.fuserleer.database.Fields;
+import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.database.Identifier;
-import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
+import org.fuserleer.ledger.StateOp;
+import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
@@ -58,6 +59,16 @@ public final class TipParticle extends SignedParticle
 	}
 	
 	@Override
+	public Set<StateOp> getStateOps()
+	{
+		Set<StateOp> stateOps = super.getStateOps();
+		stateOps.add(new StateOp(this.transfer, Instruction.EXISTS));
+		stateOps.add(new StateOp(this.tipping, Instruction.EXISTS));
+		stateOps.add(new StateOp(this.tipping, new Hash("tip_total".getBytes(StandardCharsets.UTF_8), Mode.STANDARD), Instruction.INCREMENT));
+		return stateOps;
+	}
+
+	@Override
 	public Set<Identifier> getIdentifiers() 
 	{
 		Set<Identifier> identifiers = super.getIdentifiers();
@@ -93,40 +104,6 @@ public final class TipParticle extends SignedParticle
 			throw new ValidationException("Atom "+stateMachine.getAtom().getHash()+" doesn't contain transfer "+this.transfer+" for tip "+this.getHash());
 		
 		super.prepare(stateMachine);
-	}
-
-	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
-	{
-		Atom tippingAtom = stateMachine.get(Indexable.from(this.tipping, Particle.class), Atom.class);
-		if (tippingAtom != null)
-		{
-			Fields fields = tippingAtom.getFields(); //stateMachine.getCommitAccumulator().get(tippingAtom, Fields.class);
-			Field field = fields.getOrDefault(Indexable.from(this.tipping, Particle.class), "tip_total", 0);
-			
-			TransferParticle transferParticle = stateMachine.getAtom().getParticle(this.transfer);
-			fields.set(field.getScope(), field.getName(), ((int) field.getValue()) + transferParticle.getQuantity().getLow().getLow());
-			stateMachine.set(tippingAtom.getHash(), fields);
-		}
-		else
-			throw new ValidationException("Atom containing "+this.tipping+" not found");
-	}
-	
-	@Override
-	public void unexecute(StateMachine stateMachine) throws ValidationException, IOException 
-	{
-		Atom tippingAtom = stateMachine.get(Indexable.from(this.tipping, Particle.class), Atom.class);
-		if (tippingAtom != null)
-		{
-			Fields fields = tippingAtom.getFields(); //stateMachine.getCommitAccumulator().get(tippingAtom, Fields.class);
-			Field field = fields.getOrDefault(Indexable.from(this.tipping, Particle.class), "tip_total", 0);
-			
-			TransferParticle transferParticle = stateMachine.getAtom().getParticle(this.transfer);
-			fields.set(field.getScope(), field.getName(), ((int) field.getValue()) - transferParticle.getQuantity().getLow().getLow());
-			stateMachine.set(tippingAtom.getHash(), fields);
-		}
-		else
-			throw new ValidationException("Atom containing "+this.tipping+" not found");
 	}
 
 	@Override

@@ -13,18 +13,40 @@ import org.fuserleer.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 
+// TODO domain security required to limit StateOps
 @SerializerId2("ledger.state.op")
 public final class StateOp
 {
-	public static enum Type
+	public static enum Instruction
 	{
-		EQUAL, NOT_EQUAL, EXISTS, NOT_EXISTS, SET;
+		TYPE(true),
+		
+		EQUAL(true), NOT_EQUAL(true), 
+		LESS(true), GREATER(true), 
+		EXISTS(true), NOT_EXISTS(true),
 
+		ADD(false), SUBTRACT(false),
+		MULTIPLY(false), DIVIDE(false),
+		INCREMENT(false), DECREMENT(false), 
+		SET(false);
+
+		private final boolean evaluatable;
+		
+		Instruction(boolean evaluatable)
+		{
+			this.evaluatable = evaluatable;
+		}
+		
 		@JsonValue
 		@Override
 		public String toString() 
 		{
 			return this.name();
+		}
+
+		public boolean evaluatable()
+		{
+			return this.evaluatable;
 		}
 	}
 	
@@ -33,6 +55,10 @@ public final class StateOp
 	@DsonOutput(Output.ALL)
 	private SerializerDummy serializer = SerializerDummy.DUMMY;
 	
+	@JsonProperty("domain")
+	@DsonOutput(Output.ALL)
+	private Hash domain;
+
 	@JsonProperty("key")
 	@DsonOutput(Output.ALL)
 	private Hash key;
@@ -41,50 +67,130 @@ public final class StateOp
 	@DsonOutput(Output.ALL)
 	private UInt256 value;
 	
-	@JsonProperty("op")
+	@JsonProperty("ins")
 	@DsonOutput(Output.ALL)
-	private Type op;
+	private Instruction ins;
 	
 	private StateOp()
 	{
 		// FOR SERIALIZER
 	}
 	
-	public StateOp(final Hash key, final Type op)
+	public StateOp(final Hash key, final Instruction ins)
 	{
-		Objects.requireNonNull(op, "Op type is null");
+		Objects.requireNonNull(ins, "Instruction is null");
 		Objects.requireNonNull(key, "Key is null");
 		
-		if (op.equals(Type.EXISTS) == false && op.equals(Type.NOT_EXISTS) == false)
-			throw new IllegalArgumentException("Op type "+op+" requires a value");
+		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
+			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
 		
+		this.domain = Hash.ZERO;
 		this.key = key;
+		this.ins = ins;
+		this.value = null;
 	}
 	
-	public StateOp(final Hash key, final UInt256 value, final Type op)
+	public StateOp(final Hash domain, final Hash key, final Instruction ins)
 	{
-		Objects.requireNonNull(op, "Op type is null");
+		Objects.requireNonNull(domain, "Domain is null");
+		Objects.requireNonNull(ins, "Instruction is null");
+		Objects.requireNonNull(key, "Key is null");
+		
+		if (domain.equals(Hash.ZERO) == true)
+			throw new IllegalArgumentException("Domain is ZERO");
+
+		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
+			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
+		
+		this.domain = domain;
+		this.key = key;
+		this.value = null;
+		this.ins = ins;
+	}
+
+	public StateOp(final Hash key, final UInt256 value, final Instruction ins)
+	{
+		Objects.requireNonNull(ins, "Instruction is null");
 		Objects.requireNonNull(key, "Key is null");
 		Objects.requireNonNull(key, "Value is null");
 		
-		if (op.equals(Type.EXISTS) == true && op.equals(Type.NOT_EXISTS) == false)
-			throw new IllegalArgumentException("Op type "+op+" is valueless");
-		
+		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
+			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
+
 		this.key = key;
+		this.value = value;
+		this.ins = ins;
+		this.domain = Hash.ZERO;
 	}
 
-	public Hash getKey()
+	public StateOp(final Hash domain, final Hash key, final UInt256 value, final Instruction ins)
+	{
+		Objects.requireNonNull(domain, "Domain is null");
+		Objects.requireNonNull(ins, "Instruction is null");
+		Objects.requireNonNull(key, "Key is null");
+		Objects.requireNonNull(key, "Value is null");
+		
+		if (domain.equals(Hash.ZERO) == true)
+			throw new IllegalArgumentException("Domain is ZERO");
+		
+		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
+			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
+		
+		this.domain = domain;
+		this.key = key;
+		this.value = value;
+		this.ins = ins;
+	}
+
+	public Hash key()
 	{
 		return this.key;
 	}
 
-	public UInt256 getValue()
+	public UInt256 value()
 	{
 		return this.value;
 	}
 
-	public Type getOp()
+	public Instruction ins()
 	{
-		return this.op;
+		return this.ins;
+	}
+
+	public Hash domain()
+	{
+		return this.domain;
+	}
+
+	@Override
+	public boolean equals(Object other)
+	{
+		if (other == null)
+			return false;
+		if (other == this)
+			return true;
+
+		if (other instanceof StateOp)
+		{
+			if (((StateOp)other).key.equals(this.key) == true &&
+				((StateOp)other).ins.equals(this.ins) == true &&
+				((StateOp)other).domain.equals(this.domain) == true && 
+				((((StateOp)other).value == null && this.value == null) || ((StateOp)other).value.compareTo(this.value) == 0))
+				return true;
+		}
+		
+		return false;
+	}
+
+	@Override
+	public int hashCode()
+	{
+		return Objects.hash(this.domain, this.key, this.ins, this.value);
+	}
+
+	@Override
+	public String toString()
+	{
+		return this.ins+" "+this.domain+":"+this.key+(this.value == null ? "" : " "+this.value);
 	}
 }

@@ -6,7 +6,7 @@ import org.fuserleer.common.Primitive;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 
-interface LedgerInterface extends StateProvider
+interface LedgerInterface
 {
 	/**
 	 * 

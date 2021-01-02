@@ -5,15 +5,15 @@ import java.util.Collection;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.SerializerId2;
 
-@SerializerId2("ledger.messages.particle.vote.get")
-public final class GetParticleVoteMessage extends InventoryMessage
+@SerializerId2("ledger.messages.state.vote.get")
+public final class GetStateVoteMessage extends InventoryMessage
 {
-	GetParticleVoteMessage()
+	GetStateVoteMessage()
 	{
 		super();
 	}
 
-	public GetParticleVoteMessage(final Collection<Hash> inventory)
+	public GetStateVoteMessage(final Collection<Hash> inventory)
 	{
 		super(inventory);
 	}

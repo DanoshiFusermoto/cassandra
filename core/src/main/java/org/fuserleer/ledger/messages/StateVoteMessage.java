@@ -2,7 +2,7 @@ package org.fuserleer.ledger.messages;
 
 import java.util.Objects;
 
-import org.fuserleer.ledger.ParticleVote;
+import org.fuserleer.ledger.StateVote;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -10,19 +10,19 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.messages.particle.vote")
-public final class ParticleVoteMessage extends Message
+@SerializerId2("ledger.messages.state.vote")
+public final class StateVoteMessage extends Message
 {
 	@JsonProperty("vote")
 	@DsonOutput(Output.ALL)
-	private ParticleVote vote;
+	private StateVote vote;
 
-	ParticleVoteMessage()
+	StateVoteMessage()
 	{
 		super();
 	}
 
-	public ParticleVoteMessage(ParticleVote vote)
+	public StateVoteMessage(StateVote vote)
 	{
 		super();
 
@@ -30,7 +30,7 @@ public final class ParticleVoteMessage extends Message
 		this.vote = vote;
 	}
 
-	public ParticleVote getVote()
+	public StateVote getVote()
 	{
 		return this.vote;
 	}

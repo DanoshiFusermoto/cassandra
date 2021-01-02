@@ -10,8 +10,8 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.vote.particle")
-public final class ParticleVote extends Vote<Hash>
+@SerializerId2("ledger.vote.state")
+public final class StateVote extends Vote<Hash>
 {
 	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
@@ -21,14 +21,14 @@ public final class ParticleVote extends Vote<Hash>
 	@DsonOutput(Output.ALL)
 	private Hash atom;
 
-	private ParticleVote()
+	private StateVote()
 	{
 		// SERIALIZER
 	}
 	
-	public ParticleVote(final Hash particle, final Hash atom, final Hash block, final boolean decision, final ECPublicKey owner)
+	public StateVote(final Hash state, final Hash atom, final Hash block, final boolean decision, final ECPublicKey owner)
 	{
-		super(particle, decision, owner);
+		super(state, decision, owner);
 		
 		if (Objects.requireNonNull(atom, "Block is null").equals(Hash.ZERO) == true)
 			throw new IllegalArgumentException("Block is ZERO");
@@ -50,7 +50,7 @@ public final class ParticleVote extends Vote<Hash>
 		return this.block;
 	}
 	
-	public Hash getParticle()
+	public Hash getState()
 	{
 		return this.getObject();
 	}

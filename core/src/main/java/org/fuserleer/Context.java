@@ -28,6 +28,7 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Network;
 import org.fuserleer.node.LocalNode;
+import org.fuserleer.node.Node;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.Serialization;
@@ -169,6 +170,8 @@ public final class Context implements Service
 		Objects.requireNonNull(context).stop();
 		
 		contexts.remove(context.getName());
+		if (Context._default == context)
+			Context._default = null;
 	}
 
 	public final static void stopAll() throws TerminationException
@@ -179,6 +182,7 @@ public final class Context implements Service
 				Objects.requireNonNull(context).stop();
 		
 			contexts.clear();
+			Context._default = null;
 		}
 	}
 
@@ -264,10 +268,10 @@ public final class Context implements Service
 				if (nodeBytes == null)
 					throw new IllegalStateException("Expected node.local bytes but got null");
 				
-				LocalNode persisted = Serialization.getInstance().fromDson(nodeBytes, LocalNode.class);
+				Node persisted = Serialization.getInstance().fromDson(nodeBytes, Node.class);
 
 				if (persisted.getIdentity().equals(Context.this.node.getIdentity()) == false) // TODO what happens if NODE_KEY has changed?  Dump loggables?  Dump DB?
-					log.warn("Node key has changed from "+persisted.getKey()+" to "+Context.this.node.getKey());
+					log.warn("Node key has changed from "+persisted.getIdentity()+" to "+Context.this.node.getKey());
 				
 				Context.this.node.fromPersisted(persisted);
 			} 

@@ -65,15 +65,22 @@ public class StateMachine implements LedgerInterface
 	public void prepare() throws ValidationException, IOException
 	{
 		Set<Hash> internalIndexables = new HashSet<Hash>();
+		Set<StateOp> internalStateOps = new HashSet<StateOp>();
 		for(Particle particle : this.atom.getParticles())
 		{
 			if (internalIndexables.add(particle.getHash()) == false)
 				throw new ValidationException("Particle "+particle+" is duplicated in atom "+this.atom.getHash());
 			
-			for (Indexable stateIndexable : particle.getIndexables())
+			for (StateOp stateOp : particle.getStateOps())
 			{
-				if (internalIndexables.add(stateIndexable.getHash()) == false)
-					throw new ValidationException("Indexable "+stateIndexable+" is duplicated in "+particle+" in atom "+this.atom.getHash());
+				if (internalStateOps.add(stateOp) == false)
+					throw new ValidationException("StateOp "+stateOp+" is duplicated in "+particle+" in atom "+this.atom.getHash());
+			}
+
+			for (Indexable indexable : particle.getIndexables())
+			{
+				if (internalIndexables.add(indexable.getHash()) == false)
+					throw new ValidationException("Indexable "+indexable+" is duplicated in "+particle+" in atom "+this.atom.getHash());
 			}
 			
 			particle.prepare(this);
@@ -137,28 +144,31 @@ public class StateMachine implements LedgerInterface
 		if (this.prepared == false)
 			prepare();
 		
+		for (StateOp stateOp : this.atom.getStateOps())
+		{
+			if (stateOp.ins().evaluatable() == false)
+				continue;
+			
+			if (ledgerLog.hasLevel(Logging.DEBUG) == true)
+				ledgerLog.debug(this.context.getName()+": Validating state "+stateOp);
+			
+			StateOpResult<?> result = this.stateAccumulator.evaluate(stateOp);
+			result.thrown();
+		}
+		
 		for (Particle particle : this.atom.getParticles())
 		{
-			if (ledgerLog.hasLevel(Logging.DEBUG) == true)
-				ledgerLog.debug(this.context.getName()+": Validating particle "+particle);
-			
-			if (this.stateAccumulator.state(Indexable.from(particle.getHash(), Particle.class)).index() > state.index())
-				throw new ValidationException("Particle "+particle+" is already in states");
-	
-			if (particle.getSpin().equals(Spin.DOWN) == true &&
-				this.atom.getParticle(Indexable.from(particle.getHash(Spin.UP), Particle.class)) == null && 
-				this.stateAccumulator.state(Indexable.from(particle.getHash(Spin.UP), Particle.class)).equals(CommitState.COMMITTED) == false)
-				throw new ValidationException("Attempting to spin DOWN particle "+particle+" without a corresponding UP "+particle.getHash(Spin.UP));
-
-			if (particle.getSpin().equals(Spin.DOWN) == true && ledgerLog.hasLevel(Logging.DEBUG) == true)
-				ledgerLog.debug(this.context.getName()+": Attempting to spin DOWN particle "+particle.getHash(Spin.UP)+" -> "+particle.getHash());
-				
-			for (Indexable indexable : particle.getIndexables())
-				if (this.stateAccumulator.state(indexable).index() > state.index())
-					throw new ValidationException("Indexable "+indexable+" within particle "+particle+" is already in state");
-
 			if (Universe.getDefault().getGenesis().contains(particle.getHash()) == false)
+			{
+				if (ledgerLog.hasLevel(Logging.DEBUG) == true)
+					ledgerLog.debug(this.context.getName()+": Validating particle "+particle);
+
+				for (Indexable indexable : particle.getIndexables())
+					if (this.stateAccumulator.has(indexable).index() > state.index())
+						throw new ValidationException("Indexable "+indexable+" within particle "+particle+" is already in state");
+
 				particle.execute(this);
+			}
 		}
 	}
 	
@@ -180,11 +190,11 @@ public class StateMachine implements LedgerInterface
 		return this.stateAccumulator.get(query, container, spin);
 	}
 
-	@Override
+/*	@Override
 	public CommitState state(Indexable indexable) throws IOException
 	{
 		return this.stateAccumulator.state(indexable);
-	}
+	}*/
 
 	public void set(Hash action, Fields fields)
 	{

@@ -19,22 +19,24 @@ public final class StateOp
 {
 	public static enum Instruction
 	{
-		TYPE(true),
+		TYPE(true, false),
 		
-		EQUAL(true), NOT_EQUAL(true), 
-		LESS(true), GREATER(true), 
-		EXISTS(true), NOT_EXISTS(true),
+		EQUAL(true, true), NOT_EQUAL(true, true), 
+		LESS(true, true), GREATER(true, true), 
+		EXISTS(true, false), NOT_EXISTS(true, false),
 
-		ADD(false), SUBTRACT(false),
-		MULTIPLY(false), DIVIDE(false),
-		INCREMENT(false), DECREMENT(false), 
-		SET(false);
+		ADD(false, true), SUBTRACT(false, true),
+		MULTIPLY(false, true), DIVIDE(false, true),
+		INCREMENT(false, false), DECREMENT(false, false), 
+		SET(false, true);
 
 		private final boolean evaluatable;
+		private final boolean parameter;
 		
-		Instruction(boolean evaluatable)
+		Instruction(boolean evaluatable, boolean parameter)
 		{
 			this.evaluatable = evaluatable;
+			this.parameter = parameter;
 		}
 		
 		@JsonValue
@@ -47,6 +49,11 @@ public final class StateOp
 		public boolean evaluatable()
 		{
 			return this.evaluatable;
+		}
+
+		public boolean parameterized()
+		{
+			return this.parameter;
 		}
 	}
 	
@@ -81,8 +88,8 @@ public final class StateOp
 		Objects.requireNonNull(ins, "Instruction is null");
 		Objects.requireNonNull(key, "Key is null");
 		
-		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
-			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
+		if (ins.parameterized() == true)
+			throw new IllegalArgumentException("Instruction "+ins+" requires a parameter");
 		
 		this.domain = Hash.ZERO;
 		this.key = key;
@@ -99,8 +106,8 @@ public final class StateOp
 		if (domain.equals(Hash.ZERO) == true)
 			throw new IllegalArgumentException("Domain is ZERO");
 
-		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
-			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
+		if (ins.parameterized() == true)
+			throw new IllegalArgumentException("Instruction "+ins+" requires a parameter");
 		
 		this.domain = domain;
 		this.key = key;
@@ -114,8 +121,8 @@ public final class StateOp
 		Objects.requireNonNull(key, "Key is null");
 		Objects.requireNonNull(key, "Value is null");
 		
-		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
-			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
+		if (ins.parameterized() == false)
+			throw new IllegalArgumentException("Instruction "+ins+" is parameterless");
 
 		this.key = key;
 		this.value = value;
@@ -133,8 +140,8 @@ public final class StateOp
 		if (domain.equals(Hash.ZERO) == true)
 			throw new IllegalArgumentException("Domain is ZERO");
 		
-		if (ins.equals(Instruction.EXISTS) == false && ins.equals(Instruction.NOT_EXISTS) == false)
-			throw new IllegalArgumentException("Instruction "+ins+" requires a value");
+		if (ins.parameterized() == false)
+			throw new IllegalArgumentException("Instruction "+ins+" is parameterless");
 		
 		this.domain = domain;
 		this.key = key;

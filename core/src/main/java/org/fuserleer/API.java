@@ -264,12 +264,15 @@ public class API implements Service
 				
 				try
 				{
-					Atom atom = API.this.context.getLedger().get(Indexable.from(req.params("hash"), Particle.class), Atom.class);
+					Atom atom = API.this.context.getLedger().get(Indexable.from(decodeQueryValue(req.params("hash")), Particle.class), Atom.class);
 					if (atom == null)
 						status(responseJSON, 404, "Particle "+req.params("hash")+" not found");
 					else
 					{
 						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						AtomCertificate certificate = API.this.context.getLedger().get(Indexable.from(atom.getHash(), AtomCertificate.class));
+						if (certificate != null)
+							responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
 						status(responseJSON, 200);
 					}
 				}
@@ -301,6 +304,9 @@ public class API implements Service
 						else
 						{
 							responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+							AtomCertificate certificate = API.this.context.getLedger().get(Indexable.from(atom.getHash(), AtomCertificate.class));
+							if (certificate != null)
+								responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
 							status(responseJSON, 200);
 						}
 					}

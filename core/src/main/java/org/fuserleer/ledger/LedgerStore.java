@@ -10,6 +10,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 
+import org.bouncycastle.util.Arrays;
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
 import org.fuserleer.common.Order;
@@ -23,8 +24,10 @@ import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
+import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.IndexableCommit.Path;
+import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.logging.Logger;
@@ -45,13 +48,14 @@ import com.sleepycat.je.OperationStatus;
 import com.sleepycat.je.Transaction;
 import com.sleepycat.je.TransactionConfig;
 
-public class LedgerStore extends DatabaseStore implements StateProvider
+public class LedgerStore extends DatabaseStore implements LedgerProvider
 {
 	private static final Logger databaseLog = Logging.getLogger("database");
 	
 	private final Context context;
 
 	private Database primitives;
+	private Database state;
 	private Database stateIndexables;
 	private Database stateIdentifiers;
 	private Database stateFields;
@@ -84,6 +88,11 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 			syncConfig.setTransactional(true);
 			syncConfig.setKeyPrefixing(true);
 
+			DatabaseConfig stateConfig = new DatabaseConfig();
+			stateConfig.setAllowCreate(true);
+			stateConfig.setTransactional(true);
+			stateConfig.setKeyPrefixing(true);
+
 			DatabaseConfig stateIndexablesConfig = new DatabaseConfig();
 			stateIndexablesConfig.setAllowCreate(true);
 			stateIndexablesConfig.setTransactional(true);
@@ -107,9 +116,10 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 
 				this.primitives = getEnvironment().openDatabase(transaction, "hackation.primitives", primitivesConfig);
 				this.syncChain = getEnvironment().openDatabase(transaction, "hackation.sync.chain", primitivesConfig);
-				this.stateFields = getEnvironment().openDatabase(null, "hackation.state.fields", stateFieldsConfig);
-				this.stateIndexables = getEnvironment().openDatabase(null, "hackation.state.indexables", stateIndexablesConfig);
-				this.stateIdentifiers = getEnvironment().openDatabase(null, "hackation.state.identifiers", stateIdentifiersConfig);
+				this.state = getEnvironment().openDatabase(transaction, "hackation.state", stateConfig);
+				this.stateFields = getEnvironment().openDatabase(transaction, "hackation.state.fields", stateFieldsConfig);
+				this.stateIndexables = getEnvironment().openDatabase(transaction, "hackation.state.indexables", stateIndexablesConfig);
+				this.stateIdentifiers = getEnvironment().openDatabase(transaction, "hackation.state.identifiers", stateIdentifiersConfig);
 
 				transaction.commit();
 			}
@@ -155,6 +165,7 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 		if (this.stateIdentifiers != null) this.stateIdentifiers.close();
 		if (this.stateIndexables != null) this.stateIndexables.close();
 		if (this.stateFields != null) this.stateFields.close();
+		if (this.state != null) this.state.close();
 		if (this.syncChain != null) this.syncChain.close();
 		if (this.primitives != null) this.primitives.close();
 	}
@@ -169,6 +180,7 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 			transaction = getEnvironment().beginTransaction(null, new TransactionConfig().setReadUncommitted(true));
 			getEnvironment().truncateDatabase(transaction, "hackation.primitives", false);
 			getEnvironment().truncateDatabase(transaction, "hackation.sync.chain", false);
+			getEnvironment().truncateDatabase(transaction, "hackation.state", false);
 			getEnvironment().truncateDatabase(transaction, "hackation.state.indexables", false);
 			getEnvironment().truncateDatabase(transaction, "hackation.state.identifiers", false);
 			getEnvironment().truncateDatabase(transaction, "hackation.state.fields", false);
@@ -480,7 +492,7 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 		} 
 	}
 	
-	final OperationStatus store(ParticleVote vote) throws IOException 
+	final OperationStatus store(StateVote vote) throws IOException 
 	{
 		Objects.requireNonNull(vote, "Vote is null");
 		
@@ -492,12 +504,12 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 		    {
 		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
 		    	{
-		    		databaseLog.warn(this.context.getName()+": Particle vote "+vote.getHash()+" is already present");
+		    		databaseLog.warn(this.context.getName()+": State vote "+vote.getHash()+" is already present");
 		    		transaction.abort();
 		    		return status;
 		    	}
 		    	else 
-		    		throw new DatabaseException("Failed to store particle vote "+vote.getHash()+" due to "+status.name());
+		    		throw new DatabaseException("Failed to store state vote "+vote.getHash()+" due to "+status.name());
 		    } 
 
 		    transaction.commit();
@@ -569,7 +581,7 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 	}
 	
 	@Override
-	public CommitState state(Indexable indexable) throws IOException
+	public final CommitState has(final Indexable indexable) throws IOException
 	{
 		Objects.requireNonNull(indexable);
 
@@ -581,6 +593,70 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 				return CommitState.COMMITTED;
 			
 			return CommitState.NONE;
+        }
+		catch (Exception ex)
+		{
+			if (ex instanceof DatabaseException)
+				throw ex;
+			else
+				throw new DatabaseException(ex);
+		}
+	}
+
+	@Override
+	public StateOpResult<?> evaluate(final StateOp stateOp) throws IOException 
+	{
+		Objects.requireNonNull(stateOp);
+		if (stateOp.ins().equals(Instruction.SET) == true)
+			throw new IllegalArgumentException("Evaluation of StateOp.SET is illegal");
+		
+		try
+        {
+			DatabaseEntry key = new DatabaseEntry(stateOp.key().toByteArray());
+			if (stateOp.ins().equals(Instruction.EXISTS) == true || stateOp.ins().equals(Instruction.NOT_EXISTS) == true)
+			{
+				OperationStatus status = this.state.get(null, key, null, LockMode.DEFAULT);
+				if (status.equals(OperationStatus.SUCCESS) == true)
+				{
+					if (stateOp.ins().equals(Instruction.EXISTS) == true)
+						return new StateOpResult<Boolean>(stateOp, CommitState.COMMITTED);
+					else
+						return new StateOpResult<Boolean>(stateOp, new ValidationException(stateOp.toString()));  // FIXME DependencyNotFoundException needed here
+				}
+				else
+				{
+					if (stateOp.ins().equals(Instruction.NOT_EXISTS) == true)
+						return new StateOpResult<Boolean>(stateOp, true, CommitState.NONE);
+					else
+						return new StateOpResult<Boolean>(stateOp, new ValidationException(stateOp.toString()));
+				}
+			}
+			else if (stateOp.ins().equals(Instruction.EQUAL) == true || stateOp.ins().equals(Instruction.NOT_EQUAL) == true)
+			{
+				DatabaseEntry value = new DatabaseEntry();
+				OperationStatus status = this.state.get(null, key, value, LockMode.DEFAULT);
+				if (status.equals(OperationStatus.SUCCESS) == true)
+				{
+					if (stateOp.ins().equals(Instruction.EQUAL) == true)
+					{
+						if (Arrays.areEqual(stateOp.value().toByteArray(), value.getData()) == true)
+							return new StateOpResult<Boolean>(stateOp, CommitState.COMMITTED);
+						else
+							return new StateOpResult<Boolean>(stateOp, CommitState.COMMITTED, new ValidationException(stateOp.toString()));
+					}
+					else
+					{
+						if (Arrays.areEqual(stateOp.value().toByteArray(), value.getData()) == false)
+							return new StateOpResult<Boolean>(stateOp, CommitState.COMMITTED);
+						else
+							return new StateOpResult<Boolean>(stateOp, CommitState.COMMITTED, new ValidationException(stateOp.toString()));
+					}
+				}
+				else
+					return new StateOpResult<Boolean>(stateOp, new ValidationException(stateOp.toString()));
+			}
+			
+			return null;
         }
 		catch (Exception ex)
 		{
@@ -727,7 +803,7 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 	    } 
 	}
 	
-	final void commit(Collection<StateOperation> commits, Set<Entry<Hash, Fields>> fields) throws IOException
+	final void commit(Collection<CommitOperation> commits, Set<Entry<Hash, Fields>> fields) throws IOException
 	{
 	    Objects.requireNonNull(commits);
 	    Objects.requireNonNull(fields);
@@ -735,10 +811,10 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 	    Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
 	    try 
 	    {
-	    	final Iterator<StateOperation> commitIterator = commits.iterator();
+	    	final Iterator<CommitOperation> commitIterator = commits.iterator();
 	    	while (commitIterator.hasNext()) 
 	    	{
-	    		StateOperation operation = commitIterator.next();
+	    		CommitOperation operation = commitIterator.next();
 	    		OperationStatus status;
 
 	    		final Indexable 	atomIndexable = Indexable.from(operation.getAtom().getHash(), Atom.class);
@@ -753,7 +829,7 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 	    		if (atomIndexableCommit.get(Path.BLOCK).equals(operation.getHead().getHash()) == false)
     				throw new DatabaseException("Atom indexable commit "+operation.getAtom().getHash()+" references block "+atomIndexableCommit.get(Path.BLOCK)+" not expected "+operation.getHead().getHash());
 	    		
-	    		final Indexable 	blockIndexable = Indexable.from(operation.getHead().getHash(), BlockHeader.class);
+	    		final Indexable	blockIndexable = Indexable.from(operation.getHead().getHash(), BlockHeader.class);
 	    		final DatabaseEntry blockIndexableKey = new DatabaseEntry(blockIndexable.toByteArray());
 	    		final DatabaseEntry atomKey = new DatabaseEntry(operation.getAtom().getHash().toByteArray());
 //	    		if (operation.getType().equals(StateOperation.Type.STORE)) 
@@ -769,22 +845,23 @@ public class LedgerStore extends DatabaseStore implements StateProvider
 		    		if (status.equals(OperationStatus.SUCCESS) == false)
 	    				throw new DatabaseException("Atom "+operation.getAtom().getHash()+" not found or has error "+status.name());
 		    		
-//	    			MerkleTree merkleTree = operation.getAtom().getMerkleTree();
-	    			for (Indexable indexable : operation.getAtom().getIndexables())
+	    			for (StateOp stateOp : operation.getStateOps())
 	    			{
-	    				IndexableCommit indexableCommit = null;
-	    				// TODO disabled for now until sure they are needed for indexables
-/*	    				if (atomIndexables.contains(indexable) == true)
-	    				{
-		    				List<MerkleProof> merkleProofs = null;
-		    				if (atomIndexables.contains(indexable) == true)
-		    					merkleProofs = merkleTree.auditProof(indexable.getHash());
+	    				if (stateOp.ins().equals(Instruction.SET) == false)
+	    					continue;
+	    				
+	    				DatabaseEntry stateKey = new DatabaseEntry(stateOp.key().toByteArray());
+	    				DatabaseEntry stateValue = new DatabaseEntry(stateOp.value().toByteArray());
+	    				status = this.state.put(transaction, stateKey, stateValue);
+	    				if (status.equals(OperationStatus.SUCCESS) == false)
+	    					throw new DatabaseException("Failed to commit state "+stateOp+" for commit "+operation.getHead().getHeight()+":"+operation.getAtom().getHash()+" due to "+status.name()); 
+	    				else if (databaseLog.hasLevel(Logging.DEBUG) == true)
+	    					databaseLog.debug(this.context.getName()+": Stored state "+stateOp);
+	    			}
 
-		    				indexableCommit = new IndexableCommit(operation.getHead().getHash(), indexable.getHash(), merkleProofs, operation.getTimestamp());
-	    				}
-	    				else*/
-	    					indexableCommit = new IndexableCommit(operation.getHead().getIndexOf(InventoryType.ATOMS, operation.getAtom().getHash()), indexable, Collections.emptyList(), operation.getTimestamp(), Indexable.from(operation.getHead().getHash(), BlockHeader.class), Indexable.from(operation.getAtom(), Atom.class));
-	    					
+	    			for (Indexable indexable : operation.getIndexables())
+	    			{
+	    				IndexableCommit indexableCommit = new IndexableCommit(operation.getHead().getIndexOf(InventoryType.ATOMS, operation.getAtom().getHash()), indexable, Collections.emptyList(), operation.getTimestamp(), Indexable.from(operation.getHead().getHash(), BlockHeader.class), Indexable.from(operation.getAtom(), Atom.class));
 	    				DatabaseEntry indexableKey = new DatabaseEntry(indexable.toByteArray());
 	    				DatabaseEntry indexableValue = new DatabaseEntry(Serialization.getInstance().toDson(indexableCommit, Output.PERSIST));
 	    				status = this.stateIndexables.put(transaction, indexableKey, indexableValue);

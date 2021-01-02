@@ -17,6 +17,7 @@ import org.fuserleer.database.Fields;
 import org.fuserleer.database.Identifier;
 import org.fuserleer.database.Indexable;
 import org.fuserleer.database.IndexablePrimitive;
+import org.fuserleer.ledger.StateOp;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
@@ -32,6 +33,7 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 	@DsonOutput(Output.ALL)
 	private List<Particle> particles;
 	
+	private transient Set<StateOp> stateops = null;
 	private transient Set<Indexable> indexables = null;
 
 	public Atom()
@@ -78,6 +80,25 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 		this.particles = new ArrayList<Particle>(verifiedNonDuplicates);
 	}
 	
+	public Set<Hash> getStates()
+	{
+		Set<Hash> states = new LinkedHashSet<Hash>();
+		this.particles.forEach(p -> states.addAll(p.getStates()));
+		return states;
+	}
+
+	public synchronized Set<StateOp> getStateOps()
+	{
+		if (this.stateops == null)
+		{
+			final Set<StateOp> stateops = new LinkedHashSet<StateOp>();
+			this.particles.forEach(p -> stateops.addAll(p.getStateOps()));
+			this.stateops = Collections.unmodifiableSet(stateops);
+		}
+		
+		return this.stateops;
+	}
+
 	public synchronized Set<Indexable> getIndexables()
 	{
 		if (this.indexables == null)

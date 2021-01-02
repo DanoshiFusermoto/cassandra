@@ -15,7 +15,6 @@ import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.atoms.ParticleCertificate;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -146,8 +145,8 @@ public final class VoteRegulator implements Service
 		{
 			for (AtomCertificate atomCertificate : blockCommittedEvent.getBlock().getCertificates())
 			{
-				for (ParticleCertificate particleCertificate : atomCertificate.getAll())
-					processVoteBloom(particleCertificate.getSignatures().getSigners(), particleCertificate.getVotePowers());
+				for (StateCertificate stateCertificate : atomCertificate.getAll())
+					processVoteBloom(stateCertificate.getSignatures().getSigners(), stateCertificate.getVotePowers());
 			}
 		}
 	};

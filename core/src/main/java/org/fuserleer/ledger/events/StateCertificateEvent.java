@@ -1,10 +1,10 @@
 package org.fuserleer.ledger.events;
 
-import org.fuserleer.ledger.atoms.ParticleCertificate;
+import org.fuserleer.ledger.StateCertificate;
 
-public final class ParticleCertificateEvent extends CertificateEvent<ParticleCertificate>
+public final class StateCertificateEvent extends CertificateEvent<StateCertificate>
 {
-	public ParticleCertificateEvent(ParticleCertificate certificate)
+	public StateCertificateEvent(StateCertificate certificate)
 	{
 		super(certificate);
 	}

@@ -1,4 +1,4 @@
-package org.fuserleer.ledger.atoms;
+package org.fuserleer.ledger;
 
 import java.util.Collection;
 import java.util.Objects;
@@ -8,16 +8,14 @@ import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.ledger.ParticleVote;
-import org.fuserleer.ledger.VotePowerBloom;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.certificate")
-public final class ParticleCertificate extends Certificate
+@SerializerId2("ledger.atoms.state.certificate")
+public final class StateCertificate extends Certificate
 {
 	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
@@ -27,22 +25,22 @@ public final class ParticleCertificate extends Certificate
 	@DsonOutput(Output.ALL)
 	private Hash atom;
 	
-	@JsonProperty("particle")
+	@JsonProperty("state")
 	@DsonOutput(Output.ALL)
-	private Hash particle;
+	private Hash state;
 
 	@JsonProperty("powers")
 	@DsonOutput(Output.ALL)
 	private VotePowerBloom powers;
 	
-	private ParticleCertificate()
+	private StateCertificate()
 	{
 		super();
 		
 		// FOR SERIALIZER //
 	}
 
-	public ParticleCertificate(final Hash particle, final Hash atom, final Hash block, final boolean decision, final VotePowerBloom powers, final Collection<ParticleVote> votes) throws CryptoException
+	public StateCertificate(final Hash state, final Hash atom, final Hash block, final boolean decision, final VotePowerBloom powers, final Collection<StateVote> votes) throws CryptoException
 	{
 		super(decision);
 		
@@ -52,8 +50,8 @@ public final class ParticleCertificate extends Certificate
 		if (Objects.requireNonNull(atom, "Atom is null").equals(Hash.ZERO) == true)
 			throw new IllegalArgumentException("Atom is ZERO");
 		
-		if (Objects.requireNonNull(particle, "Particle is null").equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Particle is ZERO");
+		if (Objects.requireNonNull(state, "State is null").equals(Hash.ZERO) == true)
+			throw new IllegalArgumentException("State is ZERO");
 
 		if (Objects.requireNonNull(powers, "Powers is null").count() == 0)
 			throw new IllegalArgumentException("Powers is empty");
@@ -64,12 +62,12 @@ public final class ParticleCertificate extends Certificate
 		if (Objects.requireNonNull(votes, "Votes is null").size() == 0)
 			throw new IllegalArgumentException("Votes is empty");
 
-		this.particle = particle;
+		this.state = state;
 		this.atom = atom;
 		this.block = block;
 		this.powers = powers;
 		
-		for (ParticleVote vote : votes)
+		for (StateVote vote : votes)
 			add(vote.getOwner(), vote.getSignature());
 	}
 
@@ -83,15 +81,15 @@ public final class ParticleCertificate extends Certificate
 		return this.atom;
 	}
 
-	public Hash getParticle()
+	public Hash getState()
 	{
-		return this.particle;
+		return this.state;
 	}
 
 	@Override
 	public <T> T getObject()
 	{
-		return (T) this.particle;
+		return (T) this.state;
 	}
 
 	public VotePowerBloom getVotePowers()
@@ -102,7 +100,7 @@ public final class ParticleCertificate extends Certificate
 	@Override
 	public boolean verify(final ECPublicKey signer, final ECSignature signature)
 	{
-		ParticleVote vote = new ParticleVote(getParticle(), getAtom(), getBlock(), getDecision(), signer);
+		StateVote vote = new StateVote(getState(), getAtom(), getBlock(), getDecision(), signer);
 		return signer.verify(vote.getHash(), signature);
 	}
 }

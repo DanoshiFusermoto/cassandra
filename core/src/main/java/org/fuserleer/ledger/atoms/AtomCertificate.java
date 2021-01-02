@@ -12,6 +12,7 @@ import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.StateCertificate;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
@@ -29,7 +30,7 @@ public final class AtomCertificate extends Certificate
 	@JsonProperty("certificates")
 	@DsonOutput(Output.ALL)
 	@JsonDeserialize(as=LinkedHashMap.class)
-	private Map<Hash, ParticleCertificate> certificates;
+	private Map<Hash, StateCertificate> certificates;
 
 	private AtomCertificate()
 	{
@@ -38,7 +39,7 @@ public final class AtomCertificate extends Certificate
 		// FOR SERIALIZER
 	}
 	
-	public AtomCertificate(final Hash atom, final Collection<ParticleCertificate> certificates) throws CryptoException, ValidationException
+	public AtomCertificate(final Hash atom, final Collection<StateCertificate> certificates) throws CryptoException, ValidationException
 	{
 		super(!Objects.requireNonNull(certificates, "Certificates is null").stream().anyMatch(c -> c.getDecision() == false));
 		
@@ -49,13 +50,13 @@ public final class AtomCertificate extends Certificate
 		if (certificates.isEmpty() == true)
 			throw new IllegalArgumentException("Certificates is empty");
 		
-		this.certificates = new LinkedHashMap<Hash, ParticleCertificate>();
-		for (ParticleCertificate certificate : certificates)
+		this.certificates = new LinkedHashMap<Hash, StateCertificate>();
+		for (StateCertificate certificate : certificates)
 		{
 			if (certificate.getAtom().equals(this.atom) == false)
-				throw new ValidationException("Certificate for particle "+certificate.getParticle()+" does not reference atom "+this.atom);
+				throw new ValidationException("Certificate for state "+certificate.getState()+" does not reference atom "+this.atom);
 			
-			this.certificates.put(certificate.getParticle(), certificate);
+			this.certificates.put(certificate.getState(), certificate);
 		}
 	}
 
@@ -70,7 +71,7 @@ public final class AtomCertificate extends Certificate
 		return (T) this.atom;
 	}
 	
-	public ParticleCertificate get(Hash particle)
+	public StateCertificate get(Hash particle)
 	{
 		return this.certificates.get(particle);
 	}
@@ -78,15 +79,15 @@ public final class AtomCertificate extends Certificate
 	@Override
 	public boolean verify(final ECPublicKey signer, final ECSignature signature)
 	{
-		for (ParticleCertificate certificate : this.certificates.values())
+		for (StateCertificate certificate : this.certificates.values())
 			if (certificate.getSignatures().getSigners().contains(signer) == true)
 				return certificate.verify(signer, signature);
 
 		return false;
 	}
 
-	public Collection<ParticleCertificate> getAll()
+	public Collection<StateCertificate> getAll()
 	{
-		return new ArrayList<ParticleCertificate>(this.certificates.values());
+		return new ArrayList<StateCertificate>(this.certificates.values());
 	}
 }

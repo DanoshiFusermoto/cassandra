@@ -1,12 +1,14 @@
 package org.fuserleer.ledger;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
@@ -14,13 +16,11 @@ import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
-import org.fuserleer.database.IndexablePrimitive;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
-import org.fuserleer.serialization.SerializationException;
 import org.fuserleer.serialization.SerializerConstants;
 import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.SerializerId2;
@@ -30,12 +30,25 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Longs;
 
 @SerializerId2("ledger.block.header")
-public final class BlockHeader implements Comparable<BlockHeader>, Hashable, IndexablePrimitive, Cloneable
+public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Primitive, Cloneable
 {
-	public final static int	MAX_ATOMS = 1024;
+	public final static int	MAX_ATOMS = 2048;
+	
+	// TODO need index and stepped in here?
+	public static long getStep(final long height, final Hash previous, final ECPublicKey owner, final long timestamp, final Collection<Hash> atoms)
+	{
+		Hash stepHash = Hash.from(Hash.from(height), previous, owner.asHash(), Hash.from(timestamp));
+
+		for (Hash atom : atoms)
+			stepHash = new Hash(stepHash, atom, Mode.STANDARD);
+
+		long step = MathUtils.ringDistance64(previous.asLong(), stepHash.asLong());
+		return step;
+	}
 	
 	public static enum InventoryType
 	{
@@ -118,8 +131,8 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 		if (height == 0 && previous.equals(Hash.ZERO) == false)
 			throw new IllegalArgumentException("Previous block hash must be ZERO for genesis");
 		
-		if (height != 0 && previous.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Previous block hash is ZERO");
+		if (height != 0)
+			Hash.notZero(previous, "Previous block hash is ZERO");
 		
 		if (timestamp < 0)
 			throw new IllegalArgumentException("Timestamp is negative");
@@ -159,7 +172,8 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 		return this.index;
 	}
 
-	long getNextIndex() 
+	@VisibleForTesting
+	public long getNextIndex() 
 	{
 		return this.index + this.inventory.getOrDefault(InventoryType.ATOMS, Collections.emptyList()).size();
 	}
@@ -192,17 +206,11 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Ind
 	{
 		if (this.step == -1)
 		{
-			try
-			{
-				byte[] bytes = Serialization.getInstance().toDson(clone(), Output.HASH);
-				Hash hash = new Hash(bytes, Mode.DOUBLE);
-				this.step = MathUtils.ringDistance64(new Hash(this.previous.toByteArray(), Mode.STANDARD).asLong(), hash.asLong());
-			}
-			catch (SerializationException ex)
-			{
-				// TODO Catch but only report
-				blocksLog.error("Step calculation failed", ex);
-			}
+			this.step = BlockHeader.getStep(this.height, this.previous, this.owner, this.timestamp, this.inventory.get(InventoryType.ATOMS));
+				
+//				byte[] bytes = Serialization.getInstance().toDson(clone(), Output.HASH);
+//				Hash hash = new Hash(bytes, Mode.DOUBLE);
+//				this.step = MathUtils.ringDistance64(new Hash(this.previous.toByteArray(), Mode.STANDARD).asLong(), hash.asLong());
 		}
 		
 		return this.step;

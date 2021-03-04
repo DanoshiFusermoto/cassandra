@@ -4,6 +4,7 @@ import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Longs;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -16,6 +17,7 @@ public final class BlockVote extends Vote<Hash>
 	@DsonOutput(Output.ALL)
 	private long clock;
 
+	@SuppressWarnings("unused")
 	private BlockVote()
 	{
 		// SERIALIZER
@@ -23,7 +25,7 @@ public final class BlockVote extends Vote<Hash>
 	
 	public BlockVote(final Hash object, final long clock, final ECPublicKey owner)
 	{
-		super(object, true, owner);
+		super(object, StateDecision.POSITIVE, owner);
 		
 		if (clock < 0)
 			throw new IllegalArgumentException("Clock is negative");
@@ -41,5 +43,8 @@ public final class BlockVote extends Vote<Hash>
 		return getObject();
 	}
 
-
+	public long getHeight()
+	{
+		return Longs.fromByteArray(getObject().toByteArray());
+	}
 }

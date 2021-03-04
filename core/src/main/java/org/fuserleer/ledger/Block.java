@@ -1,7 +1,6 @@
 package org.fuserleer.ledger;
 
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -12,7 +11,6 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.BasicObject;
 import org.fuserleer.common.Primitive;
-import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleTree;
@@ -44,6 +42,7 @@ public final class Block extends BasicObject implements Primitive
 	@JsonDeserialize(as=LinkedHashMap.class)
 	private Map<Hash, AtomCertificate> certificates;
 
+	@SuppressWarnings("unused")
 	private Block()
 	{
 		super();

@@ -9,7 +9,7 @@ abstract class BlockEvent implements Event
 {
 	private final Block block;
 	
-	BlockEvent(Block block)
+	BlockEvent(final Block block)
 	{
 		this.block = Objects.requireNonNull(block);
 	}

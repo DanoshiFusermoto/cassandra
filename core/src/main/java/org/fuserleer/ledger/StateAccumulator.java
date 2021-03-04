@@ -1,48 +1,60 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
-import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Indexable;
-import org.fuserleer.ledger.atoms.Atom;
-import org.fuserleer.ledger.atoms.Particle;
-import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.utils.UInt256;
 
-public final class StateAccumulator implements LedgerInterface, LedgerProvider
+public final class StateAccumulator implements LedgerProvider
 {
 	private static final Logger stateLog = Logging.getLogger("state");
 
 	private final Context context;
 
-	private final LedgerProvider parent;
-	private final Map<Hash, CommitOperation> operations;
-	private final Map<Hash, CommitOperation> stateLocks;
-	private final Map<Indexable, CommitOperation> indexables;
+	private final LedgerProvider provider;
+	private final Map<Hash, PendingAtom> pending;
+	private final Map<Hash, PendingAtom> locked;
 	private final ReentrantLock lock = new ReentrantLock(true);
+	private final String name;
 	
-	StateAccumulator(Context context, LedgerProvider parent)
+	StateAccumulator(Context context, String name, LedgerProvider provider)
 	{
 		this.context = Objects.requireNonNull(context);
-		this.parent = Objects.requireNonNull(parent);
-		this.operations = new HashMap<Hash, CommitOperation>();
-		this.indexables = new HashMap<Indexable, CommitOperation>();
-		this.stateLocks = new LinkedHashMap<Hash, CommitOperation>();
+		this.provider = Objects.requireNonNull(provider);
+		this.pending = new HashMap<Hash, PendingAtom>();
+		this.locked = new LinkedHashMap<Hash, PendingAtom>();
+		this.name = name;
+	}
+
+	StateAccumulator shadow()
+	{
+		StateAccumulator shadow;
 		
-//		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
+		this.lock.lock();
+		try
+		{
+			shadow = new StateAccumulator(this.context, "Shadowed "+this.name, this.provider);
+			shadow.pending.putAll(this.pending);
+			shadow.locked.putAll(this.locked);
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	
+		return shadow;
 	}
 	
 	public void reset()
@@ -50,8 +62,8 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 		this.lock.lock();
 		try
 		{
-			this.stateLocks.clear();
-			this.indexables.clear();
+			this.pending.clear();
+			this.locked.clear();
 		}
 		finally
 		{
@@ -60,24 +72,19 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 	}
 	
 	@Override
-	public StateOpResult<?> evaluate(StateOp stateOp) throws IOException
+	public CommitStatus has(final StateKey<?, ?> key) throws IOException
 	{
-		return this.parent.evaluate(stateOp);
-	}
-
-	@Override
-	public CommitState has(Indexable indexable) throws IOException
-	{
-		Objects.requireNonNull(indexable);
+		Objects.requireNonNull(key);
 		
 		this.lock.lock();
 		try
 		{
-			CommitOperation stateOperation = this.indexables.get(indexable);
-			if (stateOperation != null)
-				return stateOperation.getState();
+			// TODO may need some functionality here to access un-committed state key information
+//			PendingAtom pendingAtom = this.states.get(key.get());
+//			if (pendingAtom != null)
+//				return pendingAtom.getStatus();
 
-			return this.parent.has(indexable);
+			return this.provider.has(key);
 		}
 		finally
 		{
@@ -86,192 +93,43 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 	}
 	
 	@Override
-	public <T extends Primitive> SearchResponse<T> get(final SearchQuery query, final Class<T> type, final Spin spin) throws IOException
+	public UInt256 get(StateKey<?, ?> key) throws IOException
 	{
-		throw new UnsupportedOperationException("Searching of queries is not supported");
+		// TODO returns committed values only, perhaps want this to return pending stuff?
+		return this.provider.get(key);
 	}
 
-	@SuppressWarnings("unchecked")
-	@Override
-	public <T extends Primitive> T get(final Indexable indexable) throws IOException
+	void lock(final PendingAtom pendingAtom) throws StateLockedException
 	{
-		Objects.requireNonNull(indexable);
-		
-		this.lock.lock();
-		try
-		{
-			CommitOperation stateOperation = this.indexables.get(indexable);
-			if (stateOperation != null)
-			{
-//				if (stateOperation.getType().equals(StateOperation.Type.DELETE) == true)
-//					return null;
-//				else if (stateOperation.getType().equals(StateOperation.Type.STORE) == true)
-				{
-					if (Block.class.isAssignableFrom(indexable.getContainer()) == true)
-					{
-						Block block = this.context.getLedger().get(stateOperation.getHead().getHash(), Block.class);
-						if (block == null)
-							throw new IllegalStateException("Found indexable state operation but unable to locate block");
-
-						return (T) block;
-					}
-					else if (BlockHeader.class.isAssignableFrom(indexable.getContainer()) == true)
-					{
-						BlockHeader blockHeader = this.context.getLedger().get(stateOperation.getHead().getHash(), BlockHeader.class);
-						if (blockHeader == null)
-							throw new IllegalStateException("Found indexable state operation but unable to locate block header");
-
-						return (T) blockHeader;
-					}
-					else if (Atom.class.isAssignableFrom(indexable.getContainer()) == true)
-					{
-						Atom atom = this.context.getLedger().get(stateOperation.getAtom().getHash(), Atom.class);
-						if (atom == null)
-							throw new IllegalStateException("Found indexable state operation but unable to locate atom");
-
-						return (T) atom;
-					}
-					else if (Particle.class.isAssignableFrom(indexable.getContainer()) == true)
-					{
-						Atom atom = this.context.getLedger().get(stateOperation.getAtom().getHash(), Atom.class);
-						if (atom == null)
-							throw new IllegalStateException("Found indexable state operation but unable to locate atom");
-
-						for (Particle particle : atom.getParticles())
-						{
-							if (particle.getHash().equals(indexable.getKey()) == true)
-								return (T) particle;
-						}
-					}
-				}
-			}
-			else
-				return this.context.getLedger().get(indexable);
-
-			return null;
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-	
-	@SuppressWarnings("unchecked")
-	@Override
-	public <T extends Primitive> T get(final Indexable indexable, final Class<T> container) throws IOException
-	{
-		Objects.requireNonNull(indexable);
-		
-		this.lock.lock();
-		try
-		{
-			T result = null;
-			CommitOperation stateOperation = this.indexables.get(indexable);
-			if (stateOperation != null)
-			{
-//				if (stateOperation.getType().equals(StateOperation.Type.DELETE) == true)
-//					return null;
-//				else if (stateOperation.getType().equals(StateOperation.Type.STORE) == true)
-				{
-					if (Block.class.isAssignableFrom(container) == true)
-					{
-						Block block = this.context.getLedger().get(stateOperation.getHead().getHash(), Block.class);
-						if (block == null)
-							throw new IllegalStateException("Found indexable commit but unable to locate block");
-
-						result = (T) block;
-					}
-					else if (BlockHeader.class.isAssignableFrom(container) == true)
-					{
-						BlockHeader blockHeader = this.context.getLedger().get(stateOperation.getHead().getHash(), BlockHeader.class);
-						if (blockHeader == null)
-							throw new IllegalStateException("Found indexable commit but unable to locate block header");
-
-						result = (T) blockHeader;
-					}
-					else if (Atom.class.isAssignableFrom(container) == true)
-					{
-						Atom atom = this.context.getLedger().get(stateOperation.getAtom().getHash(), Atom.class);
-						if (atom == null)
-							throw new IllegalStateException("Found indexable commit but unable to locate atom");
-
-						result = (T) atom;
-					}
-					else if (Particle.class.isAssignableFrom(container) == true)
-					{
-						Atom atom = this.context.getLedger().get(stateOperation.getAtom().getHash(), Atom.class);
-						if (atom == null)
-							throw new IllegalStateException("Found indexable commit but unable to locate atom");
-
-						for (Particle particle : atom.getParticles())
-						{
-							if (container.isAssignableFrom(particle.getClass()) == false)
-								continue;
-								
-							if (particle.getHash().equals(indexable.getKey()) == true || 
-								particle.getIndexables().contains(indexable) == true)
-							{
-								result = (T) particle;
-								break;
-							}
-						}
-					}
-				}
-			}
-			else
-				result = this.context.getLedger().get(indexable, container);
-			
-			return result;
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-
-	void lock(final BlockHeader block, final Atom atom)
-	{
-		Objects.requireNonNull(block);
-		Objects.requireNonNull(atom);
+		Objects.requireNonNull(pendingAtom);
 		
 		this.lock.lock();
 		try
 		{
 			if (stateLog.hasLevel(Logging.DEBUG) == true)
-				stateLog.debug(this.context.getName()+": Locking state in "+atom.getHash());
-
-			CommitOperation operation = new CommitOperation(block, atom, CommitState.LOCKED);
+				stateLog.debug(this.context.getName()+": Locking state in "+pendingAtom.getHash());
+			
+			if (this.pending.containsKey(pendingAtom.getHash()) == true)
+				throw new IllegalStateException("Atom "+pendingAtom.getHash()+" is already pending and locked");
+			
+			pendingAtom.lock();
+			
 			// State ops
-			for (Hash state : operation.getStates())
+			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
 			{
-				if (this.stateLocks.containsKey(state) == true)
-					throw new IllegalStateException("State "+state+" is locked");
+				if (isLocked(state) == true)
+					throw new StateLockedException(state, pendingAtom.getHash());
 			}
 
-			for (Hash state : operation.getStates())
+			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
 			{
-				this.stateLocks.put(state, operation);
+				this.locked.put(state.get(), pendingAtom);
 
 				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Locked state "+state+" via "+operation);
+					stateLog.debug(this.context.getName()+": "+this.name+" Locked state "+state+" via "+pendingAtom.getHash());
 			}
 
-			// Indexables
-			for (Indexable indexable : operation.getIndexables())
-			{
-				if (this.indexables.containsKey(indexable) == true)
-					throw new IllegalStateException("Indexable "+indexable+" is locked");
-			}
-			
-			for (Indexable indexable : operation.getIndexables())
-			{
-				this.indexables.put(indexable, operation);
-
-				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Locked indexable "+indexable+" via "+operation);
-			}
-
-			this.operations.put(atom.getHash(), operation);
+			this.pending.put(pendingAtom.getHash(), pendingAtom);
 		}
 		finally
 		{
@@ -279,29 +137,33 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 		}
 	}
 	
-	void precommit(final Atom atom) throws IOException
+	void unlock(final PendingAtom pendingAtom) throws StateLockedException
 	{
-		Objects.requireNonNull(atom);
+		Objects.requireNonNull(pendingAtom);
 		
 		this.lock.lock();
 		try
 		{
 			if (stateLog.hasLevel(Logging.DEBUG) == true)
-				stateLog.debug(this.context.getName()+": Precommitting state in "+atom.getHash());
-
-			CommitOperation operation = this.operations.get(atom.getHash());
-			if (operation == null)
-				throw new IllegalStateException("Operation for atom "+atom.getHash()+" not found");
-
-			operation.setState(CommitState.PRECOMMITTED);
-
-			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Unlocking state in "+pendingAtom.getHash());
+			
+			if (this.pending.remove(pendingAtom.getHash()) == null)
+				throw new IllegalStateException("Atom "+pendingAtom.getHash()+" is not found");
+			
+			// State ops
+			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
 			{
-				for (StateOp stateOp : operation.getStateOps())
-					stateLog.debug(this.context.getName()+": Precommitted state "+stateOp+" via "+operation);
+				if (isLocked(state) == false)
+					throw new StateLockedException("State "+state+" required by "+pendingAtom.getHash()+" is NOT locked", state, pendingAtom.getHash());
+			}
 
-				for (Indexable indexable : operation.getIndexables())
-					stateLog.debug(this.context.getName()+": Precommitted indexable "+indexable+" via "+operation);
+			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
+			{
+				if (this.locked.remove(state.get(), pendingAtom) == false)
+					throw new StateLockedException("State "+state+" is not locked by "+pendingAtom.getHash(), state, pendingAtom.getHash());
+
+				if (stateLog.hasLevel(Logging.DEBUG) == true)
+					stateLog.debug(this.context.getName()+": "+this.name+" Unlocked state "+state+" via "+pendingAtom.getHash());
 			}
 		}
 		finally
@@ -309,38 +171,79 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 			this.lock.unlock();
 		}
 	}
-
-	void commit(final Atom atom) throws IOException
+	
+	void remove(PendingAtom pendingAtom) throws StateLockedException
 	{
-		Objects.requireNonNull(atom);
+		Objects.requireNonNull(pendingAtom);
 		
 		this.lock.lock();
 		try
 		{
 			if (stateLog.hasLevel(Logging.DEBUG) == true)
-				stateLog.debug(this.context.getName()+": Committing state in "+atom.getHash());
-
-			CommitOperation operation = this.operations.remove(atom.getHash());
-			if (operation == null)
-				throw new IllegalStateException("Operation for atom "+atom.getHash()+" not found");
-
-			operation.setState(CommitState.COMMITTED);
-
-			this.context.getLedger().getLedgerStore().commit(Collections.singletonList(operation));
-
-			for (Hash state : operation.getStates())
+				stateLog.debug(this.context.getName()+": Removing atom "+pendingAtom.getHash());
+			
+			if (this.pending.containsKey(pendingAtom.getHash()) == false)
+				throw new IllegalStateException("Atom "+pendingAtom.getHash()+" is not found");
+			
+			// State ops
+			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
 			{
-				this.stateLocks.remove(state);
+				if (isLocked(state) == true && this.locked.get(state.get()).equals(pendingAtom) == true)
+					throw new StateLockedException("Can not remove atom "+pendingAtom.getHash()+" when owns locked state "+state, state, pendingAtom.getHash());
+			}
+
+			this.pending.remove(pendingAtom.getHash());
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+
+	boolean isLocked(StateKey<?, ?> state)
+	{
+		this.lock.lock();
+		try
+		{
+			if (this.locked.containsKey(state.get()) == true)
+			{
 				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Committed state "+state+" via "+operation);
+					stateLog.debug(this.context.getName()+": "+this.name+" State "+state.get()+" is locked");
+
+				return true;
+			}
+
+			return false;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+	
+	Set<StateKey<?, ?>> provision(final BlockHeader block, final PendingAtom pendingAtom) throws IOException
+	{
+		Objects.requireNonNull(pendingAtom);
+		
+		this.lock.lock();
+		try
+		{
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": "+this.name+" Provisioning state in "+pendingAtom.getHash());
+
+			if (this.pending.containsKey(pendingAtom.getHash()) == false)
+				throw new IllegalStateException("Pending atom "+pendingAtom.getHash()+" not found");
+
+			Set<StateKey<?, ?>> stateKeys = pendingAtom.provision(block);
+
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+			{
+				for (StateKey<?, ?> stateKey : stateKeys)
+					stateLog.debug(this.context.getName()+": "+this.name+" Provisioning state "+stateKey.get()+" via "+pendingAtom.getHash());
 			}
 			
-			for (Indexable indexable : operation.getIndexables())
-			{
-				this.indexables.remove(indexable);
-				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Committed state "+indexable+" via "+operation);
-			}
+			return stateKeys;
 		}
 		finally
 		{
@@ -348,62 +251,84 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 		}
 	}
 
-	void abort(final Atom atom) throws IOException
+	void commit(final PendingAtom pendingAtom) throws IOException
 	{
-		Objects.requireNonNull(atom);
+		Objects.requireNonNull(pendingAtom);
 		
 		this.lock.lock();
 		try
 		{
+			CommitOperation commitOperation = pendingAtom.getCommitOperation();
+			
 			if (stateLog.hasLevel(Logging.DEBUG) == true)
-				stateLog.debug(this.context.getName()+": Aborting state in "+atom.getHash());
+				stateLog.debug(this.context.getName()+": "+this.name+" Committing state with "+commitOperation.getType()+" in "+pendingAtom.getHash());
 
-			CommitOperation operation = this.operations.remove(atom.getHash());
-			if (operation == null)
-				throw new IllegalStateException("Operation for atom "+atom.getHash()+" not found");
+			if (this.pending.remove(pendingAtom.getHash(), pendingAtom) == false)
+				throw new IllegalStateException("Pending atom "+pendingAtom.getHash()+" not found");
 
-			operation.setState(CommitState.ABORTED);
+			this.context.getLedger().getLedgerStore().commit(commitOperation);
 
-			for (Hash state : operation.getStates())
+			for (StateOp stateOp : commitOperation.getStateOps())
 			{
-				this.stateLocks.remove(state);
-				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Aborted state "+state+" via "+operation);
+				if (stateOp.ins().equals(Instruction.SET) == true)
+					stateLog.debug(this.context.getName()+": "+this.name+" Committed state "+stateOp.key().get()+" with "+commitOperation.getType()+" via "+pendingAtom.getHash());
 			}
-
-			for (Indexable indexable : operation.getIndexables())
+			
+			Set<StateKey<?, ?>> unlocked = new HashSet<StateKey<?, ?>>();
+			for (StateOp stateOp : pendingAtom.getStateOps())
 			{
-				this.indexables.remove(indexable);
-				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": Aborted indexable "+indexable+" via "+operation);
-			}
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-
-	void alignTo(BlockHeader header)
-	{
-		this.lock.lock();
-		try
-		{
-			Set<Atom> atomsRemoved = new HashSet<Atom>();
-			Iterator<CommitOperation> commitOperationIterator = this.operations.values().iterator();
-			while(commitOperationIterator.hasNext() == true)
-			{
-				CommitOperation commitOperation = commitOperationIterator.next();
-				if (commitOperation.getHead().getHeight() <= header.getHeight())
+				if (unlocked.contains(stateOp.key()) == false)
 				{
-					atomsRemoved.add(commitOperation.getAtom());
-					for (Hash state : commitOperation.getStates())
-						this.stateLocks.remove(state);
+					if (this.locked.remove(stateOp.key().get(), pendingAtom) == false)
+						throw new IllegalStateException("Locked state "+stateOp.key()+" in "+pendingAtom.getHash()+" not found");
+				
+					unlocked.add(stateOp.key());
+					
+					if (stateLog.hasLevel(Logging.DEBUG) == true)
+						stateLog.debug(this.context.getName()+": "+this.name+" Unlocked state "+stateOp.key().get()+" via "+pendingAtom.getHash());
+				}
+			}
+			
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+			{
+				for (Path path : commitOperation.getStatePaths())
+					stateLog.debug(this.context.getName()+": Committed state path "+path+" with "+commitOperation.getType()+" via "+pendingAtom.getHash());
+			
+				for (Path path : commitOperation.getAssociationPaths())
+					stateLog.debug(this.context.getName()+": Committed association path "+path+" with "+commitOperation.getType()+" via "+pendingAtom.getHash());
+			}
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
 
-					for (Indexable indexable : commitOperation.getIndexables())
-						this.indexables.remove(indexable);
+	void abort(final PendingAtom pendingAtom)
+	{
+		Objects.requireNonNull(pendingAtom);
+		
+		this.lock.lock();
+		try
+		{
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": "+this.name+" Aborting state in "+pendingAtom.getHash());
 
-					commitOperationIterator.remove();
+			if (this.pending.remove(pendingAtom.getHash(), pendingAtom) == false)
+				throw new IllegalStateException("Pending atom "+pendingAtom.getHash()+" not found");
+
+			Set<StateKey<?, ?>> unlocked = new HashSet<StateKey<?, ?>>();
+			for (StateOp stateOp : pendingAtom.getStateOps())
+			{
+				if (unlocked.contains(stateOp.key()) == false)
+				{
+					if (this.locked.remove(stateOp.key().get(), pendingAtom) == false)
+						throw new IllegalStateException("Locked state "+stateOp.key()+" in "+pendingAtom.getHash()+" not found");
+
+					unlocked.add(stateOp.key());
+					
+					if (stateLog.hasLevel(Logging.DEBUG) == true)
+						stateLog.debug(this.context.getName()+": "+this.name+" Aborted state "+stateOp.key().get()+" via "+pendingAtom.getHash());
 				}
 			}
 		}
@@ -413,34 +338,12 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 		}
 	}
 
-	void commits(BlockHeader header) throws IOException
+	Set<PendingAtom> getPendingAtoms() 
 	{
 		this.lock.lock();
 		try
 		{
-			LinkedHashSet<CommitOperation> operationsToCommit = new LinkedHashSet<CommitOperation>();
-			Iterator<CommitOperation> commitOperationIterator = this.operations.values().iterator();
-			while(commitOperationIterator.hasNext() == true)
-			{
-				CommitOperation commitOperation = commitOperationIterator.next();
-				if (commitOperation.getHead().getHeight() <= header.getHeight() && 
-					commitOperation.getState().equals(CommitState.PRECOMMITTED) && 
-					operationsToCommit.contains(commitOperation) == false)
-				{						
-					operationsToCommit.add(commitOperation);
-				}
-			}
-			
-			this.context.getLedger().getLedgerStore().commit(operationsToCommit);
-
-			for (CommitOperation commitOperation : operationsToCommit)
-			{
-				for (Hash state : commitOperation.getStates())
-					this.stateLocks.remove(state);
-
-				for (Indexable indexable : commitOperation.getIndexables())
-					this.indexables.remove(indexable);
-			}
+			return this.pending.values().stream().collect(Collectors.toSet());
 		}
 		finally
 		{
@@ -448,8 +351,18 @@ public final class StateAccumulator implements LedgerInterface, LedgerProvider
 		}
 	}
 
-	public int size() 
+	public int numPendingAtoms() 
 	{
-		return this.stateLocks.size();
+		return this.pending.size();
+	}
+
+	public int numLocked() 
+	{
+		return this.locked.size();
+	}
+	
+	LedgerProvider getProvider()
+	{
+		return this.provider;
 	}
 }

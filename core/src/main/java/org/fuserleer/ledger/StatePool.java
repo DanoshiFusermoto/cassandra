@@ -6,54 +6,48 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
-import org.fuserleer.common.Direction;
+import org.fuserleer.collections.MappedBlockingQueue;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.Hashable;
-import org.fuserleer.database.Indexable;
+import org.fuserleer.crypto.MerkleProof;
+import org.fuserleer.crypto.MerkleProof.Branch;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
-import org.fuserleer.executors.Executor;
-import org.fuserleer.ledger.atoms.Atom;
-import org.fuserleer.ledger.atoms.Particle;
+import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomCommittedEvent;
+import org.fuserleer.ledger.events.AtomExceptionEvent;
+import org.fuserleer.ledger.events.AtomExecutedEvent;
+import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
-import org.fuserleer.ledger.messages.GetStateVoteMessage;
-import org.fuserleer.ledger.messages.InventoryMessage;
-import org.fuserleer.ledger.messages.StateCertificateMessage;
-import org.fuserleer.ledger.messages.StateVoteInventoryMessage;
-import org.fuserleer.ledger.messages.StateVoteMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Protocol;
-import org.fuserleer.network.discovery.RemoteShardDiscovery;
-import org.fuserleer.network.messaging.MessageProcessor;
-import org.fuserleer.network.peers.ConnectedPeer;
-import org.fuserleer.network.peers.Peer;
-import org.fuserleer.network.peers.PeerState;
-import org.fuserleer.network.peers.filters.OutboundUDPPeerFilter;
-import org.fuserleer.node.Node;
+import org.fuserleer.network.GossipFetcher;
+import org.fuserleer.network.GossipFilter;
+import org.fuserleer.network.GossipInventory;
+import org.fuserleer.network.GossipReceiver;
 import org.fuserleer.utils.Longs;
-import org.fuserleer.utils.UInt128;
 import org.fuserleer.utils.UInt256;
 
 import com.google.common.eventbus.Subscribe;
@@ -61,36 +55,34 @@ import com.sleepycat.je.OperationStatus;
 
 public final class StatePool implements Service
 {
-	private static final Logger cerbyLog = Logging.getLogger("cerby");
+	private static final Logger statePoolLog = Logging.getLogger("statepool");
+	private static final Logger gossipLog = Logging.getLogger("gossip");
 
 	private final Context context;
 	
-	private class PendingState implements Hashable
+	private class PendingState
 	{
-		private final Hash	hash;
+		private final Hash	atom;
 		private final Hash	block;
-		private	final Hash 	atom;
-		private Set<StateOp>	stateOps;
+		private final StateKey<?, ?> key;
+		private final ReentrantLock lock = new ReentrantLock();
+
+		private final Map<ECPublicKey, StateVote> votes;
+		private final Map<Hash, Long> weights;
 		private StateCertificate certificate;
 
-		private long		positiveVoteWeight;
-		private long		negativeVoteWeight;
-		private final Map<ECPublicKey, StateVote> votes;
-
-		public PendingState(Hash particle, Hash atom, Hash block)
+		public PendingState(StateKey<?, ?> key, Hash atom, Hash block)
 		{
-			this.hash = Objects.requireNonNull(particle);
+			this.key = Objects.requireNonNull(key);
 			this.atom = Objects.requireNonNull(atom);
 			this.block = Objects.requireNonNull(block);
-			this.positiveVoteWeight = 0l;
-			this.negativeVoteWeight = 0l;
-			this.votes = Collections.synchronizedMap(new HashMap<ECPublicKey, StateVote>());
+			this.votes = new HashMap<ECPublicKey, StateVote>();
+			this.weights = new HashMap<Hash, Long>();
 		}
 
-		@Override
-		public Hash getHash()
+		public StateKey<?, ?> getKey()
 		{
-			return this.hash;
+			return this.key;
 		}
 		
 		public long getHeight()
@@ -108,37 +100,146 @@ public final class StatePool implements Service
 			return this.atom;
 		}
 		
-		public Set<StateOp> getStateOps()
+		public StateCertificate buildCertificate() throws CryptoException
 		{
-			return this.stateOps;
+			this.lock.lock();
+			try
+			{
+				if (this.certificate != null)
+					throw new IllegalStateException("State certificate for "+this+" already exists");
+				
+				final long shardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups(getHeight()));
+				final long totalVotePower = StatePool.this.context.getLedger().getVoteRegulator().getTotalVotePower(getHeight()  - VoteRegulator.VOTE_POWER_MATURITY, shardGroup);
+				final long votePowerThreshold = StatePool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(getHeight() - VoteRegulator.VOTE_POWER_MATURITY, shardGroup);
+
+				long executionWithMajorityWeight = 0;
+				Hash executionWithMajority = null;
+				for (Entry<Hash, Long> execution : this.weights.entrySet())
+				{
+					if (execution.getValue() >= votePowerThreshold)
+					{
+						executionWithMajority = execution.getKey();
+						executionWithMajorityWeight = execution.getValue();
+						break;
+					}
+				}
+				
+				if (executionWithMajority == null)
+					return null;
+				
+				final ECSignatureBag signatureBag = new ECSignatureBag();
+				final List<StateVote> votes = new ArrayList<StateVote>();
+				for (StateVote vote : this.votes.values())
+				{
+					if (vote.getExecution().equals(executionWithMajority) == false)
+						continue;
+					
+					votes.add(vote);
+					signatureBag.add(vote.getOwner(), vote.getSignature());
+				}
+				
+				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getVoteRegulator().getVotePowerBloom(getBlock(), shardGroup);
+				// TODO need merkles
+				final StateCertificate certificate = new StateCertificate(votes.get(0).getState(), votes.get(0).getAtom(), votes.get(0).getBlock(), 
+																		  votes.get(0).getInput(), votes.get(0).getOutput(), votes.get(0).getExecution(), 
+																	      Hash.random(), Collections.singletonList(new MerkleProof(Hash.random(), Branch.OLD_ROOT)), votePowers, signatureBag);
+				this.certificate = certificate;
+				statePoolLog.info(StatePool.this.context.getName()+": State certificate "+certificate.getHash()+" for state "+votes.get(0).getState()+" in atom "+votes.get(0).getAtom()+" has "+votes.get(0).getDecision()+" agreement with "+executionWithMajorityWeight+"/"+totalVotePower);
+				
+				return this.certificate;
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+		
+		public StateVote vote(ECPublicKey identity)
+		{
+			this.lock.lock();
+			try
+			{
+				return this.votes.get(identity);
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+		
+		boolean voted(ECPublicKey identity)
+		{
+			this.lock.lock();
+			try
+			{
+				return this.votes.containsKey(Objects.requireNonNull(identity, "Vote identity is null"));
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+
+		public Collection<StateVote> votes()
+		{
+			this.lock.lock();
+			try
+			{
+				return new ArrayList<StateVote>(this.votes.values());
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+
+		boolean vote(final StateVote vote, long weight) throws ValidationException
+		{
+			this.lock.lock();
+			try
+			{
+				if (vote.getAtom().equals(this.atom) == false || 
+					vote.getBlock().equals(this.block) == false || 
+					vote.getState().equals(this.key) == false)
+					throw new ValidationException("Vote from "+vote.getOwner()+" is not for state "+this.key+" -> "+this.atom+" -> "+this.block);
+					
+				if (vote.getDecision().equals(StateDecision.NEGATIVE) == true && vote.getExecution().equals(Hash.ZERO) == false)
+					throw new ValidationException("Vote from "+vote.getOwner()+" with decision "+vote.getDecision()+" for state "+this.key+" -> "+this.atom+" -> "+this.block+" is not of valid form");
+
+				if (this.votes.containsKey(vote.getOwner()) == false)
+				{
+					this.votes.put(vote.getOwner(), vote);
+					this.weights.compute(vote.getExecution(), (k, v) -> v == null ? weight : v + weight);
+					return true;
+				}
+				else
+					statePoolLog.warn(StatePool.this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+vote.getState());
+				
+				return false;
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
 		}
 
 		public StateCertificate getCertificate()
 		{
-			return this.certificate;
-		}
-
-		void setStateOps(Set<StateOp> stateOps)
-		{
-			Objects.requireNonNull(stateOps);
-			if (stateOps.stream().allMatch(sop -> sop.key().equals(this.hash)) == false)
-				throw new IllegalArgumentException("State ops does not match state hash "+this.hash+" "+stateOps);
-			
-			this.stateOps = stateOps;
-		}
-
-		void setCertificate(StateCertificate certificate)
-		{
-			if (Objects.requireNonNull(certificate).getState().equals(this.hash) == false)
-				throw new IllegalArgumentException("Certificate does not match state hash "+this.hash+" "+certificate);
-			
-			this.certificate = certificate;
+			this.lock.lock();
+			try
+			{
+				return this.certificate;
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
 		}
 
 		@Override
 		public int hashCode()
 		{
-			return this.hash.hashCode();
+			return this.key.hashCode();
 		}
 
 		@Override
@@ -156,56 +257,11 @@ public final class StatePool implements Service
 		@Override
 		public String toString()
 		{
-			return this.hash+" @ "+Longs.fromByteArray(this.block.toByteArray());
-		}
-		
-		public boolean voted(ECPublicKey identity)
-		{
-			return this.votes.containsKey(Objects.requireNonNull(identity, "Vote identity is null"));
-		}
-
-		public boolean vote(final StateVote vote, final long weight) throws ValidationException
-		{
-			synchronized(this.votes)
-			{
-				if (this.votes.containsKey(Objects.requireNonNull(vote, "Vote is null").getOwner()) == false)
-				{
-					if (vote.getAtom().equals(this.atom) == false || 
-						vote.getBlock().equals(this.block) == false || 
-						vote.getState().equals(this.hash) == false)
-						throw new ValidationException("Vote from "+vote.getOwner()+" is not for state "+this.getHash()+" -> "+this.atom+" -> "+this.block);
-					
-					this.votes.put(vote.getOwner(), vote);
-					
-					if (vote.getDecision() == true)
-						this.positiveVoteWeight += weight;
-					else
-						this.negativeVoteWeight += weight;
-					
-					return true;
-				}
-				else
-				{
-					cerbyLog.warn(StatePool.this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+this.hash);
-					return false;
-				}
-			}
-		}
-		
-		public Collection<StateVote> votes(boolean decision)
-		{
-			return this.votes.values().stream().filter(v -> v.getDecision() == decision).collect(Collectors.toList());
-		}
-
-		public long power(boolean decision)
-		{
-			if (decision == true)
-				return this.positiveVoteWeight;
-			
-			return this.negativeVoteWeight;
+			return this.key+" @ "+this.atom+":"+getHeight();
 		}
 	}
 	
+	private final Semaphore voteProcessorSemaphore = new Semaphore(0);
 	private Executable voteProcessor = new Executable()
 	{
 		@Override
@@ -217,113 +273,149 @@ public final class StatePool implements Service
 				{
 					try
 					{
-						PendingState pendingState = StatePool.this.voteQueue.poll(1, TimeUnit.SECONDS);
-						if (pendingState != null && pendingState.getStateOps() != null)
-						{
-							if (cerbyLog.hasLevel(Logging.DEBUG))
-								cerbyLog.debug(StatePool.this.context.getName()+": Voting on state "+pendingState.getHash());
+						// TODO convert to a wait / notify
+						if (StatePool.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
+							continue;
 
-							try
+						List<StateVote> stateVotesToBroadcast = new ArrayList<StateVote>();
+						List<StateVote> stateVotesToCount = new ArrayList<StateVote>();
+						StatePool.this.votesToCountQueue.drainTo(stateVotesToCount, 64);
+						if (stateVotesToCount.isEmpty() == false)
+						{
+							for (StateVote stateVote : stateVotesToCount)
 							{
-								Atom atom = StatePool.this.context.getLedger().getLedgerStore().get(pendingState.getAtom(), Atom.class);
-								if (atom == null)
+								try
 								{
-									cerbyLog.warn(StatePool.this.context.getName()+": Atom "+pendingState.getAtom()+" required to vote on state "+pendingState.getHash()+" not found");
-									continue;
-								}
-								
-								// Dont vote if we have no power!
-								long localVotePower = StatePool.this.context.getLedger().getVoteRegulator().getVotePower(StatePool.this.context.getNode().getIdentity());
-								if (localVotePower > 0)
-								{
-									// Determine the decision via state machine
-									boolean decision = false;
+									if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == false)
+									{
+										statePoolLog.warn(StatePool.this.context.getName()+": Received already seen state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
+										continue;
+									}
+									
+	/*								if (stateVote.verify(stateVote.getOwner()) == false)
+									{
+										cerbyLog.error(StatePool.this.context.getName()+": State vote failed verification for "+stateVote.getOwner());
+										// TODO penalty
+										continue;
+									}*/
+							
+									StatePool.this.lock.writeLock().lock();
+									PendingState pendingState;
 									try
 									{
-										StateMachine stateMachine = new StateMachine(StatePool.this.context, StatePool.this.context.getLedger().getHead(), atom, StatePool.this.context.getLedger().getStateAccumulator());
-										stateMachine.precommit();
-										decision = true;
-									}
-									catch (ValidationException vex)
-									{
-										cerbyLog.error(StatePool.this.context.getName()+": Validation of pending state "+pendingState.getHash()+" failed", vex);
-									}
-									
-									StateVote stateVote = new StateVote(pendingState.getHash(), pendingState.getAtom(), pendingState.getBlock(), decision, StatePool.this.context.getNode().getIdentity());
-									stateVote.sign(StatePool.this.context.getNode().getKey());
-									StatePool.this.context.getLedger().getLedgerStore().store(stateVote);
+										Hash stateAtomBlockHash = Hash.from(stateVote.getState().get(), stateVote.getAtom(), stateVote.getBlock());
+										pendingState = StatePool.this.states.get(stateAtomBlockHash);
+										// Creating pending state objects from vote if particle not seen or committed
+										if (pendingState == null)
+										{
+											PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
+											if (pendingAtom == null)
+											{
+												statePoolLog.warn(StatePool.this.context.getName()+": Pending atom not found or completed for received state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
+												continue;
+											}
 
-									pendingState.vote(stateVote, localVotePower);
-									
-									StateVoteMessage stateVoteMessage = new StateVoteMessage(stateVote);
-									// TODO only broadcast this to validators in same shard!
-									for (ConnectedPeer connectedPeer : StatePool.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
+											pendingState = new PendingState(stateVote.getState(), stateVote.getAtom(), stateVote.getBlock());
+											add(pendingState);
+										}
+									}
+									finally
 									{
-										if (StatePool.this.context.getNode().isInSyncWith(connectedPeer.getNode(), Node.OOS_TRIGGER_LIMIT) == false)
-											continue;
+										StatePool.this.lock.writeLock().unlock();
+									}
+
+									if (pendingState.getBlock().equals(stateVote.getBlock()) == false || 
+										pendingState.getAtom().equals(stateVote.getAtom()) == false)
+									{
+										statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
+										// Disconnect and ban?
+										continue;
+									}
+											
+									long votePower = StatePool.this.context.getLedger().getVoteRegulator().getVotePower(pendingState.getHeight() - VoteRegulator.VOTE_POWER_MATURITY, stateVote.getOwner());
+									if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
+									{
+										stateVotesToBroadcast.add(stateVote);
 										
-										try
-										{
-											StatePool.this.context.getNetwork().getMessaging().send(stateVoteMessage, connectedPeer);
-										}
-										catch (IOException ex)
-										{
-											cerbyLog.error(StatePool.this.context.getName()+": Unable to send StateVoteMessage for "+pendingState.getHash()+" to "+connectedPeer, ex);
-										}
+										StateCertificate stateCertificate = pendingState.buildCertificate();
+										if (stateCertificate != null)
+											StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
 									}
-
-									buildCertificate(pendingState);
+								}
+								catch (Exception ex)
+								{
+									statePoolLog.error(StatePool.this.context.getName()+": Error counting vote for " + stateVote, ex);
 								}
 							}
-							catch (Exception ex)
+						}
+
+						List<PendingState> stateVotesToCast = new ArrayList<PendingState>();
+						StatePool.this.votesToCastQueue.drainTo(stateVotesToCast, 64);
+						if (stateVotesToCast.isEmpty() == false)
+						{
+							for (PendingState pendingState : stateVotesToCast)
 							{
-								cerbyLog.error(StatePool.this.context.getName()+": Error processing vote for " + pendingState.getHash(), ex);
+								try
+								{
+									PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(pendingState.getAtom());
+									if (pendingAtom == null)
+									{
+										statePoolLog.error(StatePool.this.context.getName()+": Pending atom "+pendingState.getAtom()+" for pending state "+pendingState.getKey()+" not found");
+										continue;
+									}
+									
+									// Always vote locally even if no vote power so that can determine the accuracy of local execution
+									long localVotePower = StatePool.this.context.getLedger().getVoteRegulator().getVotePower(pendingState.getHeight() - VoteRegulator.VOTE_POWER_MATURITY, StatePool.this.context.getNode().getIdentity());
+									if (pendingAtom.thrown() == null && pendingAtom.getExecution() == null)
+										throw new IllegalStateException("Can not vote on state "+pendingState.getKey()+" when no decision made");
+									
+									Optional<UInt256> input = pendingAtom.getInput(pendingState.getKey());
+									Optional<UInt256> output = pendingAtom.getOutput(pendingState.getKey());
+									StateVote stateVote = new StateVote(pendingState.getKey(), pendingState.getAtom(), pendingState.getBlock(), 
+																		input == null ? null : input.orElse(null), output == null ? null : output.orElse(null),
+																		pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
+									stateVote.sign(StatePool.this.context.getNode().getKey());
+									
+									if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == false)
+									{
+										statePoolLog.error(StatePool.this.context.getName()+": Persistance of local state vote of "+stateVote.getState()+" for "+stateVote.getOwner()+" failed");
+										continue;
+									}
+
+									if (pendingState.vote(stateVote, localVotePower) == true)
+									{
+										if (statePoolLog.hasLevel(Logging.DEBUG))
+											statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
+										
+										if (localVotePower > 0)
+											stateVotesToBroadcast.add(stateVote);
+
+										if (pendingState.getCertificate() == null)
+										{
+											StateCertificate stateCertificate = pendingState.buildCertificate();
+											if (stateCertificate != null)
+												StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+										}
+									}
+								}
+								catch (Exception ex)
+								{
+									statePoolLog.error(StatePool.this.context.getName()+": Error casting vote for " + pendingState.getKey(), ex);
+								}
 							}
 						}
 						
-						pendingState = StatePool.this.certificateQueue.poll(1, TimeUnit.SECONDS);
-						if (pendingState != null && pendingState.getStateOps() != null && pendingState.getCertificate() != null)
+						try
 						{
-							if (cerbyLog.hasLevel(Logging.DEBUG))
-								cerbyLog.debug(StatePool.this.context.getName()+": Broadcasting state certificate "+pendingState.getHash());
-							
-							try
+							if (stateVotesToBroadcast.isEmpty() == false)
 							{
-								Atom atom = StatePool.this.context.getLedger().getLedgerStore().get(pendingState.getAtom(), Atom.class);
-								if (atom == null)
-								{
-									cerbyLog.warn(StatePool.this.context.getName()+": Atom "+pendingState.getAtom()+" required to broadcast state certificate "+pendingState.getHash()+" not found");
-									continue;
-								}
-	
-								// TODO inventorize this
-								for (UInt256 shard : atom.getShards())
-			                	{
-			                		UInt128 shardGroup = StatePool.this.context.getLedger().getShardGroup(shard);
-			                		if (shardGroup.compareTo(StatePool.this.context.getLedger().getShardGroup(StatePool.this.context.getNode().getIdentity())) == 0)
-			                			continue;
-			                		
-			                		StateCertificateMessage stateCertificateMessage = new StateCertificateMessage(pendingState.getCertificate());
-			        				OutboundUDPPeerFilter outboundUDPPeerFilter = new OutboundUDPPeerFilter(StatePool.this.context, Collections.singleton(shardGroup));
-		        					Collection<Peer> preferred = new RemoteShardDiscovery(StatePool.this.context).discover(outboundUDPPeerFilter);
-		        					for (Peer preferredPeer : preferred)
-		        					{
-		        						try
-		        						{
-		        							ConnectedPeer connectedPeer = StatePool.this.context.getNetwork().connect(preferredPeer.getURI(), Direction.OUTBOUND, Protocol.UDP);
-		        							StatePool.this.context.getNetwork().getMessaging().send(stateCertificateMessage, connectedPeer);
-		        						}
-		        						catch (IOException ex)
-		        						{
-		        							cerbyLog.error(StatePool.this.context.getName()+": Unable to send StateCertificateMessage for "+pendingState.getHash()+" to " + preferredPeer, ex);
-		        						}
-		        					}
-			                	}
+								StatePool.this.context.getMetaData().increment("ledger.pool.state.votes", stateVotesToBroadcast.size());
+								StatePool.this.context.getNetwork().getGossipHandler().broadcast(StateVote.class, stateVotesToBroadcast);
 							}
-							catch (Exception ex)
-							{
-								cerbyLog.error(StatePool.this.context.getName()+": Error broadcasting certificate for " + pendingState.getHash(), ex);
-							}
+						}
+						catch (Exception ex)
+						{
+							statePoolLog.error(StatePool.this.context.getName()+": Error broadcasting state votes "+stateVotesToBroadcast, ex);
 						}
 					} 
 					catch (InterruptedException e) 
@@ -336,266 +428,165 @@ public final class StatePool implements Service
 			catch (Throwable throwable)
 			{
 				// TODO want to actually handle this?
-				cerbyLog.fatal(StatePool.this.context.getName()+": Error processing particle vote queue", throwable);
+				statePoolLog.fatal(StatePool.this.context.getName()+": Error processing state vote queue", throwable);
 			}
 		}
 	};
 
-	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-	private final Map<Hash, PendingState> pending = new HashMap<Hash, PendingState>();
-	private final BlockingQueue<PendingState> voteQueue;
-	private final BlockingQueue<PendingState> certificateQueue;
+	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
+	private final BlockingQueue<PendingState> votesToCastQueue;
+	private final MappedBlockingQueue<Hash, StateVote> votesToCountQueue;
+	private final Map<Hash, PendingState> states = new HashMap<Hash, PendingState>();
 	
-	// Atom vote broadcast batching
-	private final BlockingQueue<Hash> stateVoteInventory = new LinkedBlockingQueue<Hash>();
-	private final Executable stateVoteInventoryProcessor = new Executable() 
-	{
-		@Override
-		public void execute()
-		{
-			while(isTerminated() == false)
-			{
-				try
-				{
-					Hash hash = StatePool.this.stateVoteInventory.poll(1, TimeUnit.SECONDS);
-					if (hash == null)
-						continue;
-					
-					List<Hash> stateVoteInventory = new ArrayList<Hash>();
-					stateVoteInventory.add(hash);
-					StatePool.this.stateVoteInventory.drainTo(stateVoteInventory, InventoryMessage.MAX_INVENTORY-1);
-	
-					if (StatePool.this.context.getLedger().isSynced() == true)
-					{
-						StateVoteInventoryMessage stateVoteInventoryMessage = new StateVoteInventoryMessage(stateVoteInventory);
-						for (ConnectedPeer connectedPeer : StatePool.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
-						{
-							try
-							{
-								StatePool.this.context.getNetwork().getMessaging().send(stateVoteInventoryMessage, connectedPeer);
-							}
-							catch (IOException ex)
-							{
-								cerbyLog.error(StatePool.this.context.getName()+": Unable to send StateVoteInventoryMessage of "+stateVoteInventoryMessage.getInventory().size()+" state votes to "+connectedPeer, ex);
-							}
-						}
-					}
-				}
-				catch (Exception ex)
-				{
-					cerbyLog.error(StatePool.this.context.getName()+": Processing of state vote inventory failed", ex);
-				}
-			}
-		}
-	};
-
-
 	StatePool(Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		
-		this.voteQueue = new LinkedBlockingQueue<PendingState>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
-		this.certificateQueue = new LinkedBlockingQueue<PendingState>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.votesToCastQueue = new LinkedBlockingQueue<PendingState>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.votesToCountQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		
+//		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
 	public void start() throws StartupException
 	{
-		this.context.getNetwork().getMessaging().register(StateVoteInventoryMessage.class, this.getClass(), new MessageProcessor<StateVoteInventoryMessage>()
+		// STATE REPRESENTATIONS GOSSIP //
+		this.context.getNetwork().getGossipHandler().register(StateVote.class, new GossipFilter(this.context) 
 		{
 			@Override
-			public void process(final StateVoteInventoryMessage stateVoteInventoryMessage, final ConnectedPeer peer)
+			public Set<Long> filter(Primitive stateVote) throws IOException
 			{
-				Executor.getInstance().submit(new Executable() 
-				{
-					@Override
-					public void execute()
-					{
-						final List<Hash> stateVoteInventoryRequired = new ArrayList<Hash>();
-
-						try
-						{
-							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
-								cerbyLog.debug(StatePool.this.context.getName()+": State votes inventory for "+stateVoteInventoryMessage.getInventory().size()+" votes from " + peer);
-
-							if (stateVoteInventoryMessage.getInventory().size() == 0)
-							{
-								cerbyLog.error(StatePool.this.context.getName()+": Received empty state votes inventory from " + peer);
-								// TODO disconnect and ban
-								return;
-							}
-
-							// TODO proper request process that doesn't produce duplicate requests see AtomHandler
-							for (Hash stateVoteHash : stateVoteInventoryMessage.getInventory())
-							{
-								if (StatePool.this.context.getLedger().getLedgerStore().has(stateVoteHash) == true)
-									continue;
-								
-								stateVoteInventoryRequired.add(stateVoteHash);
-							}
-							
-							if (stateVoteInventoryRequired.isEmpty() == true)
-								return;
-							
-							StatePool.this.context.getNetwork().getMessaging().send(new GetStateVoteMessage(stateVoteInventoryRequired), peer);
-						}
-						catch (Exception ex)
-						{
-							cerbyLog.error(StatePool.this.context.getName()+": Unable to send ledger.messages.state.vote.get for "+stateVoteInventoryRequired.size()+" state votes to "+peer, ex);
-						}
-					}
-				});
+				return Collections.singleton(ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups()));
 			}
 		});
 
-		this.context.getNetwork().getMessaging().register(GetStateVoteMessage.class, this.getClass(), new MessageProcessor<GetStateVoteMessage>()
+		this.context.getNetwork().getGossipHandler().register(StateVote.class, new GossipInventory() 
 		{
 			@Override
-			public void process(final GetStateVoteMessage getStateVoteMessage, final ConnectedPeer peer)
+			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
 			{
-				Executor.getInstance().submit(new Executable() 
+				if (type.equals(StateVote.class) == false)
 				{
-					@Override
-					public void execute()
+					gossipLog.error(StatePool.this.context.getName()+": State vote type expected but got "+type);
+					return Collections.emptyList();
+				}
+				
+				StatePool.this.lock.readLock().lock();
+				try
+				{
+					Set<Hash> required = new HashSet<Hash>();
+					for (Hash item : items)
 					{
-						try
-						{
-							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
-								cerbyLog.debug(StatePool.this.context.getName()+": State votes request for "+getStateVoteMessage.getInventory().size()+" votes from " + peer);
-							
-							if (getStateVoteMessage.getInventory().size() == 0)
-							{
-								cerbyLog.error(StatePool.this.context.getName()+": Received empty state votes request from " + peer);
-								// TODO disconnect and ban
-								return;
-							}
-							
-							for (Hash stateVoteHash : getStateVoteMessage.getInventory())
-							{
-								StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(stateVoteHash, StateVote.class);
-								if (stateVote == null)
-								{
-									if (cerbyLog.hasLevel(Logging.DEBUG) == true)
-										cerbyLog.debug(StatePool.this.context.getName()+": Requested state vote not found "+stateVoteHash+" for " + peer);
-									
-									continue;
-								}
+						if (StatePool.this.votesToCountQueue.contains(item) == true || 
+							StatePool.this.context.getLedger().getLedgerStore().has(item) == true)
+							continue;
 
-								try
-								{
-									StatePool.this.context.getNetwork().getMessaging().send(new StateVoteMessage(stateVote), peer);
-								}
-								catch (IOException ex)
-								{
-									cerbyLog.error(StatePool.this.context.getName()+": Unable to send StateVoteMessage for "+stateVote+" to "+peer, ex);
-								}
-							}
-						}
-						catch (Exception ex)
-						{
-							cerbyLog.error(StatePool.this.context.getName()+": ledger.messages.state.vote.get " + peer, ex);
-						}
+						required.add(item);
 					}
-				});
+					return required;
+				}
+				finally
+				{
+					StatePool.this.lock.readLock().unlock();
+				}
 			}
 		});
 
-		this.context.getNetwork().getMessaging().register(StateVoteMessage.class, this.getClass(), new MessageProcessor<StateVoteMessage>()
+		this.context.getNetwork().getGossipHandler().register(StateVote.class, new GossipReceiver() 
 		{
 			@Override
-			public void process(final StateVoteMessage stateVoteMessage, final ConnectedPeer peer)
+			public void receive(Primitive object) throws IOException, ValidationException, CryptoException
 			{
-				Executor.getInstance().submit(new Executable() 
+				StateVote stateVote = (StateVote) object;
+				if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+					statePoolLog.debug(StatePool.this.context.getName()+": State vote received "+stateVote+" for "+stateVote.getOwner());
+
+				long numShardGroups = StatePool.this.context.getLedger().numShardGroups();
+				long localShardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), numShardGroups); 
+				long stateVoteShardGroup = ShardMapper.toShardGroup(stateVote.getOwner(), numShardGroups);
+				if (localShardGroup != stateVoteShardGroup)
 				{
-					@Override
-					public void execute()
+					statePoolLog.warn(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" for "+stateVote.getOwner()+" is for shard group "+stateVoteShardGroup+" but expected local shard group "+localShardGroup);
+					// TODO disconnect and ban;
+					return;
+				}
+				
+				StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
+				StatePool.this.voteProcessorSemaphore.release();
+
+				
+/*				if (representation.verify(representation.getOwner()) == false)
+				{
+					cerbyLog.error(StatePool.this.context.getName()+": State vote representation failed verification for "+representation.getOwner());
+					// TODO penalty
+					return;
+				}
+
+				if (OperationStatus.KEYEXIST.equals(StatePool.this.context.getLedger().getLedgerStore().store(stateVote)) == false)
+				{
+					// Already completed and committed?
+					// FIXME need this!
+					boolean completed = true; 
+					if (StatePool.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, stateVoteRepresentation.getBlock())).equals(CommitStatus.COMMITTED) == true)
 					{
-						try
+						BlockHeader blockHeader = StatePool.this.context.getLedger().getLedgerStore().get(stateVoteRepresentation.getBlock(), BlockHeader.class);
+						if (blockHeader == null)
+							throw new IllegalStateException("Expected to find committed block header "+stateVoteRepresentation.getBlock());
+						
+						// If any atom does not have a certificate, then this block has not been completed so process the representation
+						// TODO What happens if the first atom checked timed out?  will give a false result.
+						for (Hash atom : blockHeader.getInventory(InventoryType.ATOMS))
 						{
-							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
-								cerbyLog.debug(StatePool.this.context.getName()+": State vote "+stateVoteMessage.getVote().getObject()+" for "+stateVoteMessage.getVote().getOwner()+" from " + peer);
-							
-							if (StatePool.this.context.getLedger().getShardGroup(stateVoteMessage.getVote().getState()).compareTo(StatePool.this.context.getLedger().getShardGroup(StatePool.this.context.getNode().getIdentity())) != 0)
-							{
-								cerbyLog.error(StatePool.this.context.getName()+": Received state vote "+stateVoteMessage.getVote().getObject()+" not for local shard from " + peer);
-								// Disconnected and ban
-								return;
-							}
-
-							if (stateVoteMessage.getVote().verify(stateVoteMessage.getVote().getOwner()) == false)
-							{
-								cerbyLog.error(StatePool.this.context.getName()+": State vote failed verification for "+stateVoteMessage.getVote().getOwner()+" from " + peer);
-								return;
-							}
-							
-							if (OperationStatus.KEYEXIST.equals(StatePool.this.context.getLedger().getLedgerStore().store(stateVoteMessage.getVote())) == false)
-							{
-								// Creating pending state objects from vote if particle not seen
-								StatePool.this.lock.writeLock().lock();
-								try
-								{
-									PendingState pendingState = StatePool.this.pending.get(stateVoteMessage.getVote().getState());
-									CommitState commitState = StatePool.this.context.getLedger().getStateAccumulator().has(Indexable.from(stateVoteMessage.getVote().getState(), Particle.class));
-									if (pendingState == null && commitState.index() < CommitState.COMMITTED.index())
-									{
-										pendingState = new PendingState(stateVoteMessage.getVote().getState(), stateVoteMessage.getVote().getAtom(), stateVoteMessage.getVote().getBlock());
-										add(pendingState);
-									}
-
-									if (pendingState == null)
-										return;
-									
-									if (commitState.index() == CommitState.COMMITTED.index())
-									{
-										cerbyLog.warn(StatePool.this.context.getName()+": State "+stateVoteMessage.getVote().getState()+" is already committed");
-										remove(StatePool.this.context.getLedger().getLedgerStore().get(pendingState.getAtom(), Atom.class));
-										return;
-									}
-									
-									if (pendingState.getBlock().equals(stateVoteMessage.getVote().getBlock()) == false || 
-										pendingState.getAtom().equals(stateVoteMessage.getVote().getAtom()) == false)
-									{
-										cerbyLog.error(StatePool.this.context.getName()+": State vote "+stateVoteMessage.getVote().getState()+" block or atom dependencies not as expected for "+stateVoteMessage.getVote().getOwner()+" from " + peer);
-										return;
-									}
-											
-									if (pendingState.voted(stateVoteMessage.getVote().getOwner()) == true)
-										return;
-										
-									pendingState.vote(stateVoteMessage.getVote(), StatePool.this.context.getLedger().getVoteRegulator().getVotePower(stateVoteMessage.getVote().getOwner()));
-									if (pendingState.getCertificate() != null)
-										return;
-									
-									buildCertificate(pendingState);
-								}
-								finally
-								{
-									StatePool.this.lock.writeLock().unlock();
-								}
-								
-								// Independent so doesn't need to sit in a lock
-								StatePool.this.stateVoteInventory.add(stateVoteMessage.getVote().getHash());
-							}
-							else
-								cerbyLog.warn(StatePool.this.context.getName()+": Received already seen state vote of "+stateVoteMessage.getVote().getObject()+" for "+stateVoteMessage.getVote().getOwner()+" from " + peer);
-						}
-						catch (Exception ex)
-						{
-							cerbyLog.error(StatePool.this.context.getName()+": ledger.messages.state.vote " + peer, ex);
+					    	StateAddress atomStateAddress = new StateAddress(Atom.class, atom);
+					    	Commit atomCommit = StatePool.this.context.getLedger().getLedgerStore().search(atomStateAddress);
+					    	if (atomCommit != null && atomCommit.getPath().get(Elements.CERTIFICATE) == null)
+					    	{
+					    		completed = false;
+					    		break;
+					    	}
 						}
 					}
-				});
+					
+					if (completed == true)
+						return;*/								
 			}
 		});
-		
+					
+		this.context.getNetwork().getGossipHandler().register(StateVote.class, new GossipFetcher() 
+		{
+			@Override
+			public Collection<StateVote> fetch(Collection<Hash> items) throws IOException
+			{
+				StatePool.this.lock.readLock().lock();
+				try
+				{
+					Set<StateVote> fetched = new HashSet<StateVote>();
+					for (Hash item : items)
+					{
+						StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
+						if (stateVote == null)
+						{
+							if (gossipLog.hasLevel(Logging.DEBUG) == true)
+								gossipLog.debug(StatePool.this.context.getName()+": Requested state vote "+item+" not found");
+							
+							continue;
+						}
+						
+						fetched.add(stateVote);
+					}
+					return fetched;
+				}
+				finally
+				{
+					StatePool.this.lock.readLock().unlock();
+				}
+			}
+		});
 
 		this.context.getEvents().register(this.syncBlockListener);
 		this.context.getEvents().register(this.syncAtomListener);
-		
-		Thread stateVoteInventoryProcessorThread = new Thread(this.stateVoteInventoryProcessor);
-		stateVoteInventoryProcessorThread.setDaemon(true);
-		stateVoteInventoryProcessorThread.setName(this.context.getName()+" State Vote Inventory Processor");
-		stateVoteInventoryProcessorThread.start();
 		
 		Thread voteProcessorThread = new Thread(this.voteProcessor);
 		voteProcessorThread.setDaemon(true);
@@ -606,71 +597,35 @@ public final class StatePool implements Service
 	@Override
 	public void stop() throws TerminationException
 	{
-		this.stateVoteInventoryProcessor.terminate(true);
 		this.voteProcessor.terminate(true);
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
-	
-	private void add(Atom atom, Hash block)
-	{
-		Objects.requireNonNull(atom);
 
+	public void add(final PendingAtom atom)
+	{
+		Objects.requireNonNull(atom, "Atom is null");
+		
 		this.lock.writeLock().lock();
 		try
 		{
-			// TODO shard filtering
-			for (Hash state : atom.getStates())
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(atom.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			for (StateKey<?, ?> stateKey : atom.getStateKeys())
 			{
-				if (StatePool.this.context.getLedger().getShardGroup(state).compareTo(StatePool.this.context.getLedger().getShardGroup(StatePool.this.context.getNode().getIdentity())) != 0)
+				long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+				if (stateShardGroup != localShardGroup)
 					continue;
 				
-				PendingState pendingState = this.pending.get(state);
-				if (pendingState == null || pendingState.getStateOps() == null)
+				Hash stateAtomBlockHash = Hash.from(stateKey.get(), atom.getHash(), atom.getBlock());
+				PendingState pendingState = this.states.get(stateAtomBlockHash);
+				if (pendingState == null)
 				{
-					if (pendingState == null)
-					{
-						pendingState = new PendingState(state, atom.getHash(), block);
-						add(pendingState);
-					}
-					
-					if (pendingState.getStateOps() == null)
-					{
-						Set<StateOp> stateOps = new LinkedHashSet<StateOp>();
-						atom.getStateOps().forEach(sop -> {
-							if (sop.key().equals(state) == true)
-								stateOps.add(sop);
-						});
-						pendingState.setStateOps(stateOps);
-						
-						this.voteQueue.add(pendingState);
-					}
+					this.states.put(stateAtomBlockHash,  new PendingState(stateKey, atom.getHash(), atom.getBlock()));
+					StatePool.this.context.getMetaData().increment("ledger.pool.state.added");
 				}
-			}			
-		}
-		finally
-		{
-			this.lock.writeLock().unlock();
-		}
-	}
-
-	private void add(final PendingState pendingState)
-	{
-		Objects.requireNonNull(pendingState);
-
-		this.lock.writeLock().lock();
-		try
-		{
-			this.pending.computeIfAbsent(pendingState.getHash(), ps -> 
-			{
-				StatePool.this.context.getMetaData().increment("ledger.pool.state.added");
-
-				if (cerbyLog.hasLevel(Logging.DEBUG) == true) 
-					cerbyLog.debug(StatePool.this.context.getName()+": "+pendingState+" added to pending pool, size is now "+this.pending.size());
-				
-				return pendingState;
-			});
+			}
 		}
 		finally
 		{
@@ -678,15 +633,116 @@ public final class StatePool implements Service
 		}
 	}
 	
-	private void remove(final Atom atom)
+	public void add(final PendingState state)
+	{
+		Objects.requireNonNull(state, "State is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(state.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			long stateShardGroup = ShardMapper.toShardGroup(state.getKey().get(), numShardGroups);
+			if (stateShardGroup != localShardGroup)
+				throw new IllegalArgumentException(StatePool.this.context.getName()+": Pending state "+state+" is for shard group "+stateShardGroup+" expected local shard group "+localShardGroup);
+				
+			Hash stateAtomBlockHash = Hash.from(state.getKey().get(), state.getAtom(), state.getBlock());
+			PendingState pendingState = this.states.get(stateAtomBlockHash);
+			if (pendingState != null)
+				throw new IllegalStateException(this.context.getName()+": Pending state "+state.getKey()+" already exists");
+
+			this.states.put(stateAtomBlockHash, state);
+			StatePool.this.context.getMetaData().increment("ledger.pool.state.added");
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	public void committed(final PendingAtom atom)
+	{
+		Objects.requireNonNull(atom, "Atom is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(atom.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			for (StateKey<?, ?> stateKey : atom.getStateKeys())
+			{
+				long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+				if (stateShardGroup != localShardGroup)
+					continue;
+				
+				Hash stateAtomBlockHash = Hash.from(stateKey.get(), atom.getHash(), atom.getBlock());
+				PendingState pendingState = this.states.remove(stateAtomBlockHash);
+				if (pendingState == null)
+					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
+
+				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
+				StatePool.this.context.getMetaData().increment("ledger.pool.state.committed");
+			}
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	public void aborted(final PendingAtom atom)
+	{
+		Objects.requireNonNull(atom, "Atom is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(atom.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			for (StateKey<?, ?> stateKey : atom.getStateKeys())
+			{
+				long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+				if (stateShardGroup != localShardGroup)
+					continue;
+				
+				Hash stateAtomBlockHash = Hash.from(stateKey.get(), atom.getHash(), atom.getBlock());
+				PendingState pendingState = this.states.remove(stateAtomBlockHash);
+				if (pendingState == null)
+					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
+				
+				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
+				StatePool.this.context.getMetaData().increment("ledger.pool.state.aborted");
+			}
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+	
+	void queue(final PendingAtom atom)
 	{
 		Objects.requireNonNull(atom);
-
+		
 		this.lock.writeLock().lock();
 		try
 		{
-			for (Hash state : atom.getStates())
-				this.pending.remove(state);
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(atom.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			for (StateKey<?, ?> stateKey : atom.getStateKeys())
+			{
+				long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+				if (stateShardGroup != localShardGroup)
+					continue;
+				
+				Hash stateAtomBlockHash = Hash.from(stateKey.get(), atom.getHash(), atom.getBlock());
+				PendingState pendingState = this.states.get(stateAtomBlockHash);
+				if (pendingState == null)
+					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
+
+				this.votesToCastQueue.add(pendingState);
+				StatePool.this.voteProcessorSemaphore.release();
+			}
 		}
 		finally
 		{
@@ -694,39 +750,12 @@ public final class StatePool implements Service
 		}
 	}
 	
-	private void buildCertificate(PendingState pendingState) throws CryptoException
+	public int size()
 	{
-		Objects.requireNonNull(pendingState);
-		if (pendingState.getCertificate() != null)
-			return;
-
 		this.lock.writeLock().lock();
 		try
 		{
-			StateCertificate certificate = null;
-			UInt128 shardGroup = StatePool.this.context.getLedger().getShardGroup(StatePool.this.context.getNode().getIdentity());
-			long voteThresold = StatePool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(Collections.singleton(shardGroup));
-			if (pendingState.power(true) >= voteThresold)
-			{
-				cerbyLog.info(StatePool.this.context.getName()+": State "+pendingState.getHash()+" has positive agreement with "+pendingState.power(true)+"/"+StatePool.this.context.getLedger().getVoteRegulator().getTotalVotePower(Collections.singleton(shardGroup)));
-				certificate = new StateCertificate(pendingState.getHash(), pendingState.getAtom(), pendingState.getBlock(), true, 
-													  StatePool.this.context.getLedger().getVoteRegulator().getVotePowerBloom(shardGroup),
-													  pendingState.votes(true));
-			}
-			else if (pendingState.power(false) >= voteThresold)
-			{
-				cerbyLog.info(StatePool.this.context.getName()+": State "+pendingState.getHash()+" has negative agreement with "+pendingState.power(false)+"/"+StatePool.this.context.getLedger().getVoteRegulator().getTotalVotePower(Collections.singleton(shardGroup)));
-				certificate = new StateCertificate(pendingState.getHash(), pendingState.getAtom(), pendingState.getBlock(), false, 
-													  StatePool.this.context.getLedger().getVoteRegulator().getVotePowerBloom(shardGroup),
-													  pendingState.votes(false));
-			}
-			
-			if (certificate != null)
-			{
-				pendingState.setCertificate(certificate);
-				this.certificateQueue.add(pendingState);
-				StatePool.this.context.getEvents().post(new StateCertificateEvent(certificate));
-			}
+			return this.states.size();
 		}
 		finally
 		{
@@ -734,30 +763,72 @@ public final class StatePool implements Service
 		}
 	}
 
-	// SYNCHRONOUS ATOM LISTENER //
-	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
-	{
-		@Subscribe
-		public void on(final AtomCommitTimeoutEvent atomCommitTimeoutEvent) 
-		{
-			remove(atomCommitTimeoutEvent.getAtom());
-		}
-
-		@Subscribe
-		public void on(final AtomCommittedEvent atomCommittedEvent) 
-		{
-			remove(atomCommittedEvent.getAtom());
-		}
-	};
-
-	// SYNCHRONOUS ATOM LISTENER //
+	// SYNCHRONOUS BLOCK LISTENER //
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
 		public void on(final BlockCommittedEvent blockCommittedEvent) 
 		{
-			for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
-				add(atom, blockCommittedEvent.getBlock().getHeader().getHash());
+/*			StatePool.this.lock.writeLock().lock();
+			try
+			{
+				for (Hash atom : blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS))
+				{
+					PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(atom);
+					if (pendingAtom == null)
+						throw new IllegalStateException(StatePool.this.context.getName()+": Pending atom "+atom+" not found");
+					
+					StatePool.this.add(pendingAtom);
+				}
+			}
+			finally
+			{
+				StatePool.this.lock.writeLock().unlock();
+			}*/
+		}
+	};
+	
+	// SYNCHRONOUS ATOM LISTENER //
+	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final AtomExecutedEvent event) 
+		{
+			add(event.getPendingAtom());
+			queue(event.getPendingAtom());
+		}
+
+		@Subscribe
+		public void on(final AtomCommitTimeoutEvent event) 
+		{
+//			remove(atomCommitTimeoutEvent.getPendingAtom());
+		}
+
+		@Subscribe
+		public void on(final AtomAcceptedEvent event) 
+		{
+			committed(event.getPendingAtom());
+		}
+		
+		@Subscribe
+		public void on(final AtomRejectedEvent event) 
+		{
+			if (event.getPendingAtom().getStatus().equals(CommitStatus.EXECUTED) == false)
+				return;
+
+			committed(event.getPendingAtom());
+		}
+
+		@Subscribe
+		public void on(final AtomExceptionEvent event) 
+		{
+			if (event.getPendingAtom().getStatus().equals(CommitStatus.EXECUTED) == false)
+				return;
+
+			if (event.getException() instanceof StateLockedException)
+				return;
+				
+			aborted(event.getPendingAtom());
 		}
 	};
 }

@@ -2,16 +2,19 @@ package org.fuserleer.ledger;
 
 import java.util.Objects;
 
+import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
+import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.vote.state")
-public final class StateVote extends Vote<Hash>
+public final class StateVote extends Vote<StateKey<?, ?>>
 {
 	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
@@ -20,24 +23,57 @@ public final class StateVote extends Vote<Hash>
 	@JsonProperty("atom")
 	@DsonOutput(Output.ALL)
 	private Hash atom;
+	
+	@JsonProperty("input")
+	@DsonOutput(Output.ALL)
+	private UInt256 input;
 
+	@JsonProperty("output")
+	@DsonOutput(Output.ALL)
+	private UInt256 output;
+
+	@JsonProperty("execution")
+	@DsonOutput(Output.ALL)
+	private Hash execution;
+	
+	@SuppressWarnings("unused")
 	private StateVote()
 	{
 		// SERIALIZER
 	}
 	
-	public StateVote(final Hash state, final Hash atom, final Hash block, final boolean decision, final ECPublicKey owner)
+	public StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final ECPublicKey owner)
 	{
-		super(state, decision, owner);
-		
-		if (Objects.requireNonNull(atom, "Block is null").equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Block is ZERO");
+		super(state, Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, owner);
 
-		if (Objects.requireNonNull(atom, "Atom is null").equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Atom is ZERO");
+		Objects.requireNonNull(atom, "Block is null");
+		Hash.notZero(block, "Block is ZERO");
+
+		Objects.requireNonNull(atom, "Atom is null");
+		Hash.notZero(atom, "Atom is ZERO");
 		
 		this.atom = atom;
 		this.block = block;
+		this.input = input;
+		this.output = output;
+		this.execution = execution;
+	}
+
+	public StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final ECPublicKey owner, final ECSignature signature) throws CryptoException
+	{
+		super(state, Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, owner, signature);
+
+		Objects.requireNonNull(atom, "Block is null");
+		Hash.notZero(block, "Block is ZERO");
+
+		Objects.requireNonNull(atom, "Atom is null");
+		Hash.notZero(atom, "Atom is ZERO");
+		
+		this.atom = atom;
+		this.block = block;
+		this.input = input;
+		this.output = output;
+		this.execution = execution;
 	}
 	
 	public Hash getAtom()
@@ -50,8 +86,23 @@ public final class StateVote extends Vote<Hash>
 		return this.block;
 	}
 	
-	public Hash getState()
+	public <T extends StateKey<?, ?>> T getState()
 	{
-		return this.getObject();
+		return (T) this.getObject();
+	}
+
+	public UInt256 getInput()
+	{
+		return this.input;
+	}
+
+	public UInt256 getOutput()
+	{
+		return this.output;
+	}
+
+	public Hash getExecution()
+	{
+		return this.execution;
 	}
 }

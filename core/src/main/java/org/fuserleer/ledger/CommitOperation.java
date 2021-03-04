@@ -1,43 +1,73 @@
 package org.fuserleer.ledger;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.List;
 import java.util.Objects;
 
-import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Identifier;
-import org.fuserleer.database.Indexable;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.time.Time;
 
 public class CommitOperation
 {
-	private final BlockHeader	head;
-	private final Atom			atom;
-	private final long 			timestamp;
+	public enum Type
+	{
+		ACCEPT, REJECT;
+	}
 	
-	private transient CommitState		state;
-	private transient Set<StateOp> 		stateOps = null;
-	private transient Set<Indexable> 	indexables = null;
-	private transient Set<Identifier> 	identifiers = null;
-
-	CommitOperation(BlockHeader head, Atom atom, CommitState state)
+	private final Type				type;
+	private final long 				timestamp;
+	private final BlockHeader		head;
+	private final Atom				atom;
+	private final List<StateOp> 	stateOps;
+	private final List<Path> 		statePaths;
+	private final List<Path> 		associationPaths;
+	
+	CommitOperation(Type type, BlockHeader head, Atom atom, Collection<StateOp> stateOps, Collection<Path> statePaths, Collection<Path> associationPaths)
 	{
-		this.head = Objects.requireNonNull(head);
-		this.atom = Objects.requireNonNull(atom);
+		this.type = Objects.requireNonNull(type, "Type is null");
+		this.head = Objects.requireNonNull(head, "Head is null");
+		this.atom = Objects.requireNonNull(atom, "Atom is null");
 		this.timestamp = Time.getLedgerTimeMS();
-		this.state = Objects.requireNonNull(state);
+
+		if (this.type.equals(Type.REJECT) == true)
+		{
+			if (Objects.requireNonNull(stateOps, "State operations is null").isEmpty() == false)
+				throw new IllegalArgumentException("Rejections must have not have state operations for atom "+atom.getHash());
+			if (Objects.requireNonNull(stateOps, "State paths is null").isEmpty() == false)
+				throw new IllegalArgumentException("Rejections must have not have state paths for atom "+atom.getHash());
+			if (Objects.requireNonNull(associationPaths, "Associations is null").isEmpty() == false)
+				throw new IllegalArgumentException("Rejections must have not have association paths for atom "+atom.getHash());
+
+			this.stateOps = Collections.emptyList();
+			this.statePaths = Collections.emptyList();
+			this.associationPaths = Collections.emptyList();
+		}
+		else
+		{
+			if (Objects.requireNonNull(stateOps, "State operations is null").isEmpty())
+				throw new IllegalArgumentException("State operations is empty for atom "+atom.getHash());
+		
+			if (Objects.requireNonNull(stateOps, "State paths is null").isEmpty())
+				throw new IllegalArgumentException("State paths is empty for atom "+atom.getHash());
+
+			Objects.requireNonNull(associationPaths, "Associations is null");
+
+			this.stateOps = Collections.unmodifiableList(new ArrayList<StateOp>(stateOps));
+			this.statePaths = Collections.unmodifiableList(new ArrayList<Path>(statePaths));
+			this.associationPaths = Collections.unmodifiableList(new ArrayList<Path>(associationPaths));
+
+			for (Path path : this.statePaths)
+				path.validate();
+			for (Path path : this.associationPaths)
+				path.validate();
+		}
 	}
 
-	public CommitState getState() 
+	public Type getType()
 	{
-		return this.state;
-	}
-
-	void setState(CommitState state) 
-	{
-		this.state = Objects.requireNonNull(state);
+		return this.type;
 	}
 
 	public long getTimestamp() 
@@ -55,43 +85,19 @@ public class CommitOperation
 		return this.atom;
 	}
 	
-	public Set<Hash> getStates()
+	public Collection<StateOp> getStateOps() 
 	{
-		return this.atom.getStates();
-	}
-
-	public synchronized Set<StateOp> getStateOps() 
-	{
-		if (this.stateOps == null)
-		{
-			Set<StateOp> stateOps = new HashSet<StateOp>(this.atom.getStateOps()); 
-			this.stateOps = Collections.unmodifiableSet(stateOps);
-		}
-		
 		return this.stateOps;
 	}
 	
-	public synchronized Set<Indexable> getIndexables() 
+	public Collection<Path> getStatePaths() 
 	{
-		if (this.indexables == null)
-		{
-			Set<Indexable> indexables = new HashSet<Indexable>(this.atom.getIndexables()); 
-			this.indexables = Collections.unmodifiableSet(indexables);
-		}
-		
-		return this.indexables;
+		return this.statePaths;
 	}
 
-	public Set<Identifier> getIdentifiers() 
+	public Collection<Path> getAssociationPaths() 
 	{
-		if (this.identifiers == null)
-		{
-			Set<Identifier> identifiers = new HashSet<Identifier>(this.atom.getIdentifiers()); 
-			identifiers.add(Identifier.from(this.head.getHash()));
-			this.identifiers = Collections.unmodifiableSet(identifiers);
-		}
-		
-		return this.identifiers;
+		return this.associationPaths;
 	}
 
 	@Override
@@ -126,6 +132,6 @@ public class CommitOperation
 	@Override
 	public String toString() 
 	{
-		return this.state+" "+this.head.getHash()+" "+this.atom.getHash()+" ["+getIndexables().toString()+"] ("+(getIdentifiers() == null ? "" : getIdentifiers())+")";
+		return this.head.getHash()+" "+this.atom.getHash()+" ["+getStatePaths().toString()+"] ("+(getAssociationPaths().toString())+")";
 	}
 }

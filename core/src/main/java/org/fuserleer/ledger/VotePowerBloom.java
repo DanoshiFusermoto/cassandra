@@ -3,11 +3,11 @@ package org.fuserleer.ledger;
 import java.util.Objects;
 
 import org.bouncycastle.util.Arrays;
+import org.fuserleer.BasicObject;
 import org.fuserleer.collections.Bloom;
 import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
-import org.fuserleer.serialization.SerializerConstants;
-import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
 
@@ -15,16 +15,19 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.primitives.Ints;
 
 @SerializerId2("ledger.vote_power_bloom")
-public final class VotePowerBloom
+public final class VotePowerBloom extends BasicObject
 {
 	private static final int MAX_VOTE_POWER_SHIFTS = 16;
 	private static final double VOTE_POWER_PROBABILITY = 0.000001;
 	private static final int EXPECTED_VOTE_POWER_ENTRIES = 1000;
 	
-	// Placeholder for the serializer ID
-	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
+	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
-	private SerializerDummy serializer = SerializerDummy.DUMMY;
+    private Hash block;
+
+	@JsonProperty("group")
+	@DsonOutput(Output.ALL)
+    private long shardGroup;
 
 	@JsonProperty("bloom")
 	@DsonOutput(Output.ALL)
@@ -34,10 +37,21 @@ public final class VotePowerBloom
 	@DsonOutput(Output.ALL)
     private long	totalPower;
 	
-	public VotePowerBloom()
+	@SuppressWarnings("unused")
+	private VotePowerBloom()
 	{
+		// FOR SERIALIZER 
+	}
+	
+	public VotePowerBloom(final Hash block, final long shardGroup)
+	{
+		this.block = Objects.requireNonNull(block, "Block hash is null");
 		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, EXPECTED_VOTE_POWER_ENTRIES);
 		this.totalPower = 0l;
+		
+		if (shardGroup < 0)
+			throw new IllegalArgumentException("Shard group is negative");
+		this.shardGroup = shardGroup;
 	}
 	
 	void add(final ECPublicKey identity, final long power)
@@ -68,6 +82,16 @@ public final class VotePowerBloom
 		return power;
 	}
 	
+	public Hash getBlock()
+	{
+		return this.block;
+	}
+
+	public long getShardGroup()
+	{
+		return this.shardGroup;
+	}
+
 	public long getTotalPower()
 	{
 		return this.totalPower;

@@ -22,7 +22,7 @@ abstract class Vote<T> extends BasicObject implements Primitive
 	
 	@JsonProperty("decision")
 	@DsonOutput(Output.ALL)
-	private boolean decision;
+	private StateDecision decision;
 
 	@JsonProperty("owner")
 	@DsonOutput(Output.ALL)
@@ -37,32 +37,36 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		// For serializer
 	}
 	
-	public Vote(final T object, final boolean decision, final ECPublicKey owner)
+	public Vote(final T object, final StateDecision decision, final ECPublicKey owner)
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
 		
 		// TODO check object is serializable
 		
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
-		this.decision = decision;
+		this.decision = Objects.requireNonNull(decision, "Decision is null");
 	}
 
-	public Vote(final T object, final boolean decision, final ECPublicKey owner, final ECSignature signature) throws CryptoException
+	public Vote(final T object, final StateDecision decision, final ECPublicKey owner, final ECSignature signature) throws CryptoException
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
 		this.signature = Objects.requireNonNull(signature, "Signature is null");
+		this.decision = Objects.requireNonNull(decision, "Decision is null");
 		
 		// TODO check object is serializable
-		
-		try
+		// TODO turn this back on!
+		if (1==0)
 		{
-			if (verify(owner) == false)
-				throw new CryptoException("Vote invalid / not verified");
-		}
-		catch (SerializationException ex)
-		{
-			throw new CryptoException("Vote invalid / not verified", ex);
+			try
+			{
+				if (verify(owner) == false)
+					throw new CryptoException("Vote invalid / not verified");
+			}
+			catch (SerializationException ex)
+			{
+				throw new CryptoException("Vote invalid / not verified", ex);
+			}
 		}
 	}
 
@@ -71,7 +75,7 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		return this.object;
 	}
 
-	public final boolean getDecision()
+	public final StateDecision getDecision()
 	{
 		return this.decision;
 	}

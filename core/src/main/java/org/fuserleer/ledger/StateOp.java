@@ -1,8 +1,12 @@
 package org.fuserleer.ledger;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.util.Objects;
 
-import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerConstants;
 import org.fuserleer.serialization.SerializerDummy;
@@ -17,28 +21,50 @@ import com.fasterxml.jackson.annotation.JsonValue;
 @SerializerId2("ledger.state.op")
 public final class StateOp
 {
+	public static StateOp from(final byte[] bytes) throws IOException
+	{
+		try
+		{
+			ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
+			DataInputStream dis = new DataInputStream(bais);
+			String keyType = StateOp.class.getPackage().getName()+"."+dis.readUTF();
+			byte[] keyBytes = new byte[dis.read()];
+			dis.read(keyBytes);
+			StateKey<?, ?> key = (StateKey<?, ?>) Class.forName(keyType).newInstance();
+			key.fromByteArray(keyBytes);
+			
+			byte[] valueBytes = new byte[dis.read()];
+			dis.read(valueBytes);
+			UInt256 value = UInt256.from(valueBytes);
+			
+			Instruction ins = Instruction.get(dis.read());
+			
+			return new StateOp(key, value, ins);
+		}
+		catch(InstantiationException | IllegalAccessException | ClassNotFoundException ex)
+		{
+			throw new IOException(ex);
+		}
+	}
+
 	public static enum Instruction
 	{
-		TYPE(true, false),
-		
-		EQUAL(true, true), NOT_EQUAL(true, true), 
-		LESS(true, true), GREATER(true, true), 
-		EXISTS(true, false), NOT_EXISTS(true, false),
+		EXISTS(1, true, false, false), NOT_EXISTS(2, true, false, false),
+		GET(10, true, false, false), SET(11, false, true, true);
 
-		ADD(false, true), SUBTRACT(false, true),
-		MULTIPLY(false, true), DIVIDE(false, true),
-		INCREMENT(false, false), DECREMENT(false, false), 
-		SET(false, true);
-
-		private final boolean evaluatable;
-		private final boolean parameter;
+		private final byte		opcode;	
+		private final boolean 	evaluatable;
+		private final boolean 	parameter;
+		private final boolean 	output;
 		
-		Instruction(boolean evaluatable, boolean parameter)
+		Instruction(int opcode, boolean evaluatable, boolean parameter, boolean output)
 		{
+			this.opcode = (byte) opcode;
 			this.evaluatable = evaluatable;
 			this.parameter = parameter;
+			this.output = output;
 		}
-		
+
 		@JsonValue
 		@Override
 		public String toString() 
@@ -46,6 +72,11 @@ public final class StateOp
 			return this.name();
 		}
 
+		public byte opcode()
+		{
+			return this.opcode;
+		}
+		
 		public boolean evaluatable()
 		{
 			return this.evaluatable;
@@ -55,20 +86,31 @@ public final class StateOp
 		{
 			return this.parameter;
 		}
+
+		public boolean output()
+		{
+			return this.output;
+		}
+		
+		public static Instruction get(int opcode)
+		{
+			for (int i = 0 ; i < Instruction.values().length ; i++)
+				if (Instruction.values()[i].opcode == opcode)
+					return Instruction.values()[i];
+			
+			return null;
+		}
 	}
+	
 	
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
 	@DsonOutput(Output.ALL)
 	private SerializerDummy serializer = SerializerDummy.DUMMY;
 	
-	@JsonProperty("domain")
-	@DsonOutput(Output.ALL)
-	private Hash domain;
-
 	@JsonProperty("key")
 	@DsonOutput(Output.ALL)
-	private Hash key;
+	private StateKey<?, ?> key;
 
 	@JsonProperty("value")
 	@DsonOutput(Output.ALL)
@@ -78,78 +120,40 @@ public final class StateOp
 	@DsonOutput(Output.ALL)
 	private Instruction ins;
 	
+	@SuppressWarnings("unused")
 	private StateOp()
 	{
 		// FOR SERIALIZER
 	}
 	
-	public StateOp(final Hash key, final Instruction ins)
+	public StateOp(final StateKey<?, ?> key, final Instruction ins)
 	{
-		Objects.requireNonNull(ins, "Instruction is null");
 		Objects.requireNonNull(key, "Key is null");
+		Objects.requireNonNull(ins, "Instruction is null");
 		
 		if (ins.parameterized() == true)
 			throw new IllegalArgumentException("Instruction "+ins+" requires a parameter");
 		
-		this.domain = Hash.ZERO;
 		this.key = key;
 		this.ins = ins;
 		this.value = null;
 	}
-	
-	public StateOp(final Hash domain, final Hash key, final Instruction ins)
+
+	public StateOp(final StateKey<?, ?> key, final UInt256 value, final Instruction ins)
 	{
-		Objects.requireNonNull(domain, "Domain is null");
-		Objects.requireNonNull(ins, "Instruction is null");
 		Objects.requireNonNull(key, "Key is null");
-		
-		if (domain.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Domain is ZERO");
-
-		if (ins.parameterized() == true)
-			throw new IllegalArgumentException("Instruction "+ins+" requires a parameter");
-		
-		this.domain = domain;
-		this.key = key;
-		this.value = null;
-		this.ins = ins;
-	}
-
-	public StateOp(final Hash key, final UInt256 value, final Instruction ins)
-	{
 		Objects.requireNonNull(ins, "Instruction is null");
-		Objects.requireNonNull(key, "Key is null");
-		Objects.requireNonNull(key, "Value is null");
-		
-		if (ins.parameterized() == false)
-			throw new IllegalArgumentException("Instruction "+ins+" is parameterless");
-
-		this.key = key;
-		this.value = value;
-		this.ins = ins;
-		this.domain = Hash.ZERO;
-	}
-
-	public StateOp(final Hash domain, final Hash key, final UInt256 value, final Instruction ins)
-	{
-		Objects.requireNonNull(domain, "Domain is null");
-		Objects.requireNonNull(ins, "Instruction is null");
-		Objects.requireNonNull(key, "Key is null");
-		Objects.requireNonNull(key, "Value is null");
-		
-		if (domain.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Domain is ZERO");
+		Objects.requireNonNull(value, "Value is null");
 		
 		if (ins.parameterized() == false)
 			throw new IllegalArgumentException("Instruction "+ins+" is parameterless");
 		
-		this.domain = domain;
 		this.key = key;
 		this.value = value;
 		this.ins = ins;
 	}
 
-	public Hash key()
+	public StateKey<?, ?> key()
 	{
 		return this.key;
 	}
@@ -164,11 +168,6 @@ public final class StateOp
 		return this.ins;
 	}
 
-	public Hash domain()
-	{
-		return this.domain;
-	}
-
 	@Override
 	public boolean equals(Object other)
 	{
@@ -181,7 +180,6 @@ public final class StateOp
 		{
 			if (((StateOp)other).key.equals(this.key) == true &&
 				((StateOp)other).ins.equals(this.ins) == true &&
-				((StateOp)other).domain.equals(this.domain) == true && 
 				((((StateOp)other).value == null && this.value == null) || ((StateOp)other).value.compareTo(this.value) == 0))
 				return true;
 		}
@@ -192,12 +190,30 @@ public final class StateOp
 	@Override
 	public int hashCode()
 	{
-		return Objects.hash(this.domain, this.key, this.ins, this.value);
+		return Objects.hash(this.key, this.ins, this.value);
 	}
 
 	@Override
 	public String toString()
 	{
-		return this.ins+" "+this.domain+":"+this.key+(this.value == null ? "" : " "+this.value);
+		return this.ins+" "+this.key+(this.value == null ? "" : " "+this.value);
+	}
+	
+	public byte[] toByteArray() throws IOException
+	{
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		DataOutputStream dos = new DataOutputStream(baos);
+		String keyType = this.key.getClass().getSimpleName();
+		byte[] keyBytes = this.key.toByteArray();
+		dos.writeUTF(keyType);
+		dos.write(keyBytes.length);
+		dos.write(keyBytes);
+		
+		byte[] valueBytes = this.value.toByteArray();
+		dos.write(valueBytes.length);
+		dos.write(valueBytes);
+
+		dos.write(this.ins.opcode());
+		return baos.toByteArray();
 	}
 }

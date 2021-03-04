@@ -35,7 +35,7 @@ public abstract class InventoryMessage extends Message
 		Objects.requireNonNull(inventory, "Inventory is null");
 		if (inventory.isEmpty() == true)
 			throw new IllegalArgumentException("Inventory is empty");
-		if (inventory.size() > AtomPoolVoteInventoryMessage.MAX_INVENTORY == true)
+		if (inventory.size() > InventoryMessage.MAX_INVENTORY == true)
 			throw new IllegalArgumentException("Too many inventory items");
 		
 		this.inventory = new LinkedHashSet<Hash>(inventory);

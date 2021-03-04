@@ -8,17 +8,17 @@ public class BanException extends Exception
 		super (); 
 	}
 
-	public BanException(String message, Throwable throwable) 
+	public BanException(final String message, final Throwable throwable) 
 	{ 
 		super (message, throwable); 
 	}
 
-	public BanException(String message) 
+	public BanException(final String message) 
 	{ 
 		super (message); 
 	}
 
-	public BanException(Throwable throwable) 
+	public BanException(final Throwable throwable) 
 	{ 
 		super (throwable); 
 	}

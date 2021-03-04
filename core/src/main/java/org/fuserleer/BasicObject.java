@@ -1,5 +1,7 @@
 package org.fuserleer;
 
+import java.util.Objects;
+
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.crypto.Hashable;
@@ -20,22 +22,11 @@ public abstract class BasicObject implements Cloneable, Comparable<Object>, Hash
 
 	private	transient Hash	hash = Hash.ZERO;
 	
-	public BasicObject()
+	protected BasicObject()
 	{
 		super();
 	}
 
-	/**
-	 * Copy constructor.
-	 * @param copy {@link BasicContainer} to copy values from.
-	 */
-	public BasicObject(BasicObject copy) 
-	{
-		this();
-
-		this.hash = copy.hash;
-	}
-	
 	@Override
 	protected Object clone() throws CloneNotSupportedException 
 	{
@@ -45,15 +36,15 @@ public abstract class BasicObject implements Cloneable, Comparable<Object>, Hash
 	}
 
 	@Override
-	public boolean equals(Object o)
+	public boolean equals(final Object other)
 	{
-		if (o == null) return false;
-		if (o == this) return true;
+		if (other == null) return false;
+		if (other == this) return true;
 
-		if (getClass().isInstance(o) && getHash().equals(((BasicObject)o).getHash()))
+		if (getClass().isInstance(other) && getHash().equals(((BasicObject)other).getHash()))
 				return true;
 
-		return super.equals(o);
+		return super.equals(other);
 	}
 
 	@Override
@@ -101,8 +92,10 @@ public abstract class BasicObject implements Cloneable, Comparable<Object>, Hash
 	}
 
 	@Override
-	public int compareTo(Object object)
+	public int compareTo(final Object object)
 	{
+		Objects.requireNonNull(object, "Object to compare to is null");
+		
 		if (object instanceof BasicObject)
 			return getHash().compareTo(((BasicObject)object).getHash());
 

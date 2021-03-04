@@ -10,17 +10,17 @@ public class DatabaseException extends IOException
 		super (); 
 	}
 
-	public DatabaseException(String message, Throwable throwable) 
+	public DatabaseException(final String message, final Throwable throwable) 
 	{ 
 		super(message, throwable); 
 	}
 
-	public DatabaseException(String message) 
+	public DatabaseException(final String message) 
 	{ 
 		super(message); 
 	}
 
-	public DatabaseException(Throwable throwable) 
+	public DatabaseException(final Throwable throwable) 
 	{ 
 		super (throwable); 
 	}

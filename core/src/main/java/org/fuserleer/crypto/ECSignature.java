@@ -40,20 +40,22 @@ public final class ECSignature
 	/**
      * Constructs a signature with the given components. Does NOT automatically canonicalise the signature.
      */
-    public ECSignature(BigInteger r, BigInteger s)
+    public ECSignature(final BigInteger r, final BigInteger s)
     {
     	super();
 
-    	this.r = Objects.requireNonNull(r);
-        this.s = Objects.requireNonNull(s);
+    	this.r = Objects.requireNonNull(r, "Signature R is null");
+        this.s = Objects.requireNonNull(s, "Signature S is null");
     }
 
-	public BigInteger getR() {
-		return r;
+	public BigInteger getR() 
+	{
+		return this.r;
 	}
 
-	public BigInteger getS() {
-		return s;
+	public BigInteger getS() 
+	{
+		return this.s;
 	}
 
     @Override
@@ -74,21 +76,21 @@ public final class ECSignature
 	@Override
 	public int hashCode() 
 	{
-		return Objects.hash(r, s);
+		return Objects.hash(this.r, this.s);
 	}
 	
 	@JsonProperty("r")
 	@DsonOutput(Output.ALL)
 	private byte[] getJsonR() 
 	{
-		return Bytes.trimLeadingZeros(r.toByteArray());
+		return Bytes.trimLeadingZeros(this.r.toByteArray());
 	}
 
 	@JsonProperty("s")
 	@DsonOutput(Output.ALL)
 	private byte[] getJsonS() 
 	{
-		return Bytes.trimLeadingZeros(s.toByteArray());
+		return Bytes.trimLeadingZeros(this.s.toByteArray());
 	}
 
 	@JsonProperty("r")
@@ -105,8 +107,12 @@ public final class ECSignature
 		this.s = new BigInteger(1, s);
 	}
 	
-	public static ECSignature decodeFromDER(byte[] bytes) 
+	public static ECSignature decodeFromDER(final byte[] bytes) 
 	{
+		Objects.requireNonNull(bytes, "Signature DER bytes is null");
+		if (bytes.length == 0)
+			throw new IllegalArgumentException("Signature DER bytes length is zero");
+
 		try (ASN1InputStream decoder = new ASN1InputStream(bytes)) 
 		{
 			DLSequence seq = (DLSequence) decoder.readObject();

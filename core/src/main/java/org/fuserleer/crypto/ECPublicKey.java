@@ -5,13 +5,14 @@ import com.google.common.primitives.SignedBytes;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
-import java.io.IOException;
 import java.math.BigInteger;
 import java.util.Arrays;
+import java.util.Objects;
 
 import org.bouncycastle.math.ec.ECPoint;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Longs;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 
@@ -25,6 +26,7 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 	@JsonValue
 	private final byte[] publicKey;
 
+	private transient Hash hash;
 	private transient long hashCode = Long.MAX_VALUE;
 
 	@JsonCreator
@@ -40,11 +42,13 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 
 	ECPublicKey(String key) throws CryptoException
 	{
-		this(Bytes.fromBase64String(key));
+		this(Bytes.fromBase64String(Objects.requireNonNull(key, "Key string is null")));
 	}
 
 	private ECPublicKey(byte[] key) throws CryptoException 
 	{
+		Objects.requireNonNull(key, "Key bytes is null");
+		
 		try {
 			validatePublic(key);
 			this.publicKey = Arrays.copyOf(key, key.length);
@@ -56,19 +60,16 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 		}
 	}
 
-	private void validatePublic(byte[] publicKey) throws CryptoException 
+	private void validatePublic(byte[] key) throws CryptoException 
 	{
-		if (publicKey == null)
-			throw new CryptoException("Public key is null");
-
-		int pubkey0 = publicKey[0] & 0xFF;
+		int pubkey0 = key[0] & 0xFF;
 		if (pubkey0 != 2 && pubkey0 != 3 && pubkey0 != 4)
 			throw new CryptoException("Public key is an invalid format");
 
-		if (pubkey0 == 4 && publicKey.length != (BYTES * 2) + 1)
+		if (pubkey0 == 4 && key.length != (BYTES * 2) + 1)
 			throw new CryptoException("Public key is an invalid uncompressed size");
 
-		if ((pubkey0 == 2 || pubkey0 == 3) && publicKey.length != BYTES + 1)
+		if ((pubkey0 == 2 || pubkey0 == 3) && key.length != BYTES + 1)
 			throw new CryptoException("Public key is an invalid compressed size");
 
 		// TODO want to check Y value for compressed pub keys?
@@ -86,25 +87,38 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
         return this.publicKey.length;
     }
     
-    public Hash asHash()
+    public synchronized Hash asHash()
 	{
-		// Trim off the type prefix and return the raw X coordinate
-		return new Hash(this.publicKey, Mode.STANDARD);
+    	if (this.hash == null)
+    		// Trim off the type prefix and return the raw X coordinate
+    		this.hash = new Hash(this.publicKey, Mode.STANDARD);
+    	
+    	return this.hash;
 	}
 
-	ECPoint getPublicPoint()
+    public long asLong()
+	{
+    	// Create a long from offset 1 as the first byte is a type indicator
+    	return Longs.fromByteArray(this.publicKey, 1);
+	}
+
+    ECPoint getPublicPoint()
 	{
 		return ECKeyUtils.spec.getCurve().decodePoint(this.publicKey);
 	}
 
-	public boolean verify(Hash hash, ECSignature signature) {
-		return verify(hash.toByteArray(), signature);
+	public boolean verify(final Hash hash, final ECSignature signature) 
+	{
+		return verify(Objects.requireNonNull(hash, "Hash to verify is null").toByteArray(), signature);
 	}
 
-	public boolean verify(byte[] hash, ECSignature signature) 
+	public boolean verify(final byte[] hash, final ECSignature signature) 
 	{
-		if (signature == null)
-			return false;
+		Objects.requireNonNull(hash, "Hash to verify is null");
+		if (hash.length == 0)
+			throw new IllegalArgumentException("Hash length is zero");
+
+		Objects.requireNonNull(signature, "Signature to verify is null");
 
 		try 
 		{
@@ -116,14 +130,18 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 		}
 	}
 
-	public byte[] encrypt(byte[] data) throws CryptoException 
+	public byte[] encrypt(final byte[] data) throws CryptoException 
 	{
+		Objects.requireNonNull(data, "Data for encryption is null");
+		if (data.length == 0)
+			throw new IllegalArgumentException("Data length for encryption is zero");
+		
         byte[] iv = new byte[16];
         ECKeyUtils.secureRandom.nextBytes(iv);
 		return encrypt(data, iv);
 	}
 
-	public byte[] encrypt(byte[] data, byte[] iv) throws CryptoException 
+	public byte[] encrypt(final byte[] data, final byte[] iv) throws CryptoException 
 	{
 		try 
 		{
@@ -200,8 +218,10 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 	}
 
 	@Override
-	public int compareTo(ECPublicKey other)
+	public int compareTo(final ECPublicKey other)
 	{
+		Objects.requireNonNull(other, "ECPublicKey for compare is null");
+		
 		return SignedBytes.lexicographicalComparator().compare(this.publicKey, other.publicKey);
 	}
 }

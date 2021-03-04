@@ -6,9 +6,9 @@ import org.fuserleer.Configuration;
 
 public class WallClockTime implements TimeProvider
 {
-	public WallClockTime(Configuration configuration)
+	public WallClockTime(final Configuration configuration)
 	{
-		
+		super();
 	}
 	
 	@Override

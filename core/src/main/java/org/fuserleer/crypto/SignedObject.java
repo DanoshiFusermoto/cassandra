@@ -33,6 +33,7 @@ public final class SignedObject<T>
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private ECSignature signature;
 	
+	@SuppressWarnings("unused")
 	private SignedObject()
 	{
 		// For serializer
@@ -76,22 +77,26 @@ public final class SignedObject<T>
 		return this.owner;
 	}
 
-	public final synchronized void sign(ECKeyPair key) throws CryptoException, SerializationException
+	public final synchronized void sign(final ECKeyPair key) throws CryptoException, SerializationException
 	{
+		Objects.requireNonNull(key, "Signing key is null");
+
 		if (key.getPublicKey().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign wrapped object with key that doesn't match owner");
 
 		Hash objectHash;
-		if (object instanceof Hashable)
-			objectHash = ((Hashable)object).getHash();
+		if (this.object instanceof Hashable)
+			objectHash = ((Hashable)this.object).getHash();
 		else
-			objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.DOUBLE);
+			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);
 		
 		this.signature = key.sign(objectHash);
 	}
 
-	public final synchronized boolean verify(ECPublicKey key) throws CryptoException, SerializationException
+	public final synchronized boolean verify(final ECPublicKey key) throws CryptoException, SerializationException
 	{
+		Objects.requireNonNull(key, "Verification key is null");
+		
 		if (this.signature == null)
 			throw new CryptoException("Signature is not present");
 		
@@ -102,10 +107,10 @@ public final class SignedObject<T>
 			return false;
 
 		Hash objectHash;
-		if (object instanceof Hashable)
-			objectHash = ((Hashable)object).getHash();
+		if (this.object instanceof Hashable)
+			objectHash = ((Hashable)this.object).getHash();
 		else
-			objectHash = new Hash(Serialization.getInstance().toDson(object, Output.HASH), Mode.DOUBLE);
+			objectHash = new Hash(Serialization.getInstance().toDson(this.object, Output.HASH), Mode.DOUBLE);
 
 		return key.verify(objectHash, this.signature);
 	}

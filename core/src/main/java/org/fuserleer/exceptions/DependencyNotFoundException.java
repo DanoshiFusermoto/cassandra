@@ -14,15 +14,12 @@ public class DependencyNotFoundException extends ValidationException
 	private final Hash dependency;
 	private final Hash dependent;
 	
-	public DependencyNotFoundException(String message, Hash dependent, Hash dependency)
+	public DependencyNotFoundException(final String message, final Hash dependent, final Hash dependency)
 	{
 		super(message);
 
-		if (dependent.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Dependent hash is ZERO");
-
-		if (dependency.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Dependency hash is ZERO");
+		Hash.notZero(dependent, "Dependent hash is ZERO");
+		Hash.notZero(dependency, "Dependency hash is ZERO");
 
 		if (dependent.equals(dependency) == true)
 			throw new IllegalArgumentException("Dependency and dependent are the same");
@@ -31,7 +28,7 @@ public class DependencyNotFoundException extends ValidationException
 		this.dependent = dependent;
 	}
 
-	public DependencyNotFoundException(Hash dependent, Hash dependency)
+	public DependencyNotFoundException(final Hash dependent, final Hash dependency)
 	{
 		this("The depdendency "+Objects.requireNonNull(dependency)+" is not found for dependent "+Objects.requireNonNull(dependent), dependent, dependency);
 	}

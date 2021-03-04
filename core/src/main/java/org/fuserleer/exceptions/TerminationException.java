@@ -1,5 +1,7 @@
 package org.fuserleer.exceptions;
 
+import java.util.Objects;
+
 public class TerminationException extends Exception 
 {
 	/**
@@ -9,53 +11,53 @@ public class TerminationException extends Exception
 	
 	private final Class<?> clazz;
 	
-	public TerminationException(String message, Throwable throwable)
+	public TerminationException(final String message, final Throwable throwable)
 	{
 		super (message, throwable);
 		
 		this.clazz = null;
 	}
 
-	public TerminationException(String message)
+	public TerminationException(final String message)
 	{
 		super(message);
 		
 		this.clazz = null;
 	}
 
-	public TerminationException(Throwable arg0)
+	public TerminationException(final Throwable throwable)
 	{
-		super (arg0);
+		super (throwable);
 		
 		this.clazz = null;
 	}
 
-	public TerminationException(Class<?> clazz)
+	public TerminationException(final Class<?> clazz)
 	{
 		super ();
 		
-		this.clazz = clazz;
+		this.clazz = Objects.requireNonNull(clazz, "Termination class is null");
 	}
 
-	public TerminationException(String message, Throwable throwable, Class<?> clazz)
+	public TerminationException(final String message, final Throwable throwable, final Class<?> clazz)
 	{
 		super (message, throwable);
 		
-		this.clazz = clazz;
+		this.clazz = Objects.requireNonNull(clazz, "Termination class is null");
 	}
 
-	public TerminationException(String message, Class<?> clazz)
+	public TerminationException(final String message, final Class<?> clazz)
 	{
 		super (message);
 		
-		this.clazz = clazz;
+		this.clazz = Objects.requireNonNull(clazz, "Termination class is null");
 	}
 
-	public TerminationException(Throwable throwable, Class<?> clazz)
+	public TerminationException(final Throwable throwable, final Class<?> clazz)
 	{
 		super (throwable);
 		
-		this.clazz = clazz;
+		this.clazz = Objects.requireNonNull(clazz, "Termination class is null");
 	}
 	
 	public Class<?> getClazz() 

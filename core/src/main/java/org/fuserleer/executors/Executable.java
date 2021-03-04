@@ -1,5 +1,6 @@
 package org.fuserleer.executors;
 
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
@@ -71,8 +72,9 @@ public abstract class Executable implements Runnable
 		return this.future.get();
 	}
 
-	final void setFuture(Future<?> future)
+	final void setFuture(final Future<?> future)
 	{
+		Objects.requireNonNull(future, "Executable future is null");
 		this.future.set(future);
 	}
 
@@ -105,10 +107,13 @@ public abstract class Executable implements Runnable
 
 	void finish()
 	{
-		try {
+		try 
+		{
 			if (this.finishLatch != null)
 				this.finishLatch.await();
-		} catch (InterruptedException e) {
+		} 
+		catch (InterruptedException e) 
+		{
 			// Re-raise
 			Thread.currentThread().interrupt();
 		}

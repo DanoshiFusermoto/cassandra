@@ -1,5 +1,6 @@
 package org.fuserleer.executors;
 
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,13 +40,13 @@ public class Executor
 		this.scheduledExecutor = Executors.newScheduledThreadPool(maxScheduledExecutors);
 	}
 
-	public Executor(int numImmediateThreads, int numScheduledThreads)
+	public Executor(final int numImmediateThreads, final int numScheduledThreads)
 	{
 		this.immediateExecutor = Executors.newFixedThreadPool(numImmediateThreads);
 		this.scheduledExecutor = Executors.newScheduledThreadPool(numScheduledThreads);
 	}
 
-	public Executor(int numImmediateThreads, ThreadFactory immediateThreadFactory, int numScheduledThreads, ThreadFactory scheduledThreadFactory)
+	public Executor(final int numImmediateThreads, final ThreadFactory immediateThreadFactory, final int numScheduledThreads, final ThreadFactory scheduledThreadFactory)
 	{
 		this.immediateExecutor = Executors.newFixedThreadPool(numImmediateThreads, immediateThreadFactory);
 		this.scheduledExecutor = Executors.newScheduledThreadPool(numScheduledThreads, scheduledThreadFactory);
@@ -53,40 +54,50 @@ public class Executor
 
 	public Future<?> schedule(final ScheduledExecutable executable)
 	{
+		Objects.requireNonNull(executable, "Executable to schedule is null");
 		executable.setFuture(this.scheduledExecutor.schedule(executable, executable.getInitialDelay(), executable.getTimeUnit()));
 		return executable.getFuture();
 	}
 
 	public Future<?> scheduleWithFixedDelay(final ScheduledExecutable executable)
 	{
+		Objects.requireNonNull(executable, "Executable to schedule is null");
 		executable.setFuture(this.scheduledExecutor.scheduleWithFixedDelay(executable, executable.getInitialDelay(), executable.getRecurrentDelay(), executable.getTimeUnit()));
 		return executable.getFuture();
 	}
 
 	public Future<?> scheduleAtFixedRate(final ScheduledExecutable executable)
 	{
+		Objects.requireNonNull(executable, "Executable to schedule is null");
 		executable.setFuture(this.scheduledExecutor.scheduleAtFixedRate(executable, executable.getInitialDelay(), executable.getRecurrentDelay(), executable.getTimeUnit()));
 		return executable.getFuture();
 	}
 
-	public Future<?> schedule(final Executable executable, int initialDelay, TimeUnit unit)
+	public Future<?> schedule(final Executable executable, final int initialDelay, final TimeUnit unit)
 	{
+		Objects.requireNonNull(executable, "Executable to schedule is null");
+		Objects.requireNonNull(unit, "Executable time unit is null");
 		executable.setFuture(this.scheduledExecutor.schedule(executable, initialDelay, unit));
 		return executable.getFuture();
 	}
 
-	public Future<?> schedule(final Runnable runnable, int initialDelay, TimeUnit unit)
+	public Future<?> schedule(final Runnable runnable, final int initialDelay, final TimeUnit unit)
 	{
+		Objects.requireNonNull(runnable, "Runnable to schedule is null");
+		Objects.requireNonNull(unit, "Executable time unit is null");
+
 		return this.scheduledExecutor.schedule(runnable, initialDelay, unit);
 	}
 
 	public Future<?> submit(final Callable<?> callable)
 	{
+		Objects.requireNonNull(callable, "Callable to submit is null");
 		return this.immediateExecutor.submit(callable);
 	}
 
 	public Future<?> submit(final Executable executable)
 	{
+		Objects.requireNonNull(executable, "Executable to submit is null");
 		Future<?> future = this.immediateExecutor.submit(executable);
 		executable.setFuture(future);
 		return future;

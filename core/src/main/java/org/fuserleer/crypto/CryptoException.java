@@ -3,11 +3,23 @@ package org.fuserleer.crypto;
 @SuppressWarnings("serial")
 public class CryptoException extends Exception 
 {
-	public CryptoException () { super (); }
+	public CryptoException () 
+	{ 
+		super (); 
+	}
 
-	public CryptoException (Throwable arg0) { super (arg0); }
+	public CryptoException(final Throwable throwable) 
+	{ 
+		super (throwable); 
+	}
 
-	public CryptoException (String arg0) { super (arg0); }
+	public CryptoException(final String message) 
+	{ 
+		super (message); 
+	}
 
-	public CryptoException (String arg0, Throwable arg1) { super (arg0, arg1); }
+	public CryptoException(final String message, Throwable throwable) 
+	{ 
+		super (message, throwable); 
+	}
 }

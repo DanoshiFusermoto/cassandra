@@ -33,10 +33,14 @@ public final class ECSignatureBag
 		this.signatures = new LinkedHashMap<ECPublicKey, ECSignature>();
 	}
 	
-	public ECSignatureBag(Map<ECPublicKey, ECSignature> signatures)
+	public ECSignatureBag(final Map<ECPublicKey, ECSignature> signatures)
 	{
 		this();
 		
+		Objects.requireNonNull(signatures, "Signatures is null");
+		if (signatures.isEmpty() == true)
+			throw new IllegalArgumentException("Signatures is empty");
+
 		this.signatures.putAll(signatures);
 	}
 	
@@ -48,22 +52,26 @@ public final class ECSignatureBag
 		}
 	}
 	
-	public final boolean verify(Hash hash, ECPublicKey signer)
+	public final boolean verify(final Hash hash, final ECPublicKey identity)
 	{
 		Objects.requireNonNull(hash, "Hash to verify is null");
-		Objects.requireNonNull(signer, "Signer is null");
+		Hash.notZero(hash, "Hash to veryify is ZERO");
+		Objects.requireNonNull(identity, "Verification identity is null");
 		
 		synchronized(this.signatures)
 		{
-			if (this.signatures.containsKey(signer) == false)
+			if (this.signatures.containsKey(identity) == false)
 				return false;
 			
-			return signer.verify(hash, this.signatures.get(signer));
+			return identity.verify(hash, this.signatures.get(identity));
 		}
 	}
 
-	final boolean add(ECPublicKey identity, ECSignature signature)
+	public final boolean add(final ECPublicKey identity, final ECSignature signature)
 	{
+		Objects.requireNonNull(identity, "Identity to add is null");
+		Objects.requireNonNull(signature, "Signature to add is null");
+
 		synchronized(this.signatures)
 		{
 			if (this.signatures.containsKey(identity) == true)
@@ -71,6 +79,22 @@ public final class ECSignatureBag
 			
 			this.signatures.put(identity, signature);
 			return true;
+		}
+	}
+
+	public boolean isEmpty() 
+	{
+		synchronized(this.signatures)
+		{
+			return this.signatures.isEmpty();
+		}
+	}
+
+	public int size() 
+	{
+		synchronized(this.signatures)
+		{
+			return this.signatures.size();
 		}
 	}
 }

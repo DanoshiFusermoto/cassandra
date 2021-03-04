@@ -1,6 +1,7 @@
 package org.fuserleer.time;
 
 import java.io.IOException;
+import java.util.Objects;
 
 public final class Time
 {
@@ -16,7 +17,7 @@ public final class Time
 		return instance;
 	}
 
-	public static Time createAsDefault(TimeProvider provider) throws IOException
+	public static Time createAsDefault(final TimeProvider provider) throws IOException
 	{
 		if (instance != null)
 			throw new RuntimeException("Default time provider already set");
@@ -50,8 +51,9 @@ public final class Time
 
 	private final TimeProvider provider;
 	
-	private Time(TimeProvider provider)
+	private Time(final TimeProvider provider)
 	{
+		Objects.requireNonNull(provider, "Time provider is null");
 		this.provider = provider;
 	}
 	

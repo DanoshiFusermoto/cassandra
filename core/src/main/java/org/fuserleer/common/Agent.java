@@ -1,6 +1,7 @@
 package org.fuserleer.common;
 
 import java.net.URI;
+import java.util.Objects;
 
 import org.fuserleer.Universe;
 
@@ -14,6 +15,10 @@ public class Agent
 	
 	public static URI getURI(String host)
 	{
+		Objects.requireNonNull(host, "Host is null");
+		if (host.length() == 0)
+			throw new IllegalArgumentException("Host length is zero");
+		
 		if (!host.toUpperCase().startsWith(Agent.URI_PREFIX))
 			host = Agent.URI_PREFIX+host;
 
@@ -31,7 +36,7 @@ public class Agent
 		return uri;
 	}
 
-	public static URI getURI(String host, int port)
+	public static URI getURI(final String host, final int port)
 	{
 		return URI.create(Agent.URI_PREFIX+host+":"+(port == -1?+Universe.getDefault().getPort():port));
 	}

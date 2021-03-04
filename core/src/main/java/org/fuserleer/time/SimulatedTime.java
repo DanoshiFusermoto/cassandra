@@ -1,5 +1,6 @@
 package org.fuserleer.time;
 
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.Configuration;
@@ -12,10 +13,10 @@ public class SimulatedTime implements TimeProvider
 	private long millisPerCommit;
 	private long highestCommit = 0;
 	
-	public SimulatedTime(Configuration configuration)
+	public SimulatedTime(final Configuration configuration)
 	{
-		this.initialTime = configuration.get("time.simulated.inital", Universe.getDefault().getTimestamp());
-		this.millisPerCommit = configuration.get("time.simulated.increment", 10);
+		this.initialTime = Objects.requireNonNull(configuration, "Configuration is null").get("time.simulated.inital", Universe.getDefault().getTimestamp());
+		this.millisPerCommit = Objects.requireNonNull(configuration, "Configuration is null").get("time.simulated.increment", 10);
 	}
 
 	@Override

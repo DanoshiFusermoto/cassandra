@@ -1,5 +1,9 @@
 package org.fuserleer;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.DefaultParser;
+import org.apache.commons.cli.Options;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
@@ -7,6 +11,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.Universe;
 import org.fuserleer.ledger.Block;
+import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.TokenSpecification;
@@ -15,8 +20,6 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.DsonOutput.Output;
-import org.fuserleer.time.Time;
-import org.fuserleer.time.WallClockTime;
 import org.fuserleer.utils.Bytes;
 import org.fuserleer.utils.UInt128;
 import org.fuserleer.utils.UInt256;
@@ -25,6 +28,7 @@ import java.io.File;
 import java.security.Security;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -36,32 +40,69 @@ public final class GenerateUniverses
 	private static final Logger LOGGER = Logging.getLogger("generate_universes");
 
 	public static final String RADIX_ICON_URL = "https://assets.radixdlt.com/icons/icon-xrd-32x32.png";
+	
+	private static final CommandLineParser parser = new DefaultParser(); 
+	private final static Options options = new Options().addOption("shardgroups", true, "Number of initial shard groups of the universe")
+														.addOption("nodes", true, "Number of genesis nodes of the universe")
+			   											.addOption("keys", true, "The keys for the genesis nodes of the universe");
+
 
 	private final ECKeyPair universeKey;
+	private final int numNodes;
+	private final int shardGroups;
 	private final Set<ECPublicKey> nodeKeys;
-	private final Configuration configuration;
+	private final CommandLine commandLine;
+//	private final Configuration configuration;
 
 	public GenerateUniverses(String[] arguments) throws Exception 
 	{
-		this.configuration = new Configuration("commandline_options.json", arguments);
-
+		this.commandLine = GenerateUniverses.parser.parse(options, arguments);
 		Security.addProvider(new BouncyCastleProvider());
 
-		Time.createAsDefault(new WallClockTime(this.configuration));
+		this.universeKey = ECKeyPair.fromFile(new File("universe.key"), true);
 		
-		String deploymentKeyPath = this.configuration.get("universe.key.path", "universe.key");
-		this.universeKey = ECKeyPair.fromFile(new File(deploymentKeyPath), true);
-
-		// TODO want to be able to specify multiple nodes to get the genesis mass as bootstrapping
-//		String nodeKeys = this.configuration.get("node.keys", "A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf,AtOM21m9f9DxaR7i2zpM1HNfzazSziwJv9smNsg9JHsO,A8h8Em/ml6X5I5amEMg/Mdz0PgcBwAI3gTUTTPCcjDyU");
-		String nodeKeys = this.configuration.get("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5");
 		this.nodeKeys = new LinkedHashSet<ECPublicKey>();
-		
-		StringTokenizer nodeKeysTokenizer = new StringTokenizer(nodeKeys, ",");
-		while (nodeKeysTokenizer.hasMoreTokens() == true)
+		if (this.commandLine.hasOption("nodes") && this.commandLine.hasOption("shardgroups"))
 		{
-			String nodeKeyToken = nodeKeysTokenizer.nextToken();
-			this.nodeKeys.add(ECPublicKey.from(nodeKeyToken));
+			this.numNodes = Integer.parseInt(this.commandLine.getOptionValue("nodes"));
+			this.shardGroups = Integer.parseInt(this.commandLine.getOptionValue("shardgroups"));
+			int nodesPerShardGroup = this.numNodes / this.shardGroups;
+			int nodeID = 0;
+			
+			for (int sg = 0 ; sg < this.shardGroups ; sg++)
+			{
+				Set<ECKeyPair> shardNodeKeys = new HashSet<ECKeyPair>();
+				while(shardNodeKeys.size() < nodesPerShardGroup)
+				{
+					ECKeyPair nodeKey = new ECKeyPair();
+					long shardGroup = ShardMapper.toShardGroup(nodeKey.getPublicKey(), this.shardGroups);
+					if (shardGroup == sg)
+						shardNodeKeys.add(nodeKey);
+				}
+
+				for (ECKeyPair shardNodeKey : shardNodeKeys)
+				{
+					ECKeyPair.toFile(new File("node-"+nodeID+".key"), shardNodeKey);
+					nodeID++;
+					this.nodeKeys.add(shardNodeKey.getPublicKey());
+				}
+			}
+		}
+		else
+		{
+			// TODO want to be able to specify multiple nodes to get the genesis mass as bootstrapping
+	//		String nodeKeys = this.configuration.get("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5");
+	//		String nodeKeys = this.configuration.get("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5,A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf");
+			String nodeKeys = this.commandLine.getOptionValue("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5,A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf,AtOM21m9f9DxaR7i2zpM1HNfzazSziwJv9smNsg9JHsO,A8h8Em/ml6X5I5amEMg/Mdz0PgcBwAI3gTUTTPCcjDyU");
+			StringTokenizer nodeKeysTokenizer = new StringTokenizer(nodeKeys, ",");
+			while (nodeKeysTokenizer.hasMoreTokens() == true)
+			{
+				String nodeKeyToken = nodeKeysTokenizer.nextToken();
+				this.nodeKeys.add(ECPublicKey.from(nodeKeyToken));
+			}
+			
+			this.shardGroups = 1;
+			this.numNodes = this.nodeKeys.size();
 		}
 	}
 
@@ -77,12 +118,12 @@ public final class GenerateUniverses
 
 		List<Universe> universes = new ArrayList<>();
 
-		long universeTimestampSeconds = this.configuration.get("universe.timestamp", 1136073600);
+		long universeTimestampSeconds = Long.parseLong(this.commandLine.getOptionValue("timestamp", "1136073600"));
 		long universeTimestampMillis = TimeUnit.SECONDS.toMillis(universeTimestampSeconds);
 
-		universes.add(buildUniverse(10000, "Mainnet", "The public universe", Universe.Type.PRODUCTION, universeTimestampMillis, 2, (int) TimeUnit.DAYS.toSeconds(1)));
-		universes.add(buildUniverse(20000, "Testnet", "The test universe", Universe.Type.TEST, universeTimestampMillis, 2, (int) TimeUnit.HOURS.toSeconds(1)));
-		universes.add(buildUniverse(30000, "Devnet", "The development universe", Universe.Type.DEVELOPMENT, universeTimestampMillis, 2, (int) TimeUnit.HOURS.toSeconds(1)));
+		universes.add(buildUniverse(10000, "Mainnet", "The public universe", Universe.Type.PRODUCTION, universeTimestampMillis, this.shardGroups, (int) TimeUnit.DAYS.toSeconds(1)));
+		universes.add(buildUniverse(20000, "Testnet", "The test universe", Universe.Type.TEST, universeTimestampMillis, this.shardGroups, (int) TimeUnit.HOURS.toSeconds(1)));
+		universes.add(buildUniverse(30000, "Devnet", "The development universe", Universe.Type.DEVELOPMENT, universeTimestampMillis, this.shardGroups, (int) TimeUnit.HOURS.toSeconds(1)));
 
 		return universes;
 	}

@@ -3,7 +3,6 @@ package org.fuserleer;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.google.common.primitives.Longs;
 
 import java.io.IOException;
 import java.math.BigInteger;
@@ -269,7 +268,7 @@ public class Universe extends BasicObject
 	 */
 	public static long computeMagic(ECPublicKey creator, long timestamp, int shardGroups, int epoch, int port, Type type) 
 	{
-		return 31l * Longs.fromByteArray(creator.getBytes()) * 19l * timestamp * 13l * epoch * 7l * port * 5l * shardGroups + type.ordinal();
+		return 31l * creator.asLong() * 19l * timestamp * 13l * epoch * 7l * port * 5l * shardGroups + type.ordinal();
 	}
 
 	public enum Type

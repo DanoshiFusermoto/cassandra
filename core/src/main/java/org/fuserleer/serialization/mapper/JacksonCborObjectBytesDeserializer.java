@@ -22,19 +22,20 @@ public class JacksonCborObjectBytesDeserializer<T> extends StdDeserializer<T> {
 	private final byte prefix;
 	private final Function<byte[], T> bytesMapper;
 
-	JacksonCborObjectBytesDeserializer(Class<T> t, byte prefix, Function<byte[], T> bytesMapper) {
+	JacksonCborObjectBytesDeserializer(Class<T> t, byte prefix, Function<byte[], T> bytesMapper) 
+	{
 		super(t);
 		this.prefix = prefix;
 		this.bytesMapper = bytesMapper;
 	}
 
 	@Override
-	public T deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+	public T deserialize(JsonParser p, DeserializationContext ctxt) throws IOException 
+	{
 		byte[] bytes = p.getBinaryValue();
-		if (bytes == null || bytes.length == 0 || bytes[0] != prefix) {
-			throw new InvalidFormatException(p, "Expecting " + prefix, bytes, this.handledType());
-		}
-		return bytesMapper.apply(Arrays.copyOfRange(bytes, 1, bytes.length));
+		if (bytes == null || bytes.length == 0 || bytes[0] != this.prefix)
+			throw new InvalidFormatException(p, "Expecting " + this.prefix, bytes, this.handledType());
+		return this.bytesMapper.apply(Arrays.copyOfRange(bytes, 1, bytes.length));
 	}
 
 }

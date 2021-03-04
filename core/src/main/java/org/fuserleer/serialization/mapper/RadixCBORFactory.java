@@ -294,7 +294,6 @@ public class RadixCBORFactory extends JsonFactory
     /**********************************************************
      */
 
-    @SuppressWarnings("resource")
     @Override
     public CBORParser createParser(File f) throws IOException {
         IOContext ctxt = _createContext(f, true);
@@ -318,7 +317,6 @@ public class RadixCBORFactory extends JsonFactory
         return createParser(data, 0, data.length);
     }
 
-    @SuppressWarnings("resource")
     @Override
     public CBORParser createParser(byte[] data, int offset, int len) throws IOException {
         IOContext ctxt = _createContext(data, true);

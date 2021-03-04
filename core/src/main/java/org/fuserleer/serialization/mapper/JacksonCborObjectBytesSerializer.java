@@ -25,10 +25,10 @@ public class JacksonCborObjectBytesSerializer<T> extends StdSerializer<T> {
 
 	@Override
 	public void serialize(T value, JsonGenerator jgen, SerializerProvider provider) throws IOException {
-		byte[] objectBytes = toByteArrayMapper.apply(value);
+		byte[] objectBytes = this.toByteArrayMapper.apply(value);
 		byte[] bytes = new byte[1 + objectBytes.length];
 
-		bytes[0] = prefix;
+		bytes[0] = this.prefix;
 		System.arraycopy(objectBytes, 0, bytes, 1, objectBytes.length);
 		jgen.writeBinary(bytes);
 	}

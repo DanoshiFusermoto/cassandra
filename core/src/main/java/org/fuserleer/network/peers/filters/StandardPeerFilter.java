@@ -1,58 +1,103 @@
 package org.fuserleer.network.peers.filters;
 
+import java.net.URI;
+
+import java.util.Arrays;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
-import org.fuserleer.common.Agent;
-import org.fuserleer.logging.Logger;
-import org.fuserleer.logging.Logging;
-import org.fuserleer.network.peers.Peer;
+import org.fuserleer.common.Direction;
+import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.ledger.ShardMapper;
+import org.fuserleer.network.Protocol;
+import org.fuserleer.network.peers.ConnectedPeer;
+import org.fuserleer.network.peers.PeerState;
 
-public class StandardPeerFilter implements PeerFilter
+public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 {
-	private static final Logger log = Logging.getLogger();
-
-	private Context context;
+	private final Context 	context;
+	private Direction		direction;
+	private Long 			shardGroup;
+	private Protocol 		protocol;
+	private ECPublicKey		identity;
+	private URI				URI;
+	private Set<PeerState> 	states;
 	
-	// TODO remove context and use dependency injection instead
-	public StandardPeerFilter(Context context)
+	public static final StandardPeerFilter build(final Context context)
 	{
-		this.context = Objects.requireNonNull(context);
-	}
-	
-	protected Context getContext()
-	{
-		return this.context;
+		return new StandardPeerFilter(context);
 	}
 
-	public boolean filter(Peer peer)
+	private StandardPeerFilter(final Context context)
 	{
-		try
-		{
-			if (this.context.getNetwork().isWhitelisted(peer.getURI()) == false)
-		        return true;
+		this.context = Objects.requireNonNull(context, "Context is null");
+	}
+	
 
-			if (peer.getNode() == null)
-				return true;
+	public StandardPeerFilter setURI(final URI URI)
+	{
+		this.URI = Objects.requireNonNull(URI, "URI is null");
+		return this;
+	}
 
-			if (peer.getNode().getIdentity().equals(this.context.getNode().getIdentity()))
-				return true;
+	public StandardPeerFilter setIdentity(final ECPublicKey identity)
+	{
+		this.identity = Objects.requireNonNull(identity, "Direction is null");
+		return this;
+	}
 
-			if (peer.getNode().getProtocolVersion() != 0 && peer.getNode().getProtocolVersion() < Agent.PROTOCOL_VERSION)
-	    		return true;
+	public StandardPeerFilter setDirection(final Direction direction)
+	{
+		this.direction = Objects.requireNonNull(direction, "Direction is null");
+		return this;
+	}
 
-	    	if (peer.getNode().getAgentVersion() != 0 && peer.getNode().getAgentVersion() <= Agent.REFUSE_AGENT_VERSION)
-	    		return true;
+	public StandardPeerFilter setShardGroup(final long shardGroup)
+	{
+		this.shardGroup =  Objects.requireNonNull(shardGroup, "Shard group is null");
+		return this;
+	}
 
-	    	if (peer.isBanned())
-    			return true;
+	public StandardPeerFilter setProtocol(final Protocol protocol)
+	{
+		this.protocol =  Objects.requireNonNull(protocol, "Protocol is null");
+		return this;
+	}
 
+	public StandardPeerFilter setStates(final PeerState ... states)
+	{
+		if (Objects.requireNonNull(states).length == 0)
+			throw new IllegalArgumentException("Peer states is empty");
+		
+		this.states = Arrays.stream(states).collect(Collectors.toSet());
+		return this;
+	}
+
+	@Override
+	public boolean filter(final ConnectedPeer peer)
+	{
+		Objects.requireNonNull(peer, "Connected peer is null");
+		
+		if (this.shardGroup != null && ShardMapper.toShardGroup(peer.getNode().getIdentity(), this.context.getLedger().numShardGroups()) != this.shardGroup)
 			return false;
-		}
-		catch (Exception ex)
-		{
-			log.error("Could not process filter on PeerFilter for Peer:"+peer.toString(), ex);
-			return true;
-		}
+
+		if (this.protocol != null && peer.hasProtocol(this.protocol) == false)
+			return false;
+		
+		if (this.identity != null && peer.getNode().getIdentity().equals(this.identity) == false)
+			return false;
+
+		if (this.URI != null && peer.getURI().equals(this.URI) == false)
+			return false;
+
+		if (this.direction != null && peer.getDirection().equals(this.direction) == false)
+			return false;
+
+		if (this.states != null && this.states.contains(peer.getState()) == false)
+			return false;
+
+		return true;
 	}
 }

@@ -3,6 +3,7 @@ package org.fuserleer.network.messages;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.network.peers.Peer;
@@ -29,8 +30,12 @@ public final class PeersMessage extends Message
 		return this.peers; 
 	}
 
-	public void setPeers(Collection<Peer> peers)
+	public void setPeers(final Collection<Peer> peers)
 	{
+		Objects.requireNonNull(peers, "Peers is null");
+		if (peers.isEmpty() == true)
+			throw new IllegalArgumentException("Peer is empty");
+		
 		this.peers.clear();
 		this.peers.addAll(peers);
 	}

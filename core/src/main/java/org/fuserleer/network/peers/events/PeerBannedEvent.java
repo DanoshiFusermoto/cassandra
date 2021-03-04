@@ -4,7 +4,7 @@ import org.fuserleer.network.peers.ConnectedPeer;
 
 public final class PeerBannedEvent extends PeerEvent
 {
-	public PeerBannedEvent(ConnectedPeer peer)
+	public PeerBannedEvent(final ConnectedPeer peer)
 	{
 		super(peer);
 	}

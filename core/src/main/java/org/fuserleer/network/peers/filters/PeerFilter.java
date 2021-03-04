@@ -2,7 +2,8 @@ package org.fuserleer.network.peers.filters;
 
 import org.fuserleer.network.peers.Peer;
 
-public interface PeerFilter
+@FunctionalInterface
+public interface PeerFilter<T extends Peer>
 {
-	public boolean filter(Peer peer);
+	public boolean filter(final T peer);
 }

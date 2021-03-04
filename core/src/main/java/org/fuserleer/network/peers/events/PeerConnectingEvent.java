@@ -4,7 +4,7 @@ import org.fuserleer.network.peers.ConnectedPeer;
 
 public final class PeerConnectingEvent extends PeerEvent
 {
-	public PeerConnectingEvent(ConnectedPeer peer)
+	public PeerConnectingEvent(final ConnectedPeer peer)
 	{
 		super(peer);
 	}

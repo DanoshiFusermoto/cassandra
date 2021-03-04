@@ -27,11 +27,11 @@ public class NodeMessage extends Message
 		super();
 	}
 	
-	public NodeMessage(Node node)
+	public NodeMessage(final Node node)
 	{
 		super();
 
-		this.node = new Node(Objects.requireNonNull(node));
+		this.node = new Node(Objects.requireNonNull(node, "Node is null"));
 	}
 
 	public Node getNode()

@@ -24,11 +24,11 @@ public final class FlowControlMessage extends Message
 		super();
 	}
 	
-	public FlowControlMessage(Collection<Long> sequences)
+	public FlowControlMessage(final Collection<Long> sequences)
 	{
 		super();
 		
-		if (Objects.requireNonNull(sequences).isEmpty() == true)
+		if (Objects.requireNonNull(sequences, "Sequences is null").isEmpty() == true)
 			throw new IllegalArgumentException("Sequences is empty");
 		
 		this.sequences = new HashSet<Long>(sequences);
@@ -36,6 +36,6 @@ public final class FlowControlMessage extends Message
 
 	public Set<Long> getSequences()
 	{
-		return sequences;
+		return this.sequences;
 	}
 }

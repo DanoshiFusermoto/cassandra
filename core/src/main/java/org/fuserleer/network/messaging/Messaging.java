@@ -1,7 +1,6 @@
 package org.fuserleer.network.messaging;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.SocketException;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -37,7 +36,7 @@ public class Messaging
 		private final Message		message;
 		private final ConnectedPeer	peer;
 		
-		public QueuedMessage(Message message, ConnectedPeer peer)
+		public QueuedMessage(final Message message, final ConnectedPeer peer)
 		{
 			super();
 			
@@ -246,7 +245,7 @@ public class Messaging
 	private AtomicLong bytesIn = new AtomicLong(0l);
 	private AtomicLong bytesOut = new AtomicLong(0l);
 
-	public Messaging(Context context)
+	public Messaging(final Context context)
 	{ 
 		this.context = Objects.requireNonNull(context);
 		
@@ -276,8 +275,12 @@ public class Messaging
 		this.outboundExecutable.terminate(true);
 	}
 
-	public void register(Class<? extends Message> type, Class<?> owner, MessageProcessor listener)
+	public void register(final Class<? extends Message> type, final Class<?> owner, final MessageProcessor listener)
 	{
+		Objects.requireNonNull(type, "Type class for registration is null");
+		Objects.requireNonNull(owner, "Owner class for registration is null");
+		Objects.requireNonNull(listener, "Listener for registration is null");
+		
 		synchronized(this.listeners)
 		{
 			if (this.listeners.containsKey(type) == false)
@@ -288,8 +291,10 @@ public class Messaging
 		}
 	}
 
-	public void deregister(MessageProcessor<? extends Message> listener)
+	public void deregister(final MessageProcessor<? extends Message> listener)
 	{
+		Objects.requireNonNull(listener, "Listener for deregistration is null");
+
 		synchronized(this.listeners)
 		{
 			for (Class<? extends Message> type : this.listeners.keySet())
@@ -307,8 +312,10 @@ public class Messaging
 		}
 	}
 
-	public void deregisterAll(Class<?> owner)
+	public void deregisterAll(final Class<?> owner)
 	{
+		Objects.requireNonNull(owner, "Owner for blanket deregistration is null");
+
 		synchronized(this.listeners)
 		{
 			for (Class<? extends Message> type : this.listeners.keySet())
@@ -326,8 +333,11 @@ public class Messaging
 		}
 	}
 
-	public void received(Message message, ConnectedPeer peer) throws IOException
+	public void received(final Message message, final ConnectedPeer peer) throws IOException
 	{
+		Objects.requireNonNull(message, "Message received is null");
+		Objects.requireNonNull(peer, "Peer received from is null");
+
 		if (this.inboundQueue.offer(new QueuedMessage(message, peer)) == false)
 		{
 			messagingLog.error(message+": Inbound queue is full "+peer);
@@ -335,10 +345,13 @@ public class Messaging
 		}
 	}
 
-	public void send(Message message, ConnectedPeer peer) throws IOException
+	public void send(final Message message, final ConnectedPeer peer) throws IOException
 	{
 		try
 		{
+			Objects.requireNonNull(message, "Message to send is null");
+			Objects.requireNonNull(peer, "Peer to send to is null");
+
 			if (peer.getState().equals(PeerState.DISCONNECTED) || peer.getState().equals(PeerState.DISCONNECTING))
 				throw new SocketException(peer+" is "+peer.getState());
 

@@ -3,11 +3,23 @@ package org.fuserleer.network.messaging;
 @SuppressWarnings("serial")
 public class MessagingException extends Exception 
 {
-	public MessagingException () { super (); }
+	public MessagingException() 
+	{ 
+		super (); 
+	}
 
-	public MessagingException (String arg0, Throwable arg1) { super (arg0, arg1); }
+	public MessagingException(final String message, final Throwable throwable) 
+	{ 
+		super (message, throwable); 
+	}
 
-	public MessagingException (String arg0) { super (arg0); }
+	public MessagingException(final String message) 
+	{ 
+		super (message); 
+	}
 
-	public MessagingException (Throwable arg0) { super (arg0); }
+	public MessagingException(final Throwable throwable) 
+	{ 
+		super (throwable); 
+	}
 }

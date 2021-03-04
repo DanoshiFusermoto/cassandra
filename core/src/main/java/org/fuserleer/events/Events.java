@@ -44,7 +44,7 @@ public final class Events
 	private final SubscriberExceptionHandler	exceptionHandler; 
 	private final SubscriberExceptionHandler	asyncExceptionHandler; 
 
-	public Events(Context context)
+	public Events(final Context context)
 	{
 		this.context = Objects.requireNonNull(context);
 		this.eventExecutorThreadFactory = new ExecutorThreadFactory();
@@ -58,9 +58,9 @@ public final class Events
 		this.exceptionHandler = new SubscriberExceptionHandler() 
 		{
 			@Override
-			public void handleException(Throwable arg0, SubscriberExceptionContext arg1) 
+			public void handleException(Throwable throwable, SubscriberExceptionContext arg1) 
 			{
-				// TODO Auto-generated method stub
+				eventLog.error(Events.this.context.getName(), throwable);
 			}
 		};
 		this.eventBus = new EventBus(this.exceptionHandler);
@@ -68,9 +68,9 @@ public final class Events
 		this.asyncExceptionHandler = new SubscriberExceptionHandler() 
 		{
 			@Override
-			public void handleException(Throwable arg0, SubscriberExceptionContext arg1) 
+			public void handleException(Throwable throwable, SubscriberExceptionContext arg1) 
 			{
-				// TODO Auto-generated method stub
+				eventLog.error(Events.this.context.getName(), throwable);
 			}
 		};
 		this.asyncEventBus = new AsyncEventBus(this.eventExecutorService, this.asyncExceptionHandler); 
@@ -78,6 +78,8 @@ public final class Events
 
 	public void post(final Event event)
 	{
+		Objects.requireNonNull(event, "Event is null");
+		
 		this.eventBus.post(event);
 		
 		if ((event instanceof SynchronousEvent) == false)
@@ -86,6 +88,8 @@ public final class Events
 
 	public void register(final EventListener listener)
 	{
+		Objects.requireNonNull(listener, "Event listener to register is null");
+
 		// TODO need some restrictions regarding the registration of sync events
 		// otherwise there are means to deadlock the internal core via intricate
 		// event signalling (or refactor the relevant core components ... )
@@ -97,6 +101,8 @@ public final class Events
 
 	public void unregister(final EventListener listener)
 	{
+		Objects.requireNonNull(listener, "Event listener to unregister is null");
+
 		if (listener instanceof SynchronousEventListener)
 			this.eventBus.unregister(listener);
 		else

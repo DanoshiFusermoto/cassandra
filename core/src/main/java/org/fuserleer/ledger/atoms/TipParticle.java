@@ -1,15 +1,13 @@
 package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
-import java.util.Set;
 
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.Hash.Mode;
-import org.fuserleer.database.Identifier;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.StateAddress;
+import org.fuserleer.ledger.StateField;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.ledger.StateOp;
 import org.fuserleer.ledger.StateOp.Instruction;
@@ -40,12 +38,10 @@ public final class TipParticle extends SignedParticle
 		super(Spin.UP, owner);
 		
 		this.tipping = Objects.requireNonNull(tipping);
-		if (this.tipping.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Tipping reference is zero");
+		Hash.notZero(this.tipping, "Tipping reference is zero");
 		
 		this.transfer = Objects.requireNonNull(transfer);
-		if (this.transfer.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Transfer reference is zero");
+		Hash.notZero(this.transfer, "Transfer reference is zero");
 	}
 
 	public Hash getTipping() 
@@ -59,26 +55,7 @@ public final class TipParticle extends SignedParticle
 	}
 	
 	@Override
-	public Set<StateOp> getStateOps()
-	{
-		Set<StateOp> stateOps = super.getStateOps();
-		stateOps.add(new StateOp(this.transfer, Instruction.EXISTS));
-		stateOps.add(new StateOp(this.tipping, Instruction.EXISTS));
-		stateOps.add(new StateOp(this.tipping, new Hash("tip_total".getBytes(StandardCharsets.UTF_8), Mode.STANDARD), Instruction.INCREMENT));
-		return stateOps;
-	}
-
-	@Override
-	public Set<Identifier> getIdentifiers() 
-	{
-		Set<Identifier> identifiers = super.getIdentifiers();
-		identifiers.add(Identifier.from(this.tipping));
-		identifiers.add(Identifier.from(this.transfer));
-		return identifiers;
-	}
-
-	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
 		if (this.tipping.equals(Hash.ZERO) == true)
 			throw new ValidationException("Tipping reference is zero");
@@ -103,7 +80,21 @@ public final class TipParticle extends SignedParticle
 		if (hasTransfer == false)
 			throw new ValidationException("Atom "+stateMachine.getAtom().getHash()+" doesn't contain transfer "+this.transfer+" for tip "+this.getHash());
 		
+		stateMachine.sop(new StateOp(new StateAddress(Particle.class, this.transfer), Instruction.EXISTS), this);
+		stateMachine.sop(new StateOp(new StateAddress(Particle.class, this.tipping), Instruction.EXISTS), this);
+
 		super.prepare(stateMachine);
+	}
+	
+	@Override
+	public void execute(StateMachine stateMachine, Object... arguments) throws ValidationException, IOException
+	{
+		stateMachine.sop(new StateOp(new StateField(this.tipping, "tip_total"), Instruction.SET), this);
+		
+		stateMachine.associate(this.tipping, this);
+		stateMachine.associate(this.transfer, this);
+
+		super.execute(stateMachine, arguments);
 	}
 
 	@Override

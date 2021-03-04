@@ -44,7 +44,7 @@ public final class RemoteMediaDeclaration extends MediaDeclaration
 	}
 
 	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
 		if (this.URL == null)
 			throw new ValidationException("URL is null");
@@ -59,7 +59,7 @@ public final class RemoteMediaDeclaration extends MediaDeclaration
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
+	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
 		super.execute(stateMachine);
 	}

@@ -2,12 +2,11 @@ package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.Set;
 
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.StateAddress;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.ledger.StateOp;
 import org.fuserleer.serialization.DsonOutput;
@@ -42,32 +41,15 @@ public final class UniqueParticle extends SignedParticle
 	}
 	
 	@Override
-	public Set<StateOp> getStateOps()
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
 	{
-		Set<StateOp> stateOps = super.getStateOps();
-		stateOps.add(new StateOp(this.value, StateOp.Instruction.NOT_EXISTS));
-		stateOps.add(new StateOp(this.value, UInt256.from(this.value.toByteArray()), StateOp.Instruction.SET));
-		return stateOps;
+		stateMachine.sop(new StateOp(new StateAddress(UniqueParticle.class, this.value), StateOp.Instruction.NOT_EXISTS), this);
 	}
 
 	@Override
-	public Set<Indexable> getIndexables()
+	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
-		Set<Indexable> indexables = super.getIndexables();
-		indexables.add(Indexable.from(this.value, getClass()));
-		return indexables;
-	}
-
-	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
-	{
-		/* DO NOTHING */
-	}
-
-	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
-	{
-		/* DO NOTHING */
+		stateMachine.sop(new StateOp(new StateAddress(UniqueParticle.class, this.value), UInt256.from(this.value.toByteArray()), StateOp.Instruction.SET), this);
 	}
 	
 	@Override

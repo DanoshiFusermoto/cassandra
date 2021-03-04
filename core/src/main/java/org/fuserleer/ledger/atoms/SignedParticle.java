@@ -1,15 +1,12 @@
 package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
-import java.util.HashSet;
 import java.util.Objects;
-import java.util.Set;
 
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.ECSignature;
-import org.fuserleer.database.Identifier;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
@@ -84,12 +81,12 @@ public abstract class SignedParticle extends Particle
 		return this.signature;
 	}
 	
-	public Set<Identifier> getIdentifiers()
+/*	public Set<Identifier> getIdentifiers()
 	{
 		Set<Identifier> identifiers = new HashSet<Identifier>(); 
 		identifiers.add(Identifier.from(getOwner().asHash()));
 		return identifiers;
-	}
+	}*/
 	
 	public String toString()
 	{
@@ -97,11 +94,17 @@ public abstract class SignedParticle extends Particle
 	}
 	
 	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
 		if (this.owner == null)
 			throw new ValidationException("Owner is null");
 		
 		super.prepare(stateMachine);
+	}
+	
+	@Override
+	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	{
+		stateMachine.associate(getOwner().asHash(), this);
 	}
 }

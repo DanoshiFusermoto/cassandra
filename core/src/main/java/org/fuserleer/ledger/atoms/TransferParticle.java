@@ -2,11 +2,11 @@ package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.Set;
 
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.StateAddress;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.ledger.StateOp;
 import org.fuserleer.ledger.StateOp.Instruction;
@@ -61,16 +61,7 @@ public final class TransferParticle extends SignedParticle
 	}
 
 	@Override
-	public Set<StateOp> getStateOps()
-	{
-		Set<StateOp> stateOps = super.getStateOps();
-		stateOps.add(new StateOp(Spin.spin(this.token, Spin.UP), Instruction.EXISTS));
-		stateOps.add(new StateOp(Spin.spin(this.token, Spin.DOWN), Instruction.NOT_EXISTS));
-		return stateOps;
-	}
-
-	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
 	{
 		if (this.token == null)
 			throw new ValidationException("Token is null");
@@ -83,14 +74,17 @@ public final class TransferParticle extends SignedParticle
 
 		if (this.quantity.compareTo(UInt256.ZERO) < 0)
 			throw new ValidationException("Quantity is negative");
+		
+		stateMachine.sop(new StateOp(new StateAddress(Particle.class, Spin.spin(this.token, Spin.UP)), Instruction.EXISTS), this);
+		stateMachine.sop(new StateOp(new StateAddress(Particle.class, Spin.spin(this.token, Spin.DOWN)), Instruction.NOT_EXISTS), this);
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
 	{
 		TokenSpecification token = stateMachine.get("token");
 		if (stateMachine.get("token") == null)
-			stateMachine.put("token", this.token);
+			stateMachine.set("token", this.token);
 		
 		// Check all transfers within this state machine as using the same token
 		if (token.getHash().equals(this.token) == false)
@@ -114,8 +108,8 @@ public final class TransferParticle extends SignedParticle
 		if (spent.compareTo(spendable) > 0)
 			throw new ValidationException("Transfer is invalid, over spending available token "+getToken()+" by "+spent.subtract(spendable));
 		
-		stateMachine.put("spendable", spendable);
-		stateMachine.put("spent", spent);
+		stateMachine.set("spendable", spendable);
+		stateMachine.set("spent", spent);
 	}
 
 	@Override

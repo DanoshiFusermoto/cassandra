@@ -2,11 +2,9 @@ package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.Set;
 
 import org.fuserleer.Universe;
 import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.database.Identifier;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
@@ -108,7 +106,7 @@ public class MessageParticle extends SignedParticle
 	}
 
 	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
 		if (this.message == null)
 			throw new ValidationException("Message is null");
@@ -127,19 +125,13 @@ public class MessageParticle extends SignedParticle
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
+	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
-		// NOTHING TO DO //
+		super.execute(stateMachine, arguments);
+
+		stateMachine.associate(getRecipient().asHash(), this);
 	}
 
-	@Override
-	public Set<Identifier> getIdentifiers() 
-	{
-		Set<Identifier> identifiers = super.getIdentifiers();
-		identifiers.add(Identifier.from(getRecipient().asHash()));
-		return identifiers;
-	}
-	
 	@Override
 	public boolean isConsumable()
 	{

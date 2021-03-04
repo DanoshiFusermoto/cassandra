@@ -1,15 +1,13 @@
 package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
-import java.util.Set;
 
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.crypto.Hash.Mode;
-import org.fuserleer.database.Indexable;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.StateAddress;
+import org.fuserleer.ledger.StateField;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.ledger.StateOp;
 import org.fuserleer.ledger.StateOp.Instruction;
@@ -64,25 +62,7 @@ public final class TokenSpecification extends SignedParticle
 	}
 	
 	@Override
-	public Set<StateOp> getStateOps()
-	{
-		Set<StateOp> stateOps = super.getStateOps();
-		Hash ISOHash = new Hash(this.ISO.toLowerCase().getBytes(StandardCharsets.UTF_8), Mode.STANDARD);
-		stateOps.add(new StateOp(ISOHash, Instruction.NOT_EXISTS));
-		stateOps.add(new StateOp(ISOHash, UInt256.from(getHash().toByteArray()), Instruction.SET));
-		return stateOps;
-	}
-
-	@Override
-	public Set<Indexable> getIndexables()
-	{
-		Set<Indexable> indexables = super.getIndexables();
-		indexables.add(Indexable.from(this.ISO, getClass()));
-		return indexables;
-	}
-	
-	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
 		// TODO not sure if nulls in the prepare sections should be caught 
 		// and thrown as a ValidatorException, or as a NullPointerException ... decide
@@ -103,16 +83,16 @@ public final class TokenSpecification extends SignedParticle
 
 		if (this.description.length() > MAX_DESCRIPTION_LENGTH)
 			throw new ValidationException("Description is greater than MAX_DESCRIPTION_LENGTH "+TokenSpecification.MAX_DESCRIPTION_LENGTH);
+		
+		stateMachine.sop(new StateOp(new StateAddress(TokenSpecification.class, Hash.from(this.ISO.toLowerCase())), Instruction.NOT_EXISTS), this);
+		stateMachine.sop(new StateOp(new StateField(Hash.from(this.ISO.toLowerCase()), "minted"), Instruction.GET), this);
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
 	{
-		TokenSpecification token = stateMachine.get("token");
-		if (token == null)
-			stateMachine.put("token", this);
-		else
-			throw new ValidationException("State machine already has token "+token+" specified");
+		stateMachine.sop(new StateOp(new StateAddress(TokenSpecification.class, Hash.from(this.ISO.toLowerCase())), UInt256.from(getHash().toByteArray()), Instruction.SET), this);
+		stateMachine.sop(new StateOp(new StateField(Hash.from(this.ISO.toLowerCase()), "minted"), UInt256.ZERO, Instruction.SET), this);
 	}
 	
 	@Override

@@ -12,9 +12,7 @@ import org.fuserleer.Context;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Network;
 import org.fuserleer.network.peers.Peer;
-import org.fuserleer.network.peers.filters.PeerFilter;
 
 public class RemoteLedgerDiscovery implements Discovery
 {
@@ -22,15 +20,19 @@ public class RemoteLedgerDiscovery implements Discovery
 
 	private Context context;
 	
-	public RemoteLedgerDiscovery(Context context)
+	public RemoteLedgerDiscovery(final Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 	}
 	
 	@Override
 	// TODO optimisation of peer selection.  currently gets all peers from peerstore and sorts for each locator attempt
-	public Collection<Peer> discover(PeerFilter filter) throws IOException
+	public Collection<Peer> discover(final DiscoveryFilter filter, int limit) throws IOException
 	{
+		Objects.requireNonNull(filter, "Discovery filter is null");
+		if (limit < 0)
+			throw new IllegalArgumentException("Discovery limit is negative");
+		
 		final Hash locator = this.context.getNode().getIdentity().asHash();
 		final List<Peer> known = this.context.getNetwork().getPeerStore().get(filter);
 		if (known.isEmpty() == true)
@@ -44,20 +46,19 @@ public class RemoteLedgerDiscovery implements Discovery
 			@Override
 			public int compare(Peer arg0, Peer arg1)
 			{
-				long xor0 = arg0.getNode().getIdentity().asHash().asLong() ^ (locator.asLong() * locator.asLong());
-				long xor1 = arg1.getNode().getIdentity().asHash().asLong() ^ (locator.asLong() * locator.asLong());
+				long xor0 = arg0.getNode().getIdentity().asHash().asLong() ^ locator.asLong(); // * locator.asLong());
+				long xor1 = arg1.getNode().getIdentity().asHash().asLong() ^ locator.asLong(); // * locator.asLong());
 				
-				if (xor0 < xor1)
+				if (Math.abs(xor0) < Math.abs(xor1))
 					return -1;
 				
-				if (xor0 > xor1)
+				if (Math.abs(xor0) > Math.abs(xor1))
 					return 1;
 
 				return arg0.getNode().getIdentity().asHash().compareTo(arg1.getNode().getIdentity().asHash());
 			}
 		});
 		
-		int limit = this.context.getConfiguration().get("network.connections.out", Network.DEFAULT_TCP_CONNECTIONS_OUT);
 		List<Peer> discovered = new ArrayList<Peer>(known.subList(0, Math.min(known.size(), limit)));
 		return discovered;
 	}

@@ -4,7 +4,7 @@ import org.fuserleer.Context;
 
 public class RemoteShardDiscovery extends RemoteLedgerDiscovery
 {
-	public RemoteShardDiscovery(Context context)
+	public RemoteShardDiscovery(final Context context)
 	{
 		super(context);
 	}

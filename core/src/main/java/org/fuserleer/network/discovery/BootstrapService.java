@@ -6,7 +6,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,14 +19,12 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.fuserleer.API;
 import org.fuserleer.Context;
-import org.fuserleer.common.Agent;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
-import org.fuserleer.node.Node;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.DsonOutput.Output;
 
@@ -38,7 +35,7 @@ public class BootstrapService extends Executable
 	private final Context context;
 	private final Set<URI> hosts = new HashSet<URI>();
 	
-	public BootstrapService(Context context)
+	public BootstrapService(final Context context)
 	{
 		this.context = Objects.requireNonNull(context);
 		
@@ -132,8 +129,6 @@ public class BootstrapService extends Executable
 					os.flush();
 					os.close();
 					
-//					conn.connect();
-
 					// read data
 					input = new BufferedInputStream(conn.getInputStream());
 					JSONTokener tokener = new JSONTokener(input);

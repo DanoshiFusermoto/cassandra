@@ -6,6 +6,7 @@ import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 
 import org.fuserleer.logging.Logger;
@@ -15,11 +16,12 @@ public class Whitelist
 {
 	private static final Logger networkLog = Logging.getLogger("network");
 
-	private Set<String> parameters = new HashSet<String>();
+	private final Set<String> parameters = new HashSet<String>();
 	
-	public Whitelist(String parameters)
+	public Whitelist(final String parameters)
 	{
-		if (parameters == null)
+		Objects.requireNonNull(parameters, "Whitelist parameters is null");
+		if (parameters.isEmpty() == true)
 			return;
 		
 		String[] split = parameters.split(",");
@@ -33,8 +35,12 @@ public class Whitelist
 		}
 	}
 	
-	private int[] convert(String host)
+	private int[] convert(final String host)
 	{
+		Objects.requireNonNull(host, "Whitelist host is null");
+		if (host.length() == 0)
+			throw new IllegalArgumentException("Whitelist host has length zero");
+
 		String[] segments;
 		int[] output;
 
@@ -65,16 +71,28 @@ public class Whitelist
 		return output;
 	}
 	
-	private boolean isRange(String parameter)
+	private boolean isRange(final String parameter)
 	{
+		Objects.requireNonNull(parameter, "Whitelist range parameter is null");
+		if (parameter.length() == 0)
+			throw new IllegalArgumentException("Whitelist range parameter has length zero");
+
 		if (parameter.contains("-"))
 			return true;
 		
 		return false;
 	}
 
-	private boolean isInRange(String parameter, String address)
+	private boolean isInRange(final String parameter, final String address)
 	{
+		Objects.requireNonNull(address, "Whitelist range address is null");
+		if (address.length() == 0)
+			throw new IllegalArgumentException("Whitelist range address has length zero");
+
+		Objects.requireNonNull(parameter, "Whitelist range parameter is null");
+		if (parameter.length() == 0)
+			throw new IllegalArgumentException("Whitelist range parameter has length zero");
+
 		String[] hosts = parameter.split("-");
 		
 		if (hosts.length != 2)
@@ -104,16 +122,28 @@ public class Whitelist
 		return true;
 	}
 
-	private boolean isMask(String parameter)
+	private boolean isMask(final String parameter)
 	{
+		Objects.requireNonNull(parameter, "Whitelist mask parameter is null");
+		if (parameter.length() == 0)
+			throw new IllegalArgumentException("Whitelist mask parameter has length zero");
+
 		if (parameter.contains("*") || parameter.contains("::"))
 			return true;
 		
 		return false;
 	}
 	
-	private boolean isMasked(String parameter, String address) throws UnknownHostException, URISyntaxException
+	private boolean isMasked(final String parameter, final String address) throws UnknownHostException, URISyntaxException
 	{
+		Objects.requireNonNull(address, "Whitelist mask address is null");
+		if (address.length() == 0)
+			throw new IllegalArgumentException("Whitelist mask address has length zero");
+
+		Objects.requireNonNull(parameter, "Whitelist mask parameter is null");
+		if (parameter.length() == 0)
+			throw new IllegalArgumentException("Whitelist mask parameter has length zero");
+
 		int[] target = convert(address);
 		int[] mask = convert(parameter);
 		
@@ -133,12 +163,14 @@ public class Whitelist
 
 	public boolean accept(URI host)
 	{
-		if (parameters.isEmpty())
+		Objects.requireNonNull(host, "Accept host URI is null");
+		
+		if (this.parameters.isEmpty())
 			return true;
 		
 		try
 		{
-			for (String parameter : parameters)
+			for (String parameter : this.parameters)
 			{
 				if (parameter.equalsIgnoreCase(host.getHost()))
 					return true;

@@ -6,7 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 
-final class AtomFuture extends CompletableFuture<AtomCertificate>
+public final class AtomFuture extends CompletableFuture<AtomCertificate>
 {
 	private final Atom atom;
 	

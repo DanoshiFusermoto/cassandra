@@ -18,9 +18,7 @@ public class AtomNotFoundException extends ValidationException
 	{
 		super(message);
 
-		if (atom.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Atom hash is ZERO");
-
+		Hash.notZero(atom, "Atom hash is ZERO");
 		this.atom = atom;
 	}
 

@@ -1,48 +1,40 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.collections.MappedBlockingQueue;
-import org.fuserleer.common.Direction;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
-import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.events.AtomAcceptedEvent;
+import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
+import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
-import org.fuserleer.ledger.messages.AtomBroadcastMessage;
-import org.fuserleer.ledger.messages.AtomsMessage;
-import org.fuserleer.ledger.messages.GetAtomsMessage;
+import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Protocol;
-import org.fuserleer.network.discovery.RemoteShardDiscovery;
-import org.fuserleer.network.messaging.MessageProcessor;
-import org.fuserleer.network.peers.ConnectedPeer;
-import org.fuserleer.network.peers.Peer;
-import org.fuserleer.network.peers.PeerState;
-import org.fuserleer.network.peers.PeerTask;
-import org.fuserleer.network.peers.filters.OutboundUDPPeerFilter;
-import org.fuserleer.node.Node;
-import org.fuserleer.utils.UInt128;
+import org.fuserleer.network.GossipFetcher;
+import org.fuserleer.network.GossipFilter;
+import org.fuserleer.network.GossipInventory;
+import org.fuserleer.network.GossipReceiver;
 
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
+import com.google.common.eventbus.Subscribe;
 
 public class AtomHandler implements Service
 {
@@ -50,22 +42,16 @@ public class AtomHandler implements Service
 
 	private final Context context;
 	
-	private final Set<Hash> 	atomsRequested = Collections.synchronizedSet(new HashSet<Hash>());
-	private final AtomicInteger atomRequestsCounter = new AtomicInteger(0);
-	private final AtomicLong 	atomsRequestedCounter = new AtomicLong(0l);
+	private final Map<Hash, PendingAtom> pendingAtoms = Collections.synchronizedMap(new HashMap<>());
 	private final MappedBlockingQueue<Hash, Atom> atomQueue;
 	
 	private Executable atomProcessor = new Executable()
 	{
-		private List<Hash> atomsToBroadcastLocal = new ArrayList<>();
-		private Multimap<UInt128, Hash> atomsToBroadcastRemote = HashMultimap.create();
-		
 		@Override
 		public void execute()
 		{
 			try 
 			{
-				long lastBroadcast = System.currentTimeMillis();
 				while (this.isTerminated() == false)
 				{
 					try
@@ -76,53 +62,45 @@ public class AtomHandler implements Service
 							if (atomsLog.hasLevel(Logging.DEBUG))
 								atomsLog.debug(AtomHandler.this.context.getName()+": Verifying atom "+atom.getValue().getHash());
 
+							// TODO may need another exception wrapping this incase exceptions get thrown ... will be messy though
+							final PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.computeIfAbsent(atom.getKey(), (k) -> PendingAtom.create(AtomHandler.this.context, atom.getValue()));
 							try
 							{
-								// TODO currently relying on the store atom to catch existing atoms for performance.  
-								//		may need this initial check back in if verification of atom form goes screwy
-								//if (AtomHandler.this.ledgerStore.has(atom.getHash()) == true)
-								//	throw new ValidationException("Atom "+atom.getHash()+" already processed and persisted");
+								if (pendingAtom.getStatus().equals(CommitStatus.NONE) == false)
+								{
+									atomsLog.warn(AtomHandler.this.context.getName()+": Atom "+atom.getValue().getHash()+" is already pending with state "+pendingAtom.getStatus());
+									continue;
+								}
+								
+								if (pendingAtom.getAtom() == null)
+									pendingAtom.setAtom(atom.getValue());
 
+								pendingAtom.prepare();
+								
 								// TODO atom verification here (signatures etc)
 								
-								// Store all valid atoms even if they aren't within the local shard group.
+			                	// Store all valid atoms even if they aren't within the local shard group.
 								// Those atoms will be broadcast the the relevant groups and it needs to be stored
 								// to be able to serve the requests for it.  Such atoms can be pruned per epoch
-			                	AtomHandler.this.context.getLedger().getLedgerStore().store(atom.getValue());  // TODO handle failure
-								
-			                	Set<UInt128> atomShardGroups = AtomHandler.this.context.getLedger().getShardGroups(atom.getValue().getShards());
-			                	if (atomShardGroups.contains(AtomHandler.this.context.getLedger().getShardGroup(AtomHandler.this.context.getNode().getIdentity())) == true)
-		                		{
-			                		atomShardGroups.remove(AtomHandler.this.context.getLedger().getShardGroup(AtomHandler.this.context.getNode().getIdentity()));
-				                	AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(atom.getValue()));
-				                	this.atomsToBroadcastLocal.add(atom.getValue().getHash());
-		                		}
-			                			
-			                	for (UInt128 shardGroup : atomShardGroups)
-		                			this.atomsToBroadcastRemote.put(shardGroup, atom.getKey());
-			                		
-			                	AtomHandler.this.atomQueue.remove(atom.getKey());
+			                	AtomHandler.this.context.getLedger().getLedgerStore().store(pendingAtom.getAtom());  // TODO handle failure
+			                	
+			                	Collection<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight()));
+			                	if (shardGroups.contains(ShardMapper.toShardGroup(AtomHandler.this.context.getNode().getIdentity(), AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight()))) == true)
+			                		AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(pendingAtom));
+			                	else
+			                		AtomHandler.this.pendingAtoms.remove(pendingAtom.getHash(), pendingAtom);
+			                	
+			                	AtomHandler.this.context.getNetwork().getGossipHandler().broadcast(pendingAtom.getAtom(), shardGroups);
 							}
-	/*						catch (ValidationException vex)
-							{
-								atomsLog.error("Validation failed for atom " + atom.getHash(), vex);
-								Events.getInstance().post(new AtomErrorEvent(atom, vex));
-							}*/
 							catch (Exception ex)
 							{
 								atomsLog.error(AtomHandler.this.context.getName()+": Error processing for atom for " + atom.getValue().getHash(), ex);
-								AtomHandler.this.context.getEvents().post(new AtomExceptionEvent(atom.getValue(), ex));
+								AtomHandler.this.context.getEvents().post(new AtomExceptionEvent(pendingAtom, ex));
 							}
-						}
-						
-						if (this.atomsToBroadcastLocal.size() == AtomBroadcastMessage.MAX_ATOMS ||
-							(System.currentTimeMillis() - lastBroadcast > TimeUnit.SECONDS.toMillis(1) && this.atomsToBroadcastLocal.isEmpty() == false))
-						{
-							lastBroadcast = System.currentTimeMillis();
-							broadcastLocal(this.atomsToBroadcastLocal);
-							broadcastRemote(this.atomsToBroadcastRemote);
-							this.atomsToBroadcastLocal.clear();
-							this.atomsToBroadcastRemote.clear();
+							finally
+							{
+			                	AtomHandler.this.atomQueue.remove(atom.getKey());
+							}
 						}
 					} 
 					catch (InterruptedException e) 
@@ -138,65 +116,6 @@ public class AtomHandler implements Service
 				atomsLog.fatal(AtomHandler.this.context.getName()+": Error processing atom queue", throwable);
 			}
 		}
-		
-		private void broadcastLocal(List<Hash> atomsToBroadcastLocal)
-		{
-			if (atomsLog.hasLevel(Logging.DEBUG)) 
-				atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+atomsToBroadcastLocal.size()+" atoms locally");
-
-			AtomBroadcastMessage atomBroadcastMessage = new AtomBroadcastMessage(atomsToBroadcastLocal);
-			for (ConnectedPeer connectedPeer : AtomHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED))
-			{
-				if (AtomHandler.this.context.getNode().isSynced() == false)
-					return;
-				
-				if (AtomHandler.this.context.getConfiguration().get("network.broadcast.type") != null)
-					if (connectedPeer.getDirection().equals(Direction.valueOf(AtomHandler.this.context.getConfiguration().get("network.broadcast.type").toUpperCase())) == false)
-						continue;
-				
-				try
-				{
-					AtomHandler.this.context.getNetwork().getMessaging().send(atomBroadcastMessage, connectedPeer);
-				}
-				catch (IOException ex)
-				{
-					atomsLog.error(AtomHandler.this.context.getName()+": Unable to send AtomBroadcastMessage for broadcast of " + atomsToBroadcastLocal.size() + " atoms to " + connectedPeer, ex);
-				}
-			}
-
-		}
-		
-		private void broadcastRemote(Multimap<UInt128, Hash> atomsToBroadcastRemote)
-		{
-			if (atomsLog.hasLevel(Logging.DEBUG)) 
-				atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+atomsToBroadcastRemote.size()+" atoms remotely");
-
-			for (UInt128 shardGroup : atomsToBroadcastRemote.keySet())
-			{
-				AtomBroadcastMessage atomBroadcastMessage = new AtomBroadcastMessage(atomsToBroadcastRemote.get(shardGroup));
-				OutboundUDPPeerFilter outboundUDPPeerFilter = new OutboundUDPPeerFilter(AtomHandler.this.context, Collections.singleton(shardGroup));
-				try
-				{
-					Collection<Peer> preferred = new RemoteShardDiscovery(AtomHandler.this.context).discover(outboundUDPPeerFilter);
-					for (Peer preferredPeer : preferred)
-					{
-						try
-						{
-							ConnectedPeer connectedPeer = AtomHandler.this.context.getNetwork().connect(preferredPeer.getURI(), Direction.OUTBOUND, Protocol.UDP);
-							AtomHandler.this.context.getNetwork().getMessaging().send(atomBroadcastMessage, connectedPeer);
-						}
-						catch (IOException ex)
-						{
-							atomsLog.error(AtomHandler.this.context.getName()+": Unable to send AtomBroadcastMessage of " + atomsToBroadcastRemote.get(shardGroup) + " atoms to " + preferredPeer, ex);
-						}
-					}
-				}
-				catch (IOException ex)
-				{
-					atomsLog.error(AtomHandler.this.context.getName()+": Discovery of preferred peers in shard group "+shardGroup+" for AtomBroadcastMessage of " + atomsToBroadcastRemote.get(shardGroup) + " atoms failed", ex);
-				}
-			}
-		}
 	};
 	
 	AtomHandler(Context context)
@@ -208,139 +127,69 @@ public class AtomHandler implements Service
 	@Override
 	public void start() throws StartupException 
 	{
-		this.context.getNetwork().getMessaging().register(AtomBroadcastMessage.class, this.getClass(), new MessageProcessor<AtomBroadcastMessage>()
+		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipFilter(this.context) 
 		{
 			@Override
-			public void process(final AtomBroadcastMessage atomBroadcastMessage, final ConnectedPeer peer)
+			public Set<Long> filter(Primitive atom) throws IOException
 			{
-				Executor.getInstance().submit(new Executable() 
+				PendingAtom pendingAtom = AtomHandler.this.get(atom.getHash());
+				return ShardMapper.toShardGroups(pendingAtom.getShards(), AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight()));
+			}
+		});
+		
+		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipInventory() 
+		{
+			@Override
+			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
+			{
+				Set<Hash> required = new HashSet<Hash>();
+				for (Hash item : items)
 				{
-					@Override
-					public void execute()
-					{
-						try
-						{
-							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomHandler.this.context.getName()+": Atom broadcast of " + atomBroadcastMessage.getAtoms().size() + " from " + peer);
-							
-							if (AtomHandler.this.context.getLedger().isSynced() == false)
-								return;
-
-							synchronized(AtomHandler.this.atomsRequested)
-							{
-								List<Hash> atomsToRequest = new ArrayList<Hash>();
-								for (Hash atom : atomBroadcastMessage.getAtoms())
-								{
-									// The order in which we check these sources is important as the caches are
-									// updated BEFORE the queues on a successful store.
-									if (AtomHandler.this.atomsRequested.contains(atom) == true ||
-										AtomHandler.this.atomQueue.contains(atom) == true ||
-										AtomHandler.this.context.getLedger().getLedgerStore().has(atom) == true)
-										continue;
-									
-									atomsToRequest.add(atom);
-								}
-								
-								if (atomsToRequest.isEmpty() == false)
-									AtomHandler.this.requestAtoms(peer, atomsToRequest);
-							}
-						}
-						catch (Exception ex)
-						{
-							atomsLog.error(AtomHandler.this.context.getName()+": ledger.atoms.messages.broadcast " + peer, ex);
-						}
-					}
-				});
+					if (AtomHandler.this.atomQueue.contains(item) == true ||
+						AtomHandler.this.context.getLedger().getLedgerStore().has(item) == true)
+						continue;
+				
+					required.add(item);
+				}
+				return required;
 			}
 		});
 
-		this.context.getNetwork().getMessaging().register(GetAtomsMessage.class, this.getClass(), new MessageProcessor<GetAtomsMessage>()
+		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipReceiver() 
 		{
 			@Override
-			public void process(final GetAtomsMessage getAtomsMessage, final ConnectedPeer peer)
+			public void receive(Primitive object) throws InterruptedException
 			{
-				Executor.getInstance().submit(new Executable() 
-				{
-					@Override
-					public void execute()
-					{
-						try
-						{
-							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomHandler.this.context.getName()+": Received atoms request from " + peer + " of " + getAtomsMessage.getSize() + " atoms");
-	
-							List<Atom> atomsToSend = new ArrayList<Atom>();
-							for (Hash hash : getAtomsMessage.getAtoms())
-							{
-								Atom atom = AtomHandler.this.atomQueue.get(hash);
-								if (atom == null)
-									atom = AtomHandler.this.context.getLedger().getLedgerStore().get(hash, Atom.class);
-
-								if (atom != null)
-								{
-									atomsToSend.add(atom);
-									
-									if (atomsToSend.size() == AtomsMessage.MAX_ATOMS)
-									{
-										AtomHandler.this.context.getNetwork().getMessaging().send(new AtomsMessage(getAtomsMessage.getNonce(), atomsToSend), peer);
-										atomsToSend.clear();
-									}
-								}
-								else
-									atomsLog.error(AtomHandler.this.context.getName()+": Requested atom "+hash+" not found");
-							}
-							
-							if (atomsToSend.isEmpty() == false)
-								AtomHandler.this.context.getNetwork().getMessaging().send(new AtomsMessage(getAtomsMessage.getNonce(), atomsToSend), peer);
-						}
-						catch (Exception ex)
-						{
-							atomsLog.error(AtomHandler.this.context.getName()+": ledger.messages.atoms.get " + peer, ex);
-						}
-					}
-				});
+				AtomHandler.this.submit((Atom) object);
 			}
 		});
 
-		this.context.getNetwork().getMessaging().register(AtomsMessage.class, this.getClass(), new MessageProcessor<AtomsMessage>()
+		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipFetcher() 
 		{
 			@Override
-			public void process(final AtomsMessage atomsMessage, final ConnectedPeer peer)
+			public Collection<Atom> fetch(Collection<Hash> items) throws IOException
 			{
-				Executor.getInstance().submit(new Executable() 
+				Set<Atom> fetched = new HashSet<Atom>();
+				for (Hash item : items)
 				{
-					@Override
-					public void execute()
-					{
-						try
-						{
-							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomHandler.this.context.getName()+": Received "+atomsMessage.getAtoms().size()+" atoms from " + peer);
+					Atom atom = AtomHandler.this.atomQueue.get(item);
+					if (atom == null)
+						atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
 
-							synchronized(AtomHandler.this.atomsRequested)
-							{
-								for (Atom atom : atomsMessage.getAtoms())
-								{
-									if (AtomHandler.this.atomsRequested.contains(atom.getHash()) == false)
-									{
-										atomsLog.error(AtomHandler.this.context.getName()+": Received unrequested atom "+atom.getHash()+" from "+peer);
-										peer.disconnect("Received unrequested atom "+atom.getHash());
-										break;
-									}
-	
-									if (AtomHandler.this.atomsRequested.remove(atom.getHash()) == true)
-										AtomHandler.this.submit(atom);
-								}
-							}
-						}
-						catch (Exception ex)
-						{
-							atomsLog.error(AtomHandler.this.context.getName()+": ledger.messages.atom " + peer, ex);
-						}
+					if (atom == null)
+					{
+						if (atomsLog.hasLevel(Logging.DEBUG) == true)
+							atomsLog.debug(AtomHandler.this.context.getName()+": Requested atom "+item+" not found");
+						continue;
 					}
-				});
+					
+					fetched.add(atom);
+				}
+				return fetched;
 			}
 		});
+
+		this.context.getEvents().register(this.syncAtomListener);
 
 		Thread atomProcessorThread = new Thread(this.atomProcessor);
 		atomProcessorThread.setDaemon(true);
@@ -353,6 +202,7 @@ public class AtomHandler implements Service
 	{
 		this.atomProcessor.terminate(true);
 
+		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 	
@@ -360,119 +210,85 @@ public class AtomHandler implements Service
 	{
 		return this.atomQueue.size();
 	}
+	
+	/**
+	 * Returns an existing pending atom or creates it providing that the atom is not already present in the store.
+	 * <br><br>
+	 * If the atom is not in the pending list and is persisted, it is assumed that it has already undergone
+	 * the pending atom process, as the only mechanism for it to be persisted is to first exist as a pending atom.
+	 * <br><br>
+	 * TODO The above assumption should be tested in all cases.
+	 * 
+	 * @param atom The atom hash
+	 * @return A pending atom or null
+	 * @throws IOException
+	 */
+	PendingAtom get(Hash atom) throws IOException
+	{
+		synchronized(this.pendingAtoms)
+		{
+			PendingAtom pendingAtom = this.pendingAtoms.get(atom);
+			if (pendingAtom != null)
+				return pendingAtom;
+			
+			if (pendingAtom == null && this.context.getLedger().getLedgerStore().has(atom) == true)
+				return null;
+
+			pendingAtom = PendingAtom.create(this.context, atom);
+			this.pendingAtoms.put(atom, pendingAtom);
+			return pendingAtom;
+		}
+	}
 
 	boolean submit(Atom atom) throws InterruptedException
 	{
-		this.atomQueue.put(atom.getHash(), atom);
-		
-		if (atomsLog.hasLevel(Logging.DEBUG) == true)
-			atomsLog.debug(AtomHandler.this.context.getName()+": Queued atom for storage "+atom.getHash());
-		
-		return true;
-	}
-	
-	@SuppressWarnings("unchecked")
-	Collection<Hash> requestAtoms(final ConnectedPeer peer, final Collection<Hash> atoms) throws IOException
-	{
-		final List<Hash> atomsPending = new ArrayList<Hash>();
-		final List<Hash> atomsToRequest = new ArrayList<Hash>();
-			
-		synchronized(this.atomsRequested)
+		if (this.atomQueue.putIfAbsent(atom.getHash(), atom) == null)
 		{
-			for (Hash atom : atoms)
-			{
-				if (this.atomsRequested.contains(atom) == true || 
-					this.atomQueue.contains(atom) == true)
-				{
-					atomsPending.add(atom);
-				}
-				else if (AtomHandler.this.context.getLedger().getLedgerStore().has(atom) == false)
-				{
-					atomsToRequest.add(atom);
-					atomsPending.add(atom);
-				}
-			}
-
-			if (atomsPending.isEmpty() == true)
-			{
-				atomsLog.warn(AtomHandler.this.context.getName()+": No atoms required from "+peer);
-				return Collections.EMPTY_LIST;
-			}
-			
-			if (atomsToRequest.isEmpty() == false)
-			{
-				try
-				{
-					this.atomsRequested.addAll(atomsToRequest);
-					
-					if (atomsLog.hasLevel(Logging.DEBUG))
-					{	
-						atomsToRequest.forEach(a -> {
-							atomsLog.debug(AtomHandler.this.context.getName()+": Requesting atom " + a + " from " + peer);
-						});
-					}
-	
-					GetAtomsMessage getAtomsMessage = new GetAtomsMessage(atomsToRequest); 
-					this.context.getNetwork().getMessaging().send(getAtomsMessage, peer);
-					
-					Executor.getInstance().schedule(new PeerTask(peer, 10, TimeUnit.SECONDS) 
-					{
-						final Collection<Hash> requestedAtoms = new ArrayList<Hash>(atomsToRequest);
-						
-						@Override
-						public void execute()
-						{
-							List<Hash> failedAtomRequests = new ArrayList<Hash>();
-							synchronized(AtomHandler.this.atomsRequested)
-							{
-								for (Hash requestedAtom : this.requestedAtoms)
-								{
-									if (AtomHandler.this.atomsRequested.remove(requestedAtom) == true)
-										failedAtomRequests.add(requestedAtom);
-								}
-							}
-							
-							if (failedAtomRequests.isEmpty() == false)
-							{
-								// TODO need to do something with failedAtomRequests?
-								// If so AtomTimeoutEvent is probably wrong
-//								for (Hash failedAtomRequest : failedAtomRequests)
-//									AtomHandler.this.context.getEvents().post(new AtomTimeoutEvent(failedAtomRequest));
-								
-								if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
-								{
-									atomsLog.error(AtomHandler.this.context.getName()+": "+getPeer()+" did not respond to atom request of "+this.requestedAtoms.size()+" atoms");
-									getPeer().disconnect("Did not respond to atom request of "+this.requestedAtoms.size()+" atoms");
-								}
-							}
-						}
-					});
-
-					
-					this.atomRequestsCounter.incrementAndGet();
-					this.atomsRequestedCounter.addAndGet(atoms.size());
-					
-					if (atomsLog.hasLevel(Logging.DEBUG))
-						atomsLog.debug(AtomHandler.this.context.getName()+": Requesting "+getAtomsMessage.getAtoms().size()+" atoms with nonce "+getAtomsMessage.getNonce()+" from "+peer);
-				}
-				catch (Throwable t)
-				{
-					this.atomsRequested.removeAll(atomsToRequest);
-					throw t;
-				}
-			}
+			if (atomsLog.hasLevel(Logging.DEBUG) == true)
+				atomsLog.debug(AtomHandler.this.context.getName()+": Queued atom for storage "+atom.getHash());
+		
+			return true;
 		}
 		
-		return atomsPending;
-	}
+		if (atomsLog.hasLevel(Logging.DEBUG) == true)
+			atomsLog.debug(AtomHandler.this.context.getName()+": Atom "+atom.getHash()+" already queued for storage");
 
-	public long atomRequestsCount()
-	{
-		return this.atomRequestsCounter.get();
+		return false;
 	}
+	// SYNC ATOM LISTENER //
+	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final AtomAcceptedEvent event) 
+		{
+			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+		}
 
-	public long atomsRequestedCount()
-	{
-		return this.atomsRequestedCounter.get();
-	}
+		@Subscribe
+		public void on(final AtomRejectedEvent event) 
+		{
+			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+		}
+
+		@Subscribe
+		public void on(final AtomCommitTimeoutEvent event) 
+		{
+			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+		}
+		
+		@Subscribe
+		public void on(final AtomDiscardedEvent event) 
+		{
+			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+		}
+		
+		@Subscribe
+		public void on(final AtomExceptionEvent event) 
+		{
+			if (event.getException() instanceof StateLockedException)
+				return;
+				
+			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+		}
+	};
 }

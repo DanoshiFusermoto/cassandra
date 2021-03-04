@@ -3,35 +3,35 @@ package org.fuserleer.ledger.atoms;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.fuserleer.BasicObject;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Identifier;
-import org.fuserleer.database.Indexable;
-import org.fuserleer.database.IndexablePrimitive;
-import org.fuserleer.ledger.StateOp;
+import org.fuserleer.ledger.StateObject;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
-import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 @SerializerId2("ledger.atom")
-public final class Atom extends BasicObject implements IndexablePrimitive // TODO not sure if this needs to be state primitive as its really an envelope for particle state primitives
+public final class Atom extends BasicObject implements Primitive // TODO not sure if this needs to be state primitive as its really an envelope for particle state primitives
 {
 	@JsonProperty("particles")
 	@DsonOutput(Output.ALL)
 	private List<Particle> particles;
 	
-	private transient Set<StateOp> stateops = null;
-	private transient Set<Indexable> indexables = null;
+	@JsonProperty("states")
+	@DsonOutput(value = {Output.API, Output.PERSIST})
+	@JsonDeserialize(as=LinkedHashMap.class)
+	private Map<Hash, StateObject> states;
 
 	public Atom()
 	{
@@ -77,46 +77,6 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 		this.particles = new ArrayList<Particle>(verifiedNonDuplicates);
 	}
 	
-	public Set<Hash> getStates()
-	{
-		Set<Hash> states = new LinkedHashSet<Hash>();
-		this.particles.forEach(p -> states.addAll(p.getStates()));
-		return states;
-	}
-
-	public synchronized Set<StateOp> getStateOps()
-	{
-		if (this.stateops == null)
-		{
-			final Set<StateOp> stateops = new LinkedHashSet<StateOp>();
-			this.particles.forEach(p -> stateops.addAll(p.getStateOps()));
-			this.stateops = Collections.unmodifiableSet(stateops);
-		}
-		
-		return this.stateops;
-	}
-
-	public synchronized Set<Indexable> getIndexables()
-	{
-		if (this.indexables == null)
-		{
-			Set<Indexable> indexables = new HashSet<Indexable>();
-			indexables.addAll(this.particles.stream().map(p -> Indexable.from(p.getHash(), Particle.class)).collect(Collectors.toList()));
-			indexables.addAll(this.particles.stream().map(p -> Indexable.from(p.getHash(), p.getClass())).collect(Collectors.toList()));
-			this.particles.stream().forEach(p -> indexables.addAll(p.getIndexables()));
-			this.indexables = Collections.unmodifiableSet(indexables);
-		}
-		
-		return this.indexables;
-	}
-
-	public Set<Identifier> getIdentifiers()
-	{
-		Set<Identifier> identifiers = new HashSet<Identifier>();
-		this.particles.stream().forEach(p -> identifiers.addAll(p.getIdentifiers()));
-		return identifiers;
-	}
-
 	public Collection<Particle> getParticles()
 	{
 		return Collections.unmodifiableList(this.particles);
@@ -134,18 +94,6 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 		return null;
 	}
 	
-	@SuppressWarnings("unchecked")
-	public <T> T getParticle(Indexable indexable) 
-	{
-		Objects.requireNonNull(indexable);
-		
-		for (Particle particle : this.particles)
-			if (particle.getHash().equals(indexable.getKey()) == true || particle.hasIndexable(indexable) == true)
-				return (T)particle;
-		
-		return null;
-	}
-
 	@SuppressWarnings("unchecked")
 	public <T extends Particle> List<T> getParticles(Class<T> type)
 	{
@@ -172,13 +120,27 @@ public final class Atom extends BasicObject implements IndexablePrimitive // TOD
 		return false;
 	}
 	
-	@JsonProperty("shards")
-	@DsonOutput(Output.API)
-	public Set<UInt256> getShards()
+	public Map<Hash, StateObject> getStates()
 	{
-		Set<UInt256> shards = new HashSet<UInt256>();
-		for (Particle particle : this.particles)
-			shards.addAll(particle.getShards());
-		return shards;
+		if (this.states == null)
+			return Collections.emptyMap();
+		
+		return this.states;
+	}
+
+	/**
+	 * Returns the values of the states touched in this atom.
+	 * <br><br>
+	 * Beware!  If a state is not native to a shard served by a node, the value will represent the last state change that was seen and may have changed since.
+	 * <br><br>
+	 * Only states native to the nodes shard group will be the current committed value of that state. 
+	 * <br>
+	 * @param states
+	 */
+	// Also would really like this to be package-private but accessible from parent-package.  But Java ... meh
+	public void setStates(Map<Hash, StateObject> states)
+	{
+		Objects.requireNonNull(states, "States for atom "+getHash()+" is null");
+		this.states = new LinkedHashMap<Hash, StateObject>(states);
 	}
 }

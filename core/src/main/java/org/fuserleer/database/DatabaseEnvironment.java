@@ -14,6 +14,7 @@ import org.fuserleer.Context;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 
+import com.ibm.icu.util.StringTrieBuilder.Option;
 import com.sleepycat.je.Database;
 import com.sleepycat.je.DatabaseConfig;
 import com.sleepycat.je.DatabaseEntry;
@@ -36,7 +37,7 @@ public final class DatabaseEnvironment
 	private Environment	environment = null;
 	private Map<Class<?>, DatabaseStore> 	databases = new HashMap<>();
 
-    public DatabaseEnvironment(Context context, File home) 
+    public DatabaseEnvironment(final Context context, final File home) 
     { 
     	this.context = Objects.requireNonNull(context, "Context is null");
     	
@@ -134,43 +135,52 @@ public final class DatabaseEnvironment
         }
 	}
 
-	public void register(DatabaseStore database)
+	public void register(final DatabaseStore database)
 	{
+		Objects.requireNonNull(database, "Database to register is null");
+		
 		if (this.databases.containsKey(database.getClass()) == false)
 			this.databases.put(database.getClass(), database);
 	}
 
-	public boolean isRegistered(DatabaseStore database) 
+	public boolean isRegistered(final DatabaseStore database) 
 	{
+		Objects.requireNonNull(database, "Database is null");
 		return this.databases.containsKey(database.getClass());
 	}
 
-	public void deregister(DatabaseStore database)
+	public void deregister(final DatabaseStore database)
 	{
+		Objects.requireNonNull(database, "Database to deregister is null");
 		if (this.databases.containsKey(database.getClass()))
 			this.databases.remove(database.getClass());
 	}
 
-	public OperationStatus put(Transaction transaction, String resource, String key, byte[] value)
+	public OperationStatus put(final Transaction transaction, final String resource, final String key, final byte[] value)
 	{
 		return this.put(transaction, resource, new DatabaseEntry(key.getBytes()), new DatabaseEntry(value));
 	}
 
-	public OperationStatus put(Transaction transaction, String resource, String key, DatabaseEntry value)
+	public OperationStatus put(final Transaction transaction, final String resource, final String key, final DatabaseEntry value)
 	{
 		return this.put(transaction, resource, new DatabaseEntry(key.getBytes()), value);
 	}
 
-	public OperationStatus put(Transaction transaction, String resource, DatabaseEntry key, DatabaseEntry value)
+	public OperationStatus put(final Transaction transaction, final String resource, final DatabaseEntry key, final DatabaseEntry value)
 	{
-		if (resource == null || resource.length() == 0)
-			throw new IllegalArgumentException("Resource can not be null or empty");
+		Objects.requireNonNull(resource, "Resource is null");
+		if (resource.length() == 0)
+			throw new IllegalArgumentException("Resource length is 0");
 
-		if (key == null || key.getData() == null || key.getData().length == 0)
-			throw new IllegalArgumentException("Key can not be null or empty");
+		Objects.requireNonNull(key, "Key is null");
+		Objects.requireNonNull(key.getData(), "Key data is null");
+		if (key.getData().length == 0)
+			throw new IllegalArgumentException("Key data length is 0");
 
-		if (value == null || value.getData() == null || value.getData().length == 0)
-			throw new IllegalArgumentException("Value can not be null or empty");
+		Objects.requireNonNull(value, "Value is null");
+		Objects.requireNonNull(value.getData(), "Value data is null");
+		if (value.getData().length == 0)
+			throw new IllegalArgumentException("Value data length is 0");
 
 		// Create a key specific to the database //
 		key.setData(Arrays.concatenate(resource.getBytes(StandardCharsets.UTF_8), key.getData()));
@@ -178,7 +188,7 @@ public final class DatabaseEnvironment
 		return this.metaDatabase.put(transaction, key, value);
 	}
 
-	public byte[] get(String resource, String key)
+	public byte[] get(final String resource, final String key)
 	{
 		DatabaseEntry value = new DatabaseEntry();
 
@@ -188,21 +198,21 @@ public final class DatabaseEnvironment
 		return null;
 	}
 
-	public OperationStatus get(String resource, String key, DatabaseEntry value)
+	public OperationStatus get(final String resource, final String key, final DatabaseEntry value)
 	{
 		return this.get(resource, new DatabaseEntry(key.getBytes()), value);
 	}
 
-	public OperationStatus get(String resource, DatabaseEntry key, DatabaseEntry value)
+	public OperationStatus get(final String resource, final DatabaseEntry key, final DatabaseEntry value)
 	{
-		if (resource == null || resource.length() == 0)
-			throw new IllegalArgumentException("Resource can not be null or empty");
+		Objects.requireNonNull(resource, "Resource is null");
+		if (resource.length() == 0)
+			throw new IllegalArgumentException("Resource length is 0");
 
-		if (key == null || key.getData() == null || key.getData().length == 0)
-			throw new IllegalArgumentException("Key can not be null or empty");
-
-		if (value == null)
-			throw new IllegalArgumentException("Value can not be null");
+		Objects.requireNonNull(key, "Key is null");
+		Objects.requireNonNull(key.getData(), "Key data is null");
+		if (key.getData().length == 0)
+			throw new IllegalArgumentException("Key data length is 0");
 
 		// Create a key specific to the database //
 		key.setData(Arrays.concatenate(resource.getBytes(StandardCharsets.UTF_8), key.getData()));
@@ -210,22 +220,22 @@ public final class DatabaseEnvironment
 		return this.metaDatabase.get(null, key, value, LockMode.READ_UNCOMMITTED);
 	}
 	
-	public Transaction beginTransaction(Transaction parent, TransactionConfig config)
+	public Transaction beginTransaction(final Transaction parent, final TransactionConfig config)
 	{
 		return this.environment.beginTransaction(parent, config);
 	}
 	
-	public Database openDatabase(Transaction transaction, String name, DatabaseConfig config)
+	public Database openDatabase(final Transaction transaction, final String name, final DatabaseConfig config)
 	{
 		return this.environment.openDatabase(transaction, name, config);
 	}
 
-	public SecondaryDatabase openSecondaryDatabase(Transaction transaction, String name, Database database, SecondaryConfig config)
+	public SecondaryDatabase openSecondaryDatabase(final Transaction transaction, final String name, final Database database, final SecondaryConfig config)
 	{
 		return this.environment.openSecondaryDatabase(transaction, name, database, config);
 	}
 
-	public long truncateDatabase(Transaction transaction, String name, boolean count)
+	public long truncateDatabase(final Transaction transaction, final String name, final boolean count)
 	{
 		return this.environment.truncateDatabase(transaction, name, count);
 	}

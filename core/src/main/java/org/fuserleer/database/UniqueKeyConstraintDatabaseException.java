@@ -1,5 +1,6 @@
 package org.fuserleer.database;
 
+import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -15,9 +16,9 @@ public class UniqueKeyConstraintDatabaseException extends DatabaseException
 	private final String database;
 	private final DatabaseEntry key;
 
-	public UniqueKeyConstraintDatabaseException(String database, DatabaseEntry key)
+	public UniqueKeyConstraintDatabaseException(final String database, final DatabaseEntry key)
 	{
-		super("Unique key "+toString(key)+" violates constraints in database "+database);
+		super("Unique key "+toString(Objects.requireNonNull(key, "Database entry key is null"))+" violates constraints in database "+Objects.requireNonNull(database, "Database is null"));
 
 		this.key = key;
 		this.database = database;
@@ -33,9 +34,9 @@ public class UniqueKeyConstraintDatabaseException extends DatabaseException
 		return this.key;
 	}
 
-	private static String toString(DatabaseEntry de) 
+	private static String toString(final DatabaseEntry key) 
 	{
-		byte[] bytes = de.getData();
+		byte[] bytes = key.getData();
 		return IntStream.range(0, bytes.length).map(i -> bytes[i] & 0xFF).mapToObj(i -> String.format("%02X", i)).collect(Collectors.joining(" "));
 	}
 }

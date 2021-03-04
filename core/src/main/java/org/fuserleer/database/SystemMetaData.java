@@ -32,13 +32,14 @@ import com.sleepycat.je.TransactionConfig;
 public final class SystemMetaData extends DatabaseStore implements Service
 {
 	private static final Logger log = Logging.getLogger();
+	private static final int MAX_LENGTH = 256;
 
 	private final Context context;
 	private Map<String, Object> metaDataCache = new ConcurrentHashMap<>();
 	private Database metaDataDB = null;
 	private Future<?> flush;
 	
-	public SystemMetaData(Context context)
+	public SystemMetaData(final Context context)
 	{
 		super(Objects.requireNonNull(context).getDatabaseEnvironment());
 		this.context = context;
@@ -175,13 +176,31 @@ public final class SystemMetaData extends DatabaseStore implements Service
 	}
 
 	// SYSTEM METRICS //
-	public boolean has(String name)
+	public boolean has(final String name)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+		
 		return this.metaDataCache.containsKey(name);
 	}
 
-	public String get(String name, String option)
+	public String get(final String name, final String option)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
+		Objects.requireNonNull(option, "Option is null");
+		if (option.length() == 0)
+			throw new IllegalArgumentException("Option length is zero");
+		if (option.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Option length is greater than "+MAX_LENGTH);
+
 		Object value = this.metaDataCache.get(name);
 
 		if (value == null)
@@ -190,8 +209,14 @@ public final class SystemMetaData extends DatabaseStore implements Service
 		return asString(value);
 	}
 
-	public long get(String name, long option)
+	public long get(final String name, final long option)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
 		Object value = this.metaDataCache.get(name);
 
 		if (value == null)
@@ -200,8 +225,20 @@ public final class SystemMetaData extends DatabaseStore implements Service
 		return asLong(value);
 	}
 
-	public byte[] get(String name, byte[] option)
+	public byte[] get(final String name, final byte[] option)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
+		Objects.requireNonNull(option, "Option is null");
+		if (option.length == 0)
+			throw new IllegalArgumentException("Option length is zero");
+		if (option.length > MAX_LENGTH)
+			throw new IllegalArgumentException("Option length is greater than "+MAX_LENGTH);
+
 		Object value = this.metaDataCache.get(name);
 
 		if (value == null)
@@ -210,51 +247,104 @@ public final class SystemMetaData extends DatabaseStore implements Service
 		return asBytes(value);
 	}
 
-
-	public long increment(String name)
+	public long increment(final String name)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
 		return (long) this.metaDataCache.compute(name, (k, v) -> {
 			long value = (long) this.metaDataCache.getOrDefault(k, 0l) + 1;
 			return value;
 		});
 	}
 
-	public long increment(String name, long increment)
+	public long increment(final String name, final long increment)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
 		return (long) this.metaDataCache.compute(name, (k, v) -> {
 			long value = (long) this.metaDataCache.getOrDefault(k, 0l) + increment;
 			return value;
 		});
 	}
 
-	public long decrement(String name)
+	public long decrement(final String name)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
 		return (long) this.metaDataCache.compute(name, (k, v) -> {
 			long value = (long) this.metaDataCache.getOrDefault(k, 0l) - 1;
 			return value;
 		});
 	}
 
-	public long decrement(String name, long decrement)
+	public long decrement(final String name, long decrement)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
 		return (long) this.metaDataCache.compute(name, (k, v) -> {
 			long value = (long) this.metaDataCache.getOrDefault(k, 0l) - decrement;
 			return value;
 		});
 	}
 
-	public void put(String name, String value)
+	public void put(final String name, final String value)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
+		Objects.requireNonNull(value, "Value is null");
+		if (value.length() == 0)
+			throw new IllegalArgumentException("Value length is zero");
+		if (value.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Value length is greater than "+MAX_LENGTH);
+
 		this.metaDataCache.put(name, value);
 	}
 
-	public void put(String name, long value)
+	public void put(final String name, final long value)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
 		this.metaDataCache.put(name, value);
 	}
 
-	public void put(String name, byte[] value)
+	public void put(final String name, final byte[] value)
 	{
+		Objects.requireNonNull(name, "Name is null");
+		if (name.length() == 0)
+			throw new IllegalArgumentException("Name length is zero");
+		if (name.length() > MAX_LENGTH)
+			throw new IllegalArgumentException("Name length is greater than "+MAX_LENGTH);
+
+		Objects.requireNonNull(value, "Value is null");
+		if (value.length == 0)
+			throw new IllegalArgumentException("Value length is zero");
+		if (value.length > MAX_LENGTH)
+			throw new IllegalArgumentException("Value length is greater than "+MAX_LENGTH);
+
 		// Take a defensive copy
 		this.metaDataCache.put(name, value.clone());
 	}
@@ -300,18 +390,21 @@ public final class SystemMetaData extends DatabaseStore implements Service
 		}
 	}
 
-	private static String asString(Object value)
+	private static String asString(final Object value)
 	{
+		Objects.requireNonNull(value, "Value is null");
 		return (String) value;
 	}
 
-	private static long asLong(Object value)
+	private static long asLong(final Object value)
 	{
+		Objects.requireNonNull(value, "Value is null");
 		return ((Long) value).longValue();
 	}
 
-	private static byte[] asBytes(Object value)
+	private static byte[] asBytes(final Object value)
 	{
+		Objects.requireNonNull(value, "Value is null");
 		return (byte[]) value;
 	}
 }

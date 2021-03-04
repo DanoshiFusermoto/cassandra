@@ -13,11 +13,11 @@ public abstract class DatabaseStore implements Service // extends AbstractServic
 
 	private final DatabaseEnvironment environment;
 	
-	public DatabaseStore(DatabaseEnvironment environment)
+	public DatabaseStore(final DatabaseEnvironment environment)
 	{
 		super();
 		
-		this.environment = Objects.requireNonNull(environment);
+		this.environment = Objects.requireNonNull(environment, "Database environment is null");
 
 		if (environment.isRegistered(this) == false)
 			environment.register(this);

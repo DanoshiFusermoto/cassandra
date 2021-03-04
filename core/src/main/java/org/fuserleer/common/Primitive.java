@@ -1,6 +1,7 @@
 package org.fuserleer.common;
 
-public interface Primitive
-{
+import org.fuserleer.crypto.Hashable;
 
+public interface Primitive extends Hashable
+{
 }

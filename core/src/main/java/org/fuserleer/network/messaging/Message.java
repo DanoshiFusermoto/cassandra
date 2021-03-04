@@ -30,15 +30,13 @@ public abstract class Message extends BasicObject
 {
 	private static final Logger messaginglog = Logging.getLogger("messaging");
 
-	public static final int MAX_MESSAGE_SIZE = (4096*1024);
+	public static final int MAX_MESSAGE_SIZE = 1<<22;  // 4MB max message size
 
 	private static final AtomicLong nextSeq = new AtomicLong(0);
 	
 	public static Message parse(InputStream inputStream) throws IOException, BanException, Exception
 	{
 		DataInputStream dataInputStream = new DataInputStream(inputStream);
-
-//		WireIO.Reader reader = new WireIO.Reader(inputStream);
 
 		// Save the data items so that we can pre-calculate the hash //
 		boolean compressed = dataInputStream.readBoolean();
@@ -49,18 +47,20 @@ public abstract class Message extends BasicObject
 		while(total != length && (read = dataInputStream.read(bytes, total, length-total)) != -1)
 			total += read;	
 		
+		if (bytes.length > Message.MAX_MESSAGE_SIZE)
+			throw new IOException("Message of size "+bytes.length+" is too large");
+		
 		if (compressed == true)
 			bytes = Snappy.uncompress(bytes);
-		
+	
 		Message message = Serialization.getInstance().fromDson(bytes, Message.class);
 		if (message.getMagic() != Universe.getDefault().getMagic())
 			throw new BanException("Wrong magic for this deployment");
 
 		message.setDirection(Direction.INBOUND);
 		message.size = length + 4 + 1;
-
-//		if (message.getSignature() == null)
-//			throw new BanException("Message "+message.getCommand()+" doesnt not include signature");
+		if (message.getSignature() == null)
+			throw new BanException("Message "+message.getCommand()+" doesnt not include signature");
 
 		return message;
 	}
@@ -174,7 +174,7 @@ public abstract class Message extends BasicObject
 		
 		byte[] bytes = Serialization.getInstance().toDson(this, Output.WIRE);
 		bytes = Snappy.compress(bytes);
-		ByteArrayOutputStream baos = new ByteArrayOutputStream(bytes.length+4);
+		ByteArrayOutputStream baos = new ByteArrayOutputStream(bytes.length+5);
 		DataOutputStream dos = new DataOutputStream(baos);
 		dos.writeBoolean(true);
 		dos.writeInt(bytes.length);

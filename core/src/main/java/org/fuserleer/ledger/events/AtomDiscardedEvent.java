@@ -1,19 +1,23 @@
 package org.fuserleer.ledger.events;
 
-import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.CommitStatus;
+import org.fuserleer.ledger.PendingAtom;
 
-public class AtomDiscardedEvent extends AtomEvent
+public final class AtomDiscardedEvent extends AtomEvent
 {
 	private final String message;
 	
-	public AtomDiscardedEvent(Atom atom)
+	public AtomDiscardedEvent(final PendingAtom pendingAtom)
 	{
-		this(atom, null);
+		this(pendingAtom, null);
 	}
 	
-	public AtomDiscardedEvent(Atom atom, String message)
+	public AtomDiscardedEvent(final PendingAtom pendingAtom, final String message)
 	{
-		super(atom);
+		super(pendingAtom);
+		
+		if (pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true)
+			throw new IllegalStateException("Can not discard pending atom "+pendingAtom.getHash()+" with status "+pendingAtom.getStatus());
 		
 		this.message = message;
 	}

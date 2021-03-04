@@ -1,11 +1,14 @@
 package org.fuserleer.ledger.events;
 
-import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.PendingAtom;
 
 public final class AtomCommitTimeoutEvent extends AtomEvent
 {
-	public AtomCommitTimeoutEvent(Atom atom)
+	public AtomCommitTimeoutEvent(final PendingAtom pendingAtom)
 	{
-		super(atom);
+		super(pendingAtom);
+		
+		if (pendingAtom.getBlock() == null && pendingAtom.getCertificates().isEmpty() == false)
+			throw new IllegalStateException("Can not timeout "+pendingAtom.getHash()+" which has state certificates before being included in a block");
 	}
 }

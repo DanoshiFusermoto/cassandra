@@ -9,7 +9,7 @@ abstract class CertificateEvent<T extends Certificate> implements Event
 {
 	private final T certificate;
 	
-	CertificateEvent(T certificate)
+	CertificateEvent(final T certificate)
 	{
 		this.certificate = Objects.requireNonNull(certificate);
 	}

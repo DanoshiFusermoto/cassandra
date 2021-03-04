@@ -1,11 +1,11 @@
 package org.fuserleer.ledger.events;
 
-import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.PendingAtom;
 
 public final class AtomPersistedEvent extends AtomEvent 
 {
-	public AtomPersistedEvent(Atom atom)
+	public AtomPersistedEvent(final PendingAtom pendingAtom)
 	{
-		super(atom);
+		super(pendingAtom);
 	}
 }

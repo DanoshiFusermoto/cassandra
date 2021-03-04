@@ -19,22 +19,20 @@ public class InsufficientBalanceException extends ValidationException
 	private final Hash token;
 	private final UInt256 quantity;
 	
-	public InsufficientBalanceException(String message, ECPublicKey spender, Hash token, UInt256 quantity, ECPublicKey receiver)
+	public InsufficientBalanceException(final ECPublicKey spender, final Hash token, final UInt256 quantity, final ECPublicKey receiver)
+	{
+		this("Insufficient balance to spend "+quantity+":"+token+" to "+receiver+" from "+spender, spender, token, quantity, receiver);
+	}
+
+	public InsufficientBalanceException(final String message, final ECPublicKey spender, final Hash token, final UInt256 quantity, final ECPublicKey receiver)
 	{
 		super(message);
 
-		this.spender = Objects.requireNonNull(spender);
-		this.quantity = Objects.requireNonNull(quantity);
-		this.token = Objects.requireNonNull(token);
-		this.receiver = Objects.requireNonNull(receiver);
-		
-		if (token.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Token is ZERO");
-	}
-
-	public InsufficientBalanceException(ECPublicKey spender, Hash token, UInt256 quantity, ECPublicKey receiver)
-	{
-		this("Insufficient balance to spend "+quantity+":"+token+" to "+receiver+" from "+spender, spender, token, quantity, receiver);
+		this.spender = Objects.requireNonNull(spender, "Spender is null");
+		this.quantity = Objects.requireNonNull(quantity, "Quantity is null");
+		this.token = Objects.requireNonNull(token, "Token is null");
+		this.receiver = Objects.requireNonNull(receiver, "Receiver is null");
+		Hash.notZero(this.token, "Token is ZERO");
 	}
 
 	public ECPublicKey getSpender() 

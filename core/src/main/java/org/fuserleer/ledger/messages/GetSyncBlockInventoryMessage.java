@@ -27,8 +27,7 @@ public final class GetSyncBlockInventoryMessage extends Message
 		this();
 		
 		this.head = Objects.requireNonNull(head, "Block head hash is null");
-		if (head.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Head hash is ZERO");
+		Hash.notZero(head, "Head hash is ZERO");
 	}
 	
 	public Hash getHead()

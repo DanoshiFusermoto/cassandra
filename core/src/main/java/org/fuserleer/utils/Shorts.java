@@ -1,5 +1,7 @@
 package org.fuserleer.utils;
 
+import java.util.Objects;
+
 public final class Shorts
 {
 	private Shorts() {
@@ -27,6 +29,16 @@ public final class Shorts
 				value = (short) (value << 8);
 		}
 
+		return value;
+	}
+
+	public static long fromByteArray(byte[] bytes, int offset) {
+		Objects.requireNonNull(bytes, "bytes is null for 'long' conversion");
+		long value = 0;
+		for (int b = 0; b < Short.BYTES; b++) {
+			value <<= 8;
+			value |= bytes[offset + b] & 0xFFL;
+		}
 		return value;
 	}
 }

@@ -6,6 +6,7 @@ import java.lang.reflect.Modifier;
 import java.security.Security;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.StringTokenizer;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.Configuration;
@@ -58,7 +59,7 @@ public class Hackation
 			
 			if (Boolean.getBoolean("console") == true)
 				new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Contexts(),
-												   new org.fuserleer.console.Atoms(), new org.fuserleer.console.Spam());
+												   new org.fuserleer.console.Atoms(), new org.fuserleer.console.Spam(), new org.fuserleer.console.Twitter());
 
 		}
 		catch (Throwable t)
@@ -80,7 +81,16 @@ public class Hackation
 
 		// CONTEXTS //
 		List<Context> contexts = new ArrayList<Context>();
-		if (Configuration.getDefault().getCommandLine().hasOption("contexts") == false)
+		if (Configuration.getDefault().has("contexts.definitions") == true)
+		{
+			StringTokenizer tokenizer = new StringTokenizer(Configuration.getDefault().get("contexts.definitions"), ",");
+			while(tokenizer.hasMoreTokens() == true)
+			{
+				String name = tokenizer.nextToken();
+				contexts.add(Context.createAndStart(name.trim().toLowerCase(), Configuration.getDefault()));
+			}
+		}
+		else if (Configuration.getDefault().getCommandLine().hasOption("contexts") == false)
 			contexts.add(Context.createAndStart());
 		else
 			contexts.addAll(Context.createAndStart(Integer.parseInt(Configuration.getDefault().getCommandLine().getOptionValue("contexts", "1")), "node", Configuration.getDefault()));

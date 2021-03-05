@@ -50,6 +50,10 @@ public final class Atom extends BasicObject implements Primitive // TODO not sur
 	{
 		this();
 		
+		Objects.requireNonNull(particles, "Particles is null");
+		if (particles.length == 0)
+			throw new IllegalArgumentException("Particles is empty");
+		
 		Set<Particle> verifiedNonDuplicates = new LinkedHashSet<Particle>();
 		for (int p = 0 ; p < Objects.requireNonNull(particles).length ; p++)
 		{
@@ -64,7 +68,8 @@ public final class Atom extends BasicObject implements Primitive // TODO not sur
 	{
 		this();
 		
-		if (Objects.requireNonNull(particles).isEmpty() == true)
+		Objects.requireNonNull(particles, "Particles is null");
+		if (particles.isEmpty() == true)
 			throw new IllegalArgumentException("Particles is empty");
 		
 		Set<Particle> verifiedNonDuplicates = new LinkedHashSet<Particle>();

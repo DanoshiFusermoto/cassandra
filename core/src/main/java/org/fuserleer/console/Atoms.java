@@ -4,7 +4,6 @@ import java.io.PrintStream;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
-import org.fuserleer.API;
 import org.fuserleer.Context;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.ledger.atoms.Atom;

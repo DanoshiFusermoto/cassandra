@@ -3,18 +3,20 @@ package org.fuserleer.console;
 import java.io.PrintStream;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
+import org.fuserleer.ledger.ShardMapper;
+import org.fuserleer.network.discovery.OutboundShardDiscoveryFilter;
+import org.fuserleer.network.discovery.OutboundSyncDiscoveryFilter;
 import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.filters.AllPeersFilter;
-import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
+import org.fuserleer.network.peers.filters.StandardPeerFilter;
 
 public class Network extends Function
 {
@@ -37,8 +39,7 @@ public class Network extends Function
 		{
 			if (commandLine.getOptionValue("disconnect") == null)
 			{
-				List<ConnectedPeer> connectedPeers = context.getNetwork().get(PeerState.CONNECTED, PeerState.CONNECTING);
-				for (ConnectedPeer connectedPeer : connectedPeers)
+				for (ConnectedPeer connectedPeer : context.getNetwork().get(StandardPeerFilter.build(context).setStates(PeerState.CONNECTED, PeerState.CONNECTING)))
 				{
 					connectedPeer.disconnect("Forced disconnect");
 					printStream.println("Disconnecting "+connectedPeer+" @ "+connectedPeer.getNode().getHead());
@@ -51,15 +52,29 @@ public class Network extends Function
 		}
 		else if (commandLine.hasOption("best") == true)
 		{
-			Collection<Peer> bestPeers = new RemoteLedgerDiscovery(context).discover(new AllPeersFilter());
+			Collection<Peer> bestPeers = context.getNetwork().getPeerStore().get(new AllPeersFilter());
 			for (Peer bestPeer : bestPeers)
 				printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
 
-			printStream.println("-- Filtered ---");
-			OutboundTCPPeerFilter outboundTCPPeerFilter = new OutboundTCPPeerFilter(context, Collections.singleton(context.getLedger().getShardGroup(context.getNode().getIdentity())));
-			bestPeers = new RemoteLedgerDiscovery(context).discover(outboundTCPPeerFilter);
+			long syncShardGroup = ShardMapper.toShardGroup(context.getNode().getIdentity(), context.getLedger().numShardGroups());
+			printStream.println("-- Filtered Sync "+syncShardGroup+" ---");
+			OutboundSyncDiscoveryFilter outboundSyncDiscoveryFilter = new OutboundSyncDiscoveryFilter(context, Collections.singleton(syncShardGroup));
+			bestPeers = new RemoteLedgerDiscovery(context).discover(outboundSyncDiscoveryFilter, Integer.MAX_VALUE);
 			for (Peer bestPeer : bestPeers)
 				printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
+
+			for (long sg = 0 ; sg < context.getLedger().numShardGroups(context.getLedger().getHead().getHeight()) ; sg++)
+			{
+				long shardGroup = sg;
+				if (shardGroup == syncShardGroup)
+					continue;
+
+				printStream.println("-- Filtered Shard "+sg+" ---");
+				OutboundShardDiscoveryFilter outboundShardDiscoveryFilter = new OutboundShardDiscoveryFilter(context, Collections.singleton(shardGroup));
+				bestPeers = new RemoteLedgerDiscovery(context).discover(outboundShardDiscoveryFilter, Integer.MAX_VALUE);
+				for (Peer bestPeer : bestPeers)
+					printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
+			}
 		}
 		else if (commandLine.hasOption("known") == true)
 		{
@@ -70,10 +85,21 @@ public class Network extends Function
 		}
 		else
 		{
-			printStream.println("Connected:");
-			for (ConnectedPeer peer : context.getNetwork().get(PeerState.CONNECTED))
-				printStream.println(peer.toString()+": "+peer.getNode().getHead().toString());
+			long shardGroup = ShardMapper.toShardGroup(context.getNode().getIdentity(), context.getLedger().numShardGroups());
+			printStream.println("Sync:");
+			for (ConnectedPeer peer : context.getNetwork().get(StandardPeerFilter.build(context).setStates(PeerState.CONNECTED)))
+			{
+				if (ShardMapper.toShardGroup(peer.getNode().getIdentity(), context.getLedger().numShardGroups()) == shardGroup)
+					printStream.println(peer.toString()+": "+peer.getNode().getHead().toString());
+			}
 	
+			printStream.println("Shard:");
+			for (ConnectedPeer peer : context.getNetwork().get(StandardPeerFilter.build(context).setStates(PeerState.CONNECTED)))
+			{
+				if (ShardMapper.toShardGroup(peer.getNode().getIdentity(), context.getLedger().numShardGroups()) != shardGroup)
+					printStream.println(ShardMapper.toShardGroup(peer.getNode().getIdentity(), context.getLedger().numShardGroups())+" "+peer.toString()+": "+peer.getNode().getHead().toString());
+			}
+
 			printStream.println("Bandwidth:");
 			printStream.println("In bytes: "+context.getNetwork().getMessaging().getBytesIn());
 			printStream.println("Out bytes: "+context.getNetwork().getMessaging().getBytesOut());

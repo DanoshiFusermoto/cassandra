@@ -120,9 +120,17 @@ public class GossipHandler implements Service
 									Multimap<Long, Hash> toBroadcast = HashMultimap.create();
 									for (Broadcast broadcast : broadcastQueue)
 									{
-										if (broadcast.getShardGroups().isEmpty() == true)
-											broadcast.setShardGroups(filter.filter(broadcast.getPrimitive()));
-
+										try
+										{
+											if (broadcast.getShardGroups().isEmpty() == true)
+												broadcast.setShardGroups(filter.filter(broadcast.getPrimitive()));
+										}
+										catch (Exception ex)
+										{
+											gossipLog.error(GossipHandler.this.context.getName()+": Filter for "+type+" failed on "+broadcast.getPrimitive(), ex);
+											continue;
+										}
+											
 										for(long shardGroup : broadcast.getShardGroups())
 											toBroadcast.put(shardGroup, broadcast.getPrimitive().getHash());
 									}

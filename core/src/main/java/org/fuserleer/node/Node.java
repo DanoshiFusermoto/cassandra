@@ -18,7 +18,7 @@ import com.google.common.collect.ImmutableMap;
 @SerializerId2("node")
 public class Node extends BasicObject
 {
-	public static final int OOS_TRIGGER_LIMIT = 6;
+	public static final int OOS_TRIGGER_LIMIT = 60; // TODO ~5 minutes of latency if block target is ~5 seconds.  Sufficient for alpha testing, but need smarter sync trigger.
 
 	private String 	agent;
 
@@ -26,9 +26,17 @@ public class Node extends BasicObject
 	
 	private int  	protocolVersion;
 
-	@JsonProperty("port")
+	@JsonProperty("network_port")
 	@DsonOutput(Output.ALL)
-	private int 	port;
+	private int 	networkPort;
+
+	@JsonProperty("api_port")
+	@DsonOutput(Output.ALL)
+	private int	apiPort;
+
+	@JsonProperty("websocket_port")
+	@DsonOutput(Output.ALL)
+	private int	websocketPort;
 
 	@JsonProperty("head")
 	@DsonOutput(Output.ALL)
@@ -51,7 +59,9 @@ public class Node extends BasicObject
 		this.agentVersion = 0;
 		this.head = null;
 		this.protocolVersion = 0;
-		this.port = 0;
+		this.networkPort = 0;
+		this.websocketPort = 0;
+		this.apiPort = 0;
 		this.identity = null;
 		this.synced = false;
 	}
@@ -66,12 +76,14 @@ public class Node extends BasicObject
  		this.agentVersion = node.getAgentVersion();
  		this.head = node.getHead();
 		this.protocolVersion = node.getProtocolVersion();
-		this.port = node.getPort();
+		this.networkPort = node.getNetworkPort();
+		this.apiPort = node.getWebsocketPort();
+		this.websocketPort = node.getAPIPort();
 		this.identity = node.getIdentity();
 		this.synced = node.isSynced();
 	}
 
-	public Node(ECPublicKey identity, BlockHeader head, String agent, int agentVersion, int protocolVersion, int port, boolean synced)
+	public Node(ECPublicKey identity, BlockHeader head, String agent, int agentVersion, int protocolVersion, int networkPort, int apiPort, int websocketPort, boolean synced)
 	{
 		this();
 
@@ -85,12 +97,20 @@ public class Node extends BasicObject
 		if (protocolVersion < 0)
 			throw new IllegalArgumentException("Protocol version is negative");
 		
-		if (port <= 0 || port > 65535)
-			throw new IllegalArgumentException("Port is invalid");
+		if (networkPort <= 0 || networkPort > 65535)
+			throw new IllegalArgumentException("Network port is invalid");
 		
+		if (apiPort <= 0 || apiPort > 65535)
+			throw new IllegalArgumentException("API port is invalid");
+		
+		if (websocketPort <= 0 || websocketPort > 65535)
+			throw new IllegalArgumentException("Websocket port is invalid");
+
 		this.agentVersion = agentVersion;
 		this.protocolVersion = protocolVersion;
-		this.port = port;
+		this.networkPort = networkPort;
+		this.apiPort = apiPort;
+		this.websocketPort = websocketPort;
 		this.synced = synced;
 	}
 
@@ -109,17 +129,43 @@ public class Node extends BasicObject
 		return this.protocolVersion;
 	}
 
-	public int getPort()
+	public int getNetworkPort()
 	{
-		return port;
+		return this.networkPort;
 	}
 
-	void setPort(int port)
+	void setNetworkPort(int port)
 	{
 		if (port <= 0 || port > 65535)
-			throw new IllegalArgumentException("Port is invalid");
+			throw new IllegalArgumentException("Network port is invalid");
 
-		this.port = port;
+		this.networkPort = port;
+	}
+
+	public int getAPIPort()
+	{
+		return this.apiPort;
+	}
+
+	void setAPIPort(int port)
+	{
+		if (port <= 0 || port > 65535)
+			throw new IllegalArgumentException("API port is invalid");
+
+		this.apiPort = port;
+	}
+
+	public int getWebsocketPort()
+	{
+		return this.websocketPort;
+	}
+
+	void setWebsocketPort(int websocketPort)
+	{
+		if (websocketPort <= 0 || websocketPort > 65535)
+			throw new IllegalArgumentException("Websocket port is invalid");
+
+		this.websocketPort = websocketPort;
 	}
 
 	public BlockHeader getHead()

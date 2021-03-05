@@ -5,6 +5,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Objects;
 
+import org.fuserleer.API;
 import org.fuserleer.Configuration;
 import org.fuserleer.Universe;
 import org.fuserleer.common.Agent;
@@ -15,6 +16,7 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.Polymorphic;
 import org.fuserleer.serialization.SerializerId2;
+import org.java_websocket.WebSocketImpl;
 
 @SerializerId2("node")
 public final class LocalNode extends Node implements Polymorphic
@@ -51,19 +53,23 @@ public final class LocalNode extends Node implements Polymorphic
 			}
 		}
 		
-		return new LocalNode(nodeKey, configuration.get("network.port", Universe.getDefault().getPort()), Universe.getDefault().getGenesis().getHeader(), Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
+		return new LocalNode(nodeKey, configuration.get("network.port", Universe.getDefault().getPort()), 
+									  configuration.get("api.port", API.DEFAULT_PORT),
+									  configuration.get("websocket.port", WebSocketImpl.DEFAULT_PORT),
+									  Universe.getDefault().getGenesis().getHeader(), 
+									  Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
 	}
 	
 	private ECKeyPair key;
 	
-	public LocalNode(ECKeyPair key, int port, BlockHeader block)
+	public LocalNode(ECKeyPair key, int networkPort, int apiPort, int websocketPort, BlockHeader block)
 	{
-		this(key, port, block, Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
+		this(key, networkPort, apiPort, websocketPort, block, Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
 	}
 
-	public LocalNode(ECKeyPair key, int port, BlockHeader block, String agent, int agentVersion, int protocolVersion)
+	public LocalNode(ECKeyPair key, int networkPort, int apiPort, int websocketPort, BlockHeader block, String agent, int agentVersion, int protocolVersion)
 	{
-		super(Objects.requireNonNull(key, "Key is null").getPublicKey(), block, agent, agentVersion, protocolVersion, port, false);
+		super(Objects.requireNonNull(key, "Key is null").getPublicKey(), block, agent, agentVersion, protocolVersion, networkPort, websocketPort, apiPort, false);
 		
 		this.key = key;
 	}
@@ -75,7 +81,9 @@ public final class LocalNode extends Node implements Polymorphic
 			throw new IllegalArgumentException("Persisted node key does not match "+this.key);
 		
 		setHead(persisted.getHead());
-		setPort(persisted.getPort());
+		setNetworkPort(persisted.getNetworkPort());
+		setAPIPort(persisted.getAPIPort());
+		setWebsocketPort(persisted.getWebsocketPort());
 		setSynced(false);
 	}
 

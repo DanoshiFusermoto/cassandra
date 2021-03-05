@@ -18,6 +18,9 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
+import org.fuserleer.utils.Ints;
+import org.fuserleer.utils.Longs;
+
 public class MappedBlockingQueue<K, V> 
 {
 	private final LinkedHashMap<K, V> map;
@@ -39,6 +42,8 @@ public class MappedBlockingQueue<K, V>
 
 	public MappedBlockingQueue(int capacity) 
 	{
+		Ints.greaterThan(capacity, 0, "Capacity is less than 1");
+		
 		this.map = new LinkedHashMap<K, V>(capacity);
 		this.lock = new ReentrantReadWriteLock(true);
 		this.notEmpty = this.lock.writeLock().newCondition();
@@ -96,11 +101,11 @@ public class MappedBlockingQueue<K, V>
         }
     }
 	
-	public int drainTo(Collection<? super V> collection)
+	public int drainTo(final Collection<? super V> collection)
 	{
-		Objects.requireNonNull(collection);
+		Objects.requireNonNull(collection, "Collection to drain to is null");
 		if (collection == this)
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Can not drain to self");
 		
         this.lock.writeLock().lock();
 		try
@@ -130,14 +135,13 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public int drainTo(Collection<? super V> collection, int maxElements)
+	public int drainTo(final Collection<? super V> collection, final int maxElements)
 	{
-		Objects.requireNonNull(collection);
+		Objects.requireNonNull(collection, "Collection to drain to is null");
 		if (collection == this)
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Can not drain to self");
 		
-        if (maxElements <= 0)
-            return 0;
+		Ints.greaterThan(maxElements, 0, "Max elements is less than 1");
 
 		this.lock.writeLock().lock();
 		try
@@ -166,11 +170,11 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public int drainTo(Map<? super K, ? super V> collection)
+	public int drainTo(final Map<? super K, ? super V> collection)
 	{
-		Objects.requireNonNull(collection);
+		Objects.requireNonNull(collection, "Map to drain to is null");
 		if (collection == this)
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Can not drain to self");
 		
         this.lock.writeLock().lock();
 		try
@@ -200,14 +204,13 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public int drainTo(Map<? super K, ? super V> collection, int maxElements)
+	public int drainTo(final Map<? super K, ? super V> collection, final int maxElements)
 	{
-		Objects.requireNonNull(collection);
+		Objects.requireNonNull(collection, "Map to drain to is null");
 		if (collection == this)
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("Can not drain to self");
 		
-        if (maxElements <= 0)
-            return 0;
+		Ints.greaterThan(maxElements, 0, "Max elements is less than 1");
 
 		this.lock.writeLock().lock();
 		try
@@ -236,10 +239,10 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public void put(K key, V value)
+	public void put(final K key, final V value)
 	{
-		Objects.requireNonNull(key);
-		Objects.requireNonNull(value);
+		Objects.requireNonNull(key, "Key to put is null");
+		Objects.requireNonNull(value, "Value to put is null");
 		
 		this.lock.writeLock().lock();
 		try
@@ -264,10 +267,45 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 	
-	@SuppressWarnings("unchecked")
-	public Collection<K> putAll(Map<K, V> values)
+	public V putIfAbsent(final K key, final V value)
 	{
-		Objects.requireNonNull(values);
+		Objects.requireNonNull(key, "Key to put is null");
+		Objects.requireNonNull(value, "Value to put is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			V current = this.map.get(key);
+			if (current != null)
+				return current;
+			
+			while(this.count >= this.capacity)
+			{
+				if (this.count > this.capacity)
+					throw new IllegalStateException("Count "+this.count+" should never be greater than capacity "+this.capacity);
+				
+				this.notFull.awaitUninterruptibly();
+			}
+			
+			if (this.map.put(key, value) == null)
+			{
+				this.count++;
+				this.notEmpty.signal();
+				return null;
+			}
+			
+			throw new IllegalStateException("Expected key "+key+" not to be assigned");
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	public Collection<K> putAll(final Map<K, V> values)
+	{
+		Objects.requireNonNull(values, "Map to put is null");
 		if (values.isEmpty() == true)
 			return Collections.EMPTY_LIST;
 
@@ -302,10 +340,10 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 	
-	public boolean offer(K key, V value) 
+	public boolean offer(final K key, final V value) 
 	{
-		Objects.requireNonNull(key);
-		Objects.requireNonNull(value);
+		Objects.requireNonNull(key, "Key to offer is null");
+		Objects.requireNonNull(value, "Value to offer is null");
 
 		this.lock.writeLock().lock();
 		try
@@ -330,10 +368,13 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public boolean offer(K key, V value, long timeout, TimeUnit unit) throws InterruptedException
+	public boolean offer(final K key, final V value, final long timeout, final TimeUnit unit) throws InterruptedException
 	{
-		Objects.requireNonNull(key);
-		Objects.requireNonNull(value);
+		Objects.requireNonNull(key, "Key to offer is null");
+		Objects.requireNonNull(value, "Value to offer is null");
+		Objects.requireNonNull(unit, "Time unit is null");
+		Longs.greaterThan(timeout, 0, "Time out is less than 1");
+		
 		long nanos = unit.toNanos(timeout);
 		
 		this.lock.writeLock().lockInterruptibly();
@@ -380,8 +421,11 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 	
-	public Entry<K,V> peek(long timeout, TimeUnit unit) throws InterruptedException
+	public Entry<K,V> peek(final long timeout, final TimeUnit unit) throws InterruptedException
 	{
+		Objects.requireNonNull(unit, "Time unit is null");
+		Longs.greaterThan(timeout, 0, "Time out is less than 1");
+
 		long nanos = unit.toNanos(timeout);
 		
 		// Need writelock as using writelock.conditions
@@ -427,8 +471,11 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public Entry<K,V> poll(long timeout, TimeUnit unit) throws InterruptedException
+	public Entry<K,V> poll(final long timeout, final TimeUnit unit) throws InterruptedException
 	{
+		Objects.requireNonNull(unit, "Time unit is null");
+		Longs.greaterThan(timeout, 0, "Time out is less than 1");
+
 		long nanos = unit.toNanos(timeout);
 		this.lock.writeLock().lockInterruptibly();
 		try
@@ -456,8 +503,10 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public void forEach(BiConsumer<? super K, ? super V> action)
+	public void forEach(final BiConsumer<? super K, ? super V> action)
 	{
+		Objects.requireNonNull(action, "Biconsumer foreach is null");
+		
 		this.lock.readLock().lock();
 		try
 		{
@@ -469,8 +518,10 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public boolean contains(K key)
+	public boolean contains(final K key)
 	{
+		Objects.requireNonNull(key, "Key to test contains is null");
+		
 		this.lock.readLock().lock();
 		try			
 		{
@@ -485,8 +536,10 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 	
-	public V get(K key)
+	public V get(final K key)
 	{
+		Objects.requireNonNull(key, "Key to get is null");
+
 		this.lock.readLock().lock();
 		try			
 		{
@@ -498,9 +551,9 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 
-	public V remove(K key) 
+	public V remove(final K key) 
 	{
-		Objects.requireNonNull(key);
+		Objects.requireNonNull(key, "Key to remove is null");
 		
 		this.lock.writeLock().lock();
 		try
@@ -519,10 +572,33 @@ public class MappedBlockingQueue<K, V>
 		}
 	}
 	
-	@SuppressWarnings("unchecked")
-	public Map<K, V> removeAll(Collection<K> keys) 
+	public boolean remove(final K key, final V value)
 	{
-		Objects.requireNonNull(keys);
+		Objects.requireNonNull(key, "Key to remove is null");
+		Objects.requireNonNull(value, "Value to remove is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			boolean removed = this.map.remove(key, value);
+			if (removed == true)
+			{
+				this.count--;
+				this.notFull.signal();
+			}
+			return removed;
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	
+	@SuppressWarnings("unchecked")
+	public Map<K, V> removeAll(final Collection<K> keys) 
+	{
+		Objects.requireNonNull(keys, "Key collection to remove is null");
 		if (keys.isEmpty() == true)
 			return Collections.EMPTY_MAP;
 		
@@ -552,9 +628,9 @@ public class MappedBlockingQueue<K, V>
 	}
 
 	@SuppressWarnings("unchecked")
-	public Map<K, V> removeAll(Map<K, V> removals) 
+	public Map<K, V> removeAll(final Map<K, V> removals) 
 	{
-		Objects.requireNonNull(removals);
+		Objects.requireNonNull(removals, "Map to remove is null");
 		if (removals.isEmpty() == true)
 			return Collections.EMPTY_MAP;
 

@@ -43,5 +43,11 @@
 		"long":"home",
 		"desc":"Home directory for database and other data",
 		"has_arg":true
+	},
+	
+	"singleton":{	
+		"long":"singleton",
+		"desc":"Network is singletons (one node per shard for testing)",
+		"has_arg":false
 	}
 }		

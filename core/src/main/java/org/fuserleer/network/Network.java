@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.Universe;
+import org.fuserleer.WebSocketService;
 import org.fuserleer.common.Agent;
 import org.fuserleer.common.Direction;
 import org.fuserleer.crypto.ECPublicKey;
@@ -42,8 +43,11 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.executors.ScheduledExecutable;
+import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.discovery.OutboundShardDiscoveryFilter;
+import org.fuserleer.network.discovery.OutboundSyncDiscoveryFilter;
 import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
 import org.fuserleer.network.discovery.Whitelist;
 import org.fuserleer.network.messages.NodeMessage;
@@ -61,10 +65,10 @@ import org.fuserleer.network.peers.events.PeerAvailableEvent;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerConnectingEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
-import org.fuserleer.network.peers.filters.OutboundTCPPeerFilter;
+import org.fuserleer.network.peers.filters.PeerFilter;
+import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
-import org.fuserleer.utils.UInt128;
 
 import com.google.common.eventbus.Subscribe;
 
@@ -74,13 +78,16 @@ public final class Network implements Service
 	
 	public static final int DEFAULT_PEER_INACTIVITY = 60; 
 	public static final int DEFAULT_CONNECT_TIMEOUT = 60; 
-	public static final int DEFAULT_TCP_CONNECTIONS_OUT = 4; 
-	public static final int DEFAULT_TCP_CONNECTIONS_IN = 4; 
+	public static final int DEFAULT_TCP_CONNECTIONS_OUT_SYNC = 4; 
+	public static final int DEFAULT_TCP_CONNECTIONS_OUT_SHARD = 1; 
+//	public static final int DEFAULT_TCP_CONNECTIONS_IN = 4; 
 
 	private final Context		context;
 	private final Messaging 	messaging;
 	private final PeerStore 	peerStore;
 	private final PeerHandler	peerHandler;
+	private final GossipHandler	gossipHandler;
+	private final WebSocketService websocketService;
 
     private final Set<ConnectedPeer>	peers = new HashSet<ConnectedPeer>();
     private final ReentrantLock 		connecting = new ReentrantLock();
@@ -164,13 +171,17 @@ public final class Network implements Service
 						{
 							if ((message instanceof NodeMessage) == false)
 							{
-								networkLog.error(Network.this.context.getName()+": "+datagramPacket.getAddress().toString()+" did not send NodeMessage on connect");
+								networkLog.error(Network.this.context.getName()+": "+datagramPacket.getSocketAddress().toString()+" did not send NodeMessage on connect");
 								continue;
 							}
 
 							NodeMessage nodeMessage = (NodeMessage)message;
-							URI uri = Agent.getURI(datagramPacket.getAddress().getHostAddress(), nodeMessage.getNode().getPort());
+							URI uri = Agent.getURI(datagramPacket.getAddress().getHostAddress(), nodeMessage.getNode().getNetworkPort());
+							
 							Peer persistedPeer = Network.this.peerStore.get(nodeMessage.getNode().getIdentity());
+							if (persistedPeer == null)
+								persistedPeer = new Peer(uri, nodeMessage.getNode(), Protocol.UDP);
+							
 							connectedPeer = new RUDPPeer(Network.this.context, Network.this.datagramChannel, uri, Direction.INBOUND, persistedPeer);
 							connectedPeer.connect();
 						}
@@ -206,7 +217,7 @@ public final class Network implements Service
     		{
     			Network.this.connecting.lock();
 
-    			URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), node.getPort());
+    			URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), node.getNetworkPort());
 				if (Network.this.has(node.getIdentity(), Protocol.TCP) == true)
 				{
 					networkLog.error(Network.this.context.getName()+": "+node.getIdentity()+" already has a socked assigned");
@@ -261,16 +272,7 @@ public final class Network implements Service
 							continue;
 						}
 						
-						UInt128 remoteShardGroup = Network.this.context.getLedger().getShardGroup(nodeMessage.getNode().getIdentity());
-						UInt128 localShardGroup = Network.this.context.getLedger().getShardGroup(Network.this.context.getNode().getIdentity());
-						if (remoteShardGroup.compareTo(localShardGroup) != 0)
-						{
-							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" Remote node is not located in expected shard group "+localShardGroup);
-							socket.close();
-							continue;
-						}
-						
-						URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), nodeMessage.getNode().getPort());
+						URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), nodeMessage.getNode().getNetworkPort());
 						
 						// Store the node in the peer store even if can not connect due to whitelists or available connections as it may be a preferred peer
 						Peer connectingPeer = new Peer(uri, nodeMessage.getNode(), Protocol.TCP);
@@ -283,13 +285,14 @@ public final class Network implements Service
 							continue;
 					    }
 						
-						List<ConnectedPeer> connected = Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.INBOUND)).collect(Collectors.toList());
+						// TODO omitted for TCP based shard connectivity, re-enable when connection less
+/*						List<ConnectedPeer> connected = Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.INBOUND)).collect(Collectors.toList());
 						if (connected.size() >= Network.this.context.getConfiguration().get("network.connections.in", 8))
 						{
 							networkLog.debug(Network.this.context.getName()+": "+socket.toString()+" all inbound slots occupied");
 							socket.close();
 							continue;
-						}
+						}*/
 						
 						ConnectedPeer connectedPeer = connect(socket, nodeMessage.getNode());
 						if (connectedPeer == null)
@@ -343,6 +346,8 @@ public final class Network implements Service
     	this.peerStore = new PeerStore(context);
     	this.peerHandler = new PeerHandler(context);
     	this.messaging = new Messaging(context);
+    	this.gossipHandler = new GossipHandler(context);
+    	this.websocketService = new WebSocketService(context);
     	
     	this.whitelist = new Whitelist(this.context.getConfiguration().get("network.whitelist", ""));
     	
@@ -358,6 +363,11 @@ public final class Network implements Service
     public PeerStore getPeerStore()
     {
     	return this.peerStore;
+    }
+
+    public GossipHandler getGossipHandler()
+    {
+    	return this.gossipHandler;
     }
 
     @Override
@@ -414,6 +424,8 @@ public final class Network implements Service
 			this.context.getEvents().register(this.peerListener);
 			this.peerStore.start();
 			this.peerHandler.start();
+			this.gossipHandler.start();
+			this.websocketService.start();
 			
 			this.messaging.register(NodeMessage.class, this.getClass(), new MessageProcessor<NodeMessage>() 
 			{
@@ -461,23 +473,59 @@ public final class Network implements Service
 					// Discovery / Rotation //
 					try
 					{
-						OutboundTCPPeerFilter outboundTCPPeerFilter = new OutboundTCPPeerFilter(Network.this.context, Collections.singleton(Network.this.context.getLedger().getShardGroup(Network.this.context.getNode().getIdentity())));
-						Collection<Peer> preferred = new RemoteLedgerDiscovery(Network.this.context).discover(outboundTCPPeerFilter);
-						preferred.removeAll(Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.INBOUND)).collect(Collectors.toList()));
+						RemoteLedgerDiscovery discoverer = new RemoteLedgerDiscovery(Network.this.context);
+						Collection<Peer> preferred = new HashSet<Peer>();
 
-						List<ConnectedPeer> connected = Network.this.get(Protocol.TCP, PeerState.CONNECTING, PeerState.CONNECTED).stream().filter(cp -> cp.getDirection().equals(Direction.OUTBOUND)).collect(Collectors.toList());
-						if (connected.size() > Network.this.context.getConfiguration().get("network.connections.out", Network.DEFAULT_TCP_CONNECTIONS_OUT))
+						// Sync //
+						long syncShardGroup = ShardMapper.toShardGroup(Network.this.context.getNode().getIdentity(), Network.this.context.getLedger().numShardGroups());
 						{
-							for (ConnectedPeer peer : connected)
+							OutboundSyncDiscoveryFilter outboundSyncDiscoveryFilter = new OutboundSyncDiscoveryFilter(Network.this.context, Collections.singleton(syncShardGroup));
+							Collection<Peer> syncPreferred = discoverer.discover(outboundSyncDiscoveryFilter, Network.this.context.getConfiguration().get("network.connections.out.sync", Network.DEFAULT_TCP_CONNECTIONS_OUT_SYNC));
+							syncPreferred.removeAll(Network.this.get(StandardPeerFilter.build(Network.this.context).setProtocol(Protocol.TCP).setStates(PeerState.CONNECTING, PeerState.CONNECTED).setDirection(Direction.INBOUND)));
+	
+							List<ConnectedPeer> syncConnected = Network.this.get(StandardPeerFilter.build(Network.this.context).setProtocol(Protocol.TCP).setStates(PeerState.CONNECTING, PeerState.CONNECTED).setDirection(Direction.OUTBOUND).setShardGroup(syncShardGroup));
+							if (syncConnected.size() > Network.this.context.getConfiguration().get("network.connections.out.sync", Network.DEFAULT_TCP_CONNECTIONS_OUT_SYNC))
 							{
-								if (preferred.contains(peer) == false)
+								for (ConnectedPeer peer : syncConnected)
 								{
-									peer.disconnect("Discovered better neighbourhood peer");
-									break;
+									if (syncPreferred.contains(peer) == false)
+									{
+										peer.disconnect("Discovered better sync peer");
+										break;
+									}
 								}
 							}
+							syncPreferred.removeAll(syncConnected);
+							preferred.addAll(syncPreferred);
 						}
-						preferred.removeAll(connected);
+						
+						// Shard //
+						// TODO temporary connectivity over TCP for shard groups ... eventually should be connectionless
+						for (long sg = 0 ; sg < Network.this.context.getLedger().numShardGroups(Network.this.context.getLedger().getHead().getHeight()) ; sg++)
+						{
+							long shardGroup = sg;
+							if (shardGroup == syncShardGroup)
+								continue;
+
+							OutboundShardDiscoveryFilter outboundShardDiscoveryFilter = new OutboundShardDiscoveryFilter(Network.this.context, Collections.singleton(shardGroup));
+							Collection<Peer> shardPreferred = discoverer.discover(outboundShardDiscoveryFilter, Network.this.context.getConfiguration().get("network.connections.out.shard", Network.DEFAULT_TCP_CONNECTIONS_OUT_SHARD));
+							shardPreferred.removeAll(Network.this.get(StandardPeerFilter.build(Network.this.context).setProtocol(Protocol.TCP).setStates(PeerState.CONNECTING, PeerState.CONNECTED).setDirection(Direction.INBOUND)));
+
+							List<ConnectedPeer> shardConnected = Network.this.get(StandardPeerFilter.build(Network.this.context).setProtocol(Protocol.TCP).setStates(PeerState.CONNECTING, PeerState.CONNECTED).setDirection(Direction.OUTBOUND).setShardGroup(shardGroup));
+							if (shardConnected.size() > Network.this.context.getConfiguration().get("network.connections.out.shard", Network.DEFAULT_TCP_CONNECTIONS_OUT_SHARD))
+							{
+								for (ConnectedPeer peer : shardConnected)
+								{
+									if (shardPreferred.contains(peer) == false)
+									{
+										peer.disconnect("Discovered better shard peer");
+										break;
+									}
+								}
+							}
+							shardPreferred.removeAll(shardConnected);
+							preferred.addAll(shardPreferred);
+						}
 						
 						if (preferred.isEmpty() == false)
 						{
@@ -491,7 +539,6 @@ public final class Network implements Service
 								try
 								{
 									Network.this.connect(preferredPeer.getURI(), Direction.OUTBOUND, Protocol.TCP);
-//									break;
 								}
 								catch (Exception ex)
 								{
@@ -568,6 +615,8 @@ public final class Network implements Service
 				this.TCPServerSocket.close();
 			}
 			
+			this.websocketService.stop();
+			this.gossipHandler.stop();
 			this.messaging.stop();
 			this.peerHandler.stop();
 			this.peerStore.stop();
@@ -620,17 +669,7 @@ public final class Network implements Service
 		}
     }
     
-	public List<ConnectedPeer> get(PeerState ... states)
-	{
-		return get(null, false, states);
-	}
-
-	public List<ConnectedPeer> get(Protocol protocol, PeerState ... states)
-	{
-		return get(protocol, false, states);
-	}
-
-	public List<ConnectedPeer> get(Protocol protocol, boolean shuffle, PeerState ... states)
+	public List<ConnectedPeer> get(PeerFilter<ConnectedPeer> filter)
 	{
 		synchronized(this.peers)
 		{
@@ -638,18 +677,12 @@ public final class Network implements Service
 
 			for (ConnectedPeer peer : this.peers)
 			{
-				if ((protocol == null || peer.getProtocol().equals(protocol) == true) &&
-					(states == null || states.length == 0 || Arrays.stream(states).collect(Collectors.toSet()).contains(peer.getState())))
+				if (filter.filter(peer) == true)
 					peers.add(peer);
 			}
 
-			if (shuffle == false)
-				return peers;
-			else
-			{
-				Collections.shuffle(peers);
-				return peers;
-			}
+			Collections.shuffle(peers);
+			return peers;
 		}
 	}
 
@@ -703,37 +736,8 @@ public final class Network implements Service
 		}
 	}
 
-/*	public boolean has(URI host)
-	{
-		synchronized(this.peers)
-		{
-			for (ConnectedPeer peer : this.peers)
-			{
-				if (peer.getURI().equals(host))
-					return true;
-			}
-
-			return false;
-		}
-	}
-
-	public boolean has(URI host, Protocol protocol)
-	{
-		synchronized(this.peers)
-		{
-			for (ConnectedPeer peer : this.peers)
-			{
-				if (peer.getProtocol().equals(protocol) == true &&
-					peer.getURI().equals(host) == true)
-					return true;
-			}
-
-			return false;
-		}
-	}*/
-
 	@SuppressWarnings("unchecked")
-	public <T extends ConnectedPeer> T get(ECPublicKey identity, Protocol protocol, PeerState ... states)
+	private <T extends ConnectedPeer> T get(ECPublicKey identity, Protocol protocol, PeerState ... states)
 	{
 		synchronized(this.peers)
 		{
@@ -798,7 +802,7 @@ public final class Network implements Service
 				// that may satisfy the equality check that we want to keep track of.
 				for (ConnectedPeer peer : Network.this.peers)
 				{
-					if (peer == event.getPeer())
+					if (peer.equals(event.getPeer()) == true)
 					{
 						add = false;
 						break;
@@ -818,7 +822,7 @@ public final class Network implements Service
 				// Check for multiple identities connecting on different hosts/host:port endpoints
 				for (ConnectedPeer peer : Network.this.peers)
 				{
-					if (peer == event.getPeer())
+					if (peer.getURI().equals(event.getPeer().getURI()) == true)
 						continue;
 					
 					if (peer.getNode().getIdentity().equals(event.getPeer().getNode().getIdentity()) == true && 
@@ -842,7 +846,7 @@ public final class Network implements Service
 				while (peersIterator.hasNext())
 				{
 					Peer peer = peersIterator.next();
-					if (peer == event.getPeer())
+					if (peer.equals(event.getPeer()) == true)
 					{
 						peersIterator.remove();
 						break;

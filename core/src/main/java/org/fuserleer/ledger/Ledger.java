@@ -1,46 +1,35 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.Universe;
-import org.fuserleer.common.Match;
 import org.fuserleer.common.Primitive;
-import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Identifier;
-import org.fuserleer.database.Indexable;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
+import org.fuserleer.ledger.CommitOperation.Type;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.events.AtomAcceptedEvent;
+import org.fuserleer.ledger.events.AtomCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomCommittedEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
-import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
-import org.fuserleer.ledger.events.AtomPersistedEvent;
+import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.messages.GetAtomPoolMessage;
 import org.fuserleer.logging.Logger;
@@ -49,12 +38,11 @@ import org.fuserleer.network.Protocol;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
+import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
-import org.fuserleer.utils.UInt128;
-import org.fuserleer.utils.UInt256;
+import org.fuserleer.time.Time;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.eventbus.AllowConcurrentEvents;
 import com.google.common.eventbus.Subscribe;
 
@@ -75,12 +63,11 @@ public final class Ledger implements Service, LedgerInterface
 	private final SyncHandler 	syncHandler;
 
 	private final LedgerStore 	ledgerStore;
+	private final LedgerSearch	ledgerSearch;
 	private final VoteRegulator voteRegulator;
 	
 	private final transient AtomicReference<BlockHeader> head;
 	
-	private final Map<Hash, AtomFuture> atomFutures = Collections.synchronizedMap(new LinkedHashMap<Hash, AtomFuture>());
-
 	public Ledger(Context context)
 	{
 		this.context = Objects.requireNonNull(context);
@@ -92,12 +79,15 @@ public final class Ledger implements Service, LedgerInterface
 		this.syncHandler = new SyncHandler(this.context);
 		this.atomPool = new AtomPool(this.context);
 		this.atomHandler = new AtomHandler(this.context);
-		this.stateAccumulator = new StateAccumulator(this.context, this.ledgerStore);
+		this.stateAccumulator = new StateAccumulator(this.context, "ledger", this.ledgerStore);
 		this.stateHandler = new StateHandler(this.context);
 		this.statePool = new StatePool(this.context);
 		
+		this.ledgerSearch = new LedgerSearch(this.context);
+
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
-//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
+
+		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
 	}
 	
 	@Override
@@ -122,6 +112,8 @@ public final class Ledger implements Service, LedgerInterface
 			this.stateAccumulator.reset();
 			this.statePool.start();
 			this.stateHandler.start();
+			
+			this.ledgerSearch.start();
 		}
 		catch (Exception ex)
 		{
@@ -137,6 +129,8 @@ public final class Ledger implements Service, LedgerInterface
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
 
+		this.ledgerSearch.stop();
+		
 		this.statePool.stop();
 		this.stateHandler.stop();
 		this.atomHandler.stop();
@@ -152,7 +146,7 @@ public final class Ledger implements Service, LedgerInterface
 		this.ledgerStore.clean();
 	}
 	
-	private void integrity() throws IOException, ValidationException
+	private void integrity() throws IOException, ValidationException, StateLockedException
 	{
 		BlockHeader nodeBlockHeader = this.context.getNode().getHead();
 		// Check if this is just a new ledger store and doesn't need integrity or recovery
@@ -162,12 +156,17 @@ public final class Ledger implements Service, LedgerInterface
 			this.ledgerStore.store(Universe.getDefault().getGenesis());
 
 			// Commit the genesis block
+			// Some simple manual actions here with regard to provisioning as don't want to complicate the flow with a special case for genesis
 			this.ledgerStore.commit(Universe.getDefault().getGenesis());
 			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
 			{
-				this.stateAccumulator.lock(Universe.getDefault().getGenesis().getHeader(), atom);
-				this.stateAccumulator.precommit(atom);
-				this.stateAccumulator.commit(atom);
+				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
+				pendingAtom.prepare();
+				pendingAtom.lock();
+				pendingAtom.provision(Universe.getDefault().getGenesis().getHeader());
+				pendingAtom.setStatus(CommitStatus.PROVISIONED);
+				pendingAtom.execute();
+				this.ledgerStore.commit(pendingAtom.getCommitOperation(Type.ACCEPT));
 			}
 			
 			return;
@@ -205,12 +204,12 @@ public final class Ledger implements Service, LedgerInterface
 		return this.atomPool;
 	}
 
-	StateHandler getStateHandler()
+	public StateHandler getStateHandler()
 	{
 		return this.stateHandler;
 	}
 
-	StatePool getStatePool()
+	public StatePool getStatePool()
 	{
 		return this.statePool;
 	}
@@ -241,400 +240,151 @@ public final class Ledger implements Service, LedgerInterface
 		return this.ledgerStore.get(hash, primitive);
 	}
 	
-	public Future<AtomCertificate> submit(Atom atom) throws InterruptedException
+	public boolean submit(Atom atom) throws InterruptedException
 	{
 		Objects.requireNonNull(atom);
 		
-		synchronized(this.atomFutures)
-		{
-			AtomFuture atomFuture = this.atomFutures.get(atom.getHash());
-			if (atomFuture == null)
-			{
-				atomFuture = new AtomFuture(atom);
-				this.atomFutures.put(atom.getHash(), atomFuture);
-				
-				try
-				{
-					// TODO what happens on a false return?
-					if (this.atomHandler.submit(atom) == false)
-						throw new RejectedExecutionException();
-				}
-				catch(Throwable t)
-				{
-					this.atomFutures.remove(atom.getHash());
-					atomFuture.completeExceptionally(t);
-					throw t;
-				}
-			}
-
-			return atomFuture;
-		}
+		return this.atomHandler.submit(atom);
 	}
 	
-	@SuppressWarnings("unchecked")
 	@Override
-	public <T extends Primitive> SearchResponse<T> get(final SearchQuery query, final Class<T> container, final Spin spin) throws IOException 
+	public <T extends Primitive> Future<AssociationSearchResponse> get(final AssociationSearchQuery query, final Spin spin)
 	{
-		SearchResponse<IndexableCommit> searchResponse = null;
-		long nextOffset = query.getOffset();
-		List<T> results = new ArrayList<T>();
-
-		try
-		{
-			do
-			{
-				SearchQuery nextQuery = new SearchQuery(query.getIdentifiers(), query.getMatchOn(), query.getContainer(), query.getOrder(), nextOffset, query.getLimit());
-				searchResponse = this.ledgerStore.search(nextQuery);
-				if (searchResponse != null)
-				{
-					List<Atom> atoms = new ArrayList<Atom>();
-					for (IndexableCommit commit : searchResponse.getResults())
-					{
-						nextOffset = commit.getIndex();
-						Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
-						if (atom == null)
-							ledgerLog.error("Expected atom "+commit.get(IndexableCommit.Path.ATOM)+" was not found");
-						else
-							atoms.add(atom);
-					}
-					
-					for (Atom atom : atoms)
-					{
-						try
-						{
-							for (Particle particle : atom.getParticles())
-							{
-								if (query.getContainer().isAssignableFrom(particle.getClass()) == false)
-									continue;
-								
-								if (query.getMatchOn().equals(Match.ALL) == true &&
-									particle.getIdentifiers().containsAll(query.getIdentifiers()) == false)
-									continue;
-		
-								if (query.getMatchOn().equals(Match.ANY) == true)
-								{
-									boolean matched = false;
-									for (Identifier identifier : query.getIdentifiers())
-									{
-										if (particle.getIdentifiers().contains(identifier) == true)
-										{
-											matched = true;
-											break;
-										}
-									}
-									
-									if (matched == false)
-										continue;
-								}
-	
-								if ( spin.equals(Spin.ANY) == true ||
-									(spin.equals(Spin.DOWN) == true && particle.getSpin().equals(Spin.DOWN)) ||
-									(spin.equals(Spin.UP) == true && particle.getSpin().equals(Spin.UP)))
-								{
-									// TODO put a toggle in this so that function can return UP operations even if there is a DOWN
-									if (this.ledgerStore.has(Indexable.from(particle.getHash(Spin.DOWN), Particle.class)) == CommitState.NONE)
-										continue;
-									
-									if (Atom.class.isAssignableFrom(container) == true)
-										results.add((T) atom);
-									else if (container.isAssignableFrom(particle.getClass()) == true)
-										results.add((T) particle);
-									
-									break;
-								}
-							}
-						}
-						catch (Exception ex)
-						{
-							// TODO Catch any throw or just error silently?
-							ledgerLog.error(Ledger.this.context.getName()+": Atom for discovered identifier "+query+" threw error", ex);
-						}
-					}
-				}
-			}
-			while(searchResponse.isEOR() == false && results.size() < query.getLimit());
-		}
-		catch (IOException ioex)
-		{
-			throw ioex;
-		}
-			
-		return new SearchResponse<T>(query, nextOffset, results, searchResponse.isEOR());
+		return this.ledgerSearch.get(query, spin);
 	}
 
-/*	@Override
-	public CommitState state(Indexable indexable) throws IOException 
-	{
-		return this.ledgerStore.search(indexable) == null ? CommitState.NONE: CommitState.COMMITTED;
-	}*/
-	
-	@SuppressWarnings("unchecked")
 	@Override
-	public <T extends Primitive> T get(final Indexable indexable) throws IOException
+	public Future<SearchResult> get(StateSearchQuery query)
 	{
-		final IndexableCommit commit = this.ledgerStore.search(indexable);
-		if (commit == null)
-			return null;
-		
-		if (Block.class.isAssignableFrom(indexable.getContainer()) == true)
-		{
-			Block block = this.ledgerStore.get(commit.getIndexable().getKey(), Block.class);
-			if (block == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate block");
-
-			return (T) block;
-		}
-		else if (BlockHeader.class.isAssignableFrom(indexable.getContainer()) == true)
-		{
-			BlockHeader blockHeader = this.ledgerStore.get(commit.getIndexable().getKey(), BlockHeader.class);
-			if (blockHeader == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate block header");
-
-			return (T) blockHeader;
-		}
-		else if (Atom.class.isAssignableFrom(indexable.getContainer()) == true)
-		{
-			Atom atom = this.ledgerStore.get(commit.getIndexable().getKey(), Atom.class);
-			if (atom == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate atom");
-
-			return (T) atom;
-		}
-		else if (AtomCertificate.class.isAssignableFrom(indexable.getContainer()) == true)
-		{
-			AtomCertificate certificate = this.ledgerStore.get(commit.get(IndexableCommit.Path.CERTIFICATE), AtomCertificate.class);
-			if (certificate == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate certificate");
-
-			return (T) certificate;
-		}
-		else if (Particle.class.isAssignableFrom(indexable.getContainer()) == true)
-		{
-			Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
-			if (atom == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate atom");
-
-			for (Particle particle : atom.getParticles())
-			{
-				if (particle.getHash().equals(indexable.getKey()) == true)
-					return (T) particle;
-			}
-		}
-
-		return null;
+		return this.ledgerSearch.get(query);
 	}
 	
-	@SuppressWarnings("unchecked")
-	@Override
-	public <T extends Primitive> T get(final Indexable indexable, final Class<T> container) throws IOException
-	{
-		final IndexableCommit commit = this.ledgerStore.search(indexable);
-		if (commit == null)
-			return null;
-		
-		if (Block.class.isAssignableFrom(container) == true)
-		{
-			Block block = this.ledgerStore.get(commit.get(IndexableCommit.Path.BLOCK), Block.class);
-			if (block == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate block");
-			
-			return (T) block;
-		}
-		else if (BlockHeader.class.isAssignableFrom(container) == true)
-		{
-			BlockHeader blockHeader = this.ledgerStore.get(commit.get(IndexableCommit.Path.BLOCK), BlockHeader.class);
-			if (blockHeader == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate block header");
-
-			return (T) blockHeader;
-		}
-		else if (Atom.class.isAssignableFrom(container) == true)
-		{
-			Atom atom = null;
-			if (Atom.class.isAssignableFrom(indexable.getContainer()) == true)
-				atom = this.ledgerStore.get(indexable.getKey(), Atom.class);
-			else
-				atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
-				
-			if (atom == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate atom");
-
-			return (T) atom;
-		}
-		else if (Particle.class.isAssignableFrom(container) == true)
-		{
-			Atom atom = this.ledgerStore.get(commit.get(IndexableCommit.Path.ATOM), Atom.class);
-			if (atom == null)
-				throw new IllegalStateException("Found indexable commit but unable to locate atom");
-
-			for (Particle particle : atom.getParticles())
-			{
-				if (container.isAssignableFrom(particle.getClass()) == false)
-					continue;
-					
-				if (particle.getHash().equals(indexable.getKey()) == true || 
-					particle.getIndexables().contains(indexable) == true)
-					return (T) particle;
-			}
-		}
-		
-		return null;
-	}
-	
-	@VisibleForTesting
-//	private final AtomicBoolean synced = new AtomicBoolean(false);
+	private long nextSyncStatusCheck = 0;
 	public synchronized boolean isSynced()
 	{
-		List<ConnectedPeer> syncPeers = this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED); 
-		if (syncPeers.isEmpty() == true)
-			return false;
-
-		// Out of sync?
-		// TODO need to deal with forks that don't converge with local chain due to safety break
-		if (this.context.getNode().isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), Node.OOS_TRIGGER_LIMIT)) == true)
-			this.context.getNode().setSynced(false);
-		else if (this.context.getNode().isSynced() == false)
+		if (this.context.getConfiguration().has("singleton") == true)
 		{
-			ConnectedPeer strongestPeer = null;
-			for (ConnectedPeer syncPeer : syncPeers)
-			{
-				if (strongestPeer == null || syncPeer.getNode().getHead().getHeight() > strongestPeer.getNode().getHead().getHeight())
-					strongestPeer = syncPeer;
-			}
+			this.context.getNode().setSynced(true);
+			return true;
+		}
+		
+		// No point doing this multiple times per second as is quite expensive
+		if (Time.getSystemTime() > this.nextSyncStatusCheck)
+		{
+			this.nextSyncStatusCheck = Time.getSystemTime()+TimeUnit.SECONDS.toMillis(1);
 			
-			if (strongestPeer != null && 
-				(strongestPeer.getNode().isInSyncWith(this.context.getNode(), 0) == true || this.context.getNode().isAheadOf(strongestPeer.getNode(), 0) == true))
-				this.context.getNode().setSynced(true);
+			List<ConnectedPeer> syncPeers = this.context.getNetwork().get(StandardPeerFilter.build(this.context).setShardGroup(ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups())).setStates(PeerState.CONNECTED)); 
+			if (syncPeers.isEmpty() == true)
+				return false;
+	
+			// Out of sync?
+			PendingBranch bestBranch = this.getBlockHandler().getBestBranch();
+			int OOSTrigger = bestBranch == null ? Node.OOS_TRIGGER_LIMIT : Node.OOS_TRIGGER_LIMIT + bestBranch.size(); 
+			// TODO need to deal with forks that don't converge with local chain due to safety break
+			if (this.context.getNode().isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), OOSTrigger)) == true)
+			{
+				this.context.getNode().setSynced(false);
+				ledgerLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+OOSTrigger);
+			}
+			else if (this.context.getNode().isSynced() == false)
+			{
+				ConnectedPeer strongestPeer = null;
+				for (ConnectedPeer syncPeer : syncPeers)
+				{
+					if (strongestPeer == null || syncPeer.getNode().getHead().getHeight() > strongestPeer.getNode().getHead().getHeight())
+						strongestPeer = syncPeer;
+				}
+				
+				if (strongestPeer != null && 
+					(strongestPeer.getNode().isInSyncWith(this.context.getNode(), 0) == true || this.context.getNode().isAheadOf(strongestPeer.getNode(), 0) == true))
+				{
+					ledgerLog.info(this.context.getName()+": Synced state reaquired");
+					this.context.getNode().setSynced(true);
+				}
+			}
 		}
 
 		return this.context.getNode().isSynced();
 	}
 	
-	// SHARD FUNCTIONS //
-	public int numShardGroups(final long height)
+	// SHARD GROUP FUNCTIONS //
+	public long numShardGroups()
+	{
+		return numShardGroups(this.getHead().getHeight());
+	}
+
+	public long numShardGroups(final long height)
 	{
 		// TODO dynamic shard group count from height / epoch
 		return Universe.getDefault().shardGroupCount();
 	}
-	
-	public UInt128 getShardGroup(final ECPublicKey identity)
-	{
-		return getShardGroup(Objects.requireNonNull(identity, "Identity is null").asHash(), getHead().getHeight());
-	}
 
-	private UInt128 getShardGroup(final ECPublicKey identity, final long height)
-	{
-		return getShardGroup(Objects.requireNonNull(identity, "Identity is null").asHash(), height);
-	}
-
-	public UInt128 getShardGroup(final Hash hash)
-	{
-		return getShardGroup(Objects.requireNonNull(hash, "Hash is null"), getHead().getHeight());
-	}
-	
-	private UInt128 getShardGroup(final Hash hash, final long height)
-	{
-		return getShardGroup(UInt256.from(Objects.requireNonNull(hash, "Hash is null").toByteArray()), height);
-	}
-
-	public Set<UInt128> getShardGroups(final Collection<UInt256> shards)
-	{
-		Set<UInt128> shardGroups = new HashSet<UInt128>();
-		for (UInt256 shard : Objects.requireNonNull(shards, "Shards is null"))
-			shardGroups.add(getShardGroup(shard, getHead().getHeight()));
-		
-		return shardGroups;
-	}
-
-	private Set<UInt128> getShardGroups(final Collection<UInt256> shards, final long height)
-	{
-		Set<UInt128> shardGroups = new HashSet<UInt128>();
-		for (UInt256 shard : Objects.requireNonNull(shards, "Shards is null"))
-			shardGroups.add(getShardGroup(shard, height));
-		
-		return shardGroups;
-	}
-
-	public UInt128 getShardGroup(final UInt256 shard)
-	{
-		return getShardGroup(Objects.requireNonNull(shard, "Shard is null"), getHead().getHeight());
-	}
-	
-	private UInt128 getShardGroup(final UInt256 shard, final long height)
-	{
-		Objects.requireNonNull(shard, "Shard is null");
-		if (shard.equals(UInt256.ZERO) == true)
-			throw new IllegalArgumentException("Shard is ZERO");
-		
-		if (height < 0)
-			throw new IllegalArgumentException("Height is negative");
-
-		int numShardGroups = numShardGroups(height);
-		UInt256 divisor = UInt256.ZERO.invert().divide(UInt256.from(numShardGroups)).add(UInt256.ONE);
-		if (divisor.compareTo(UInt256.ZERO) != 0)
-			return shard.divide(divisor).getLow();
-		else
-			return UInt128.ZERO;
-	}
-	
 	// ASYNC ATOM LISTENER //
 	private EventListener asyncAtomListener = new EventListener()
 	{
 		@Subscribe
-		@AllowConcurrentEvents
-		public void on(AtomCommittedEvent atomCommittedEvent) 
+		public void on(AtomExceptionEvent event)
 		{
-			AtomFuture atomFuture = Ledger.this.atomFutures.remove(atomCommittedEvent.getCertificate().getAtom());
-			if (atomFuture != null)
-				atomFuture.complete(atomCommittedEvent.getCertificate());
-		}
-
-		@Subscribe
-		public void on(AtomErrorEvent atomErrorEvent)
-		{
-			AtomFuture atomFuture = Ledger.this.atomFutures.remove(atomErrorEvent.getAtom().getHash());
-			if (atomFuture != null)
-				atomFuture.completeExceptionally(atomErrorEvent.getError());
+			if (event.getException() instanceof StateLockedException)
+				return;
 		}
 		
 		@Subscribe
-		public void on(AtomExceptionEvent atomExceptionEvent)
+		public void on(AtomDiscardedEvent event) 
 		{
-			AtomFuture atomFuture = Ledger.this.atomFutures.remove(atomExceptionEvent.getAtom().getHash());
-			if (atomFuture != null)
-				atomFuture.completeExceptionally(atomExceptionEvent.getException());
-		}
-		
-		@Subscribe
-		public void on(AtomDiscardedEvent atomDiscardedEvent) 
-		{
-			Exception ex = new ValidationException("Atom "+atomDiscardedEvent.getAtom().getHash()+" was discarded due to: "+atomDiscardedEvent.getMessage());
+			Exception ex = new ValidationException("Atom "+event.getPendingAtom().getHash()+" was discarded due to: "+event.getMessage());
 			ledgerLog.warn(Ledger.this.context.getName()+": "+ex.getMessage());
-
-			AtomFuture atomFuture = Ledger.this.atomFutures.remove(atomDiscardedEvent.getAtom().getHash());
-			if (atomFuture != null)
-				atomFuture.completeExceptionally(ex);
 		}
 
 		@Subscribe
-		public void on(AtomCommitTimeoutEvent atomTimeoutEvent)
+		public void on(AtomCommitTimeoutEvent event)
 		{
-			AtomFuture atomFuture = Ledger.this.atomFutures.remove(atomTimeoutEvent.getAtom().getHash());
-			if (atomFuture != null)
-				atomFuture.completeExceptionally(new TimeoutException("Atom "+atomTimeoutEvent.getAtom().getHash()+" timedout"));
 		}
-
-		// TODO want to float up to listeners registered here about onTimeout, onVerified etc for application domain?
 	};
 	
 	// SYNCHRONOUS ATOM LISTENER //
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final AtomPersistedEvent atomPersistedEvent) 
+		public void on(final AtomCommitEvent event) 
 		{
-			if (Ledger.this.atomPool.add(atomPersistedEvent.getAtom()) == false)
-				ledgerLog.error(Ledger.this.context.getName()+": Atom "+atomPersistedEvent.getAtom().getHash()+" not added to atom pool");
+			try
+			{
+				Ledger.this.stateAccumulator.commit(event.getPendingAtom());
+				if (event.getPendingAtom().getCertificate().getDecision().equals(StateDecision.POSITIVE))
+					Ledger.this.context.getEvents().post(new AtomAcceptedEvent(event.getPendingAtom()));
+				if (event.getPendingAtom().getCertificate().getDecision().equals(StateDecision.NEGATIVE))
+					Ledger.this.context.getEvents().post(new AtomRejectedEvent(event.getPendingAtom()));
+			}
+			catch (Exception ex)
+			{
+				ledgerLog.fatal(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" commit failed", ex);
+				Ledger.this.context.getEvents().post(new AtomExceptionEvent(event.getPendingAtom(), ex));
+			}
+		}
+
+		@Subscribe
+		public void on(final AtomRejectedEvent event) 
+		{
+			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" rejected", event.getPendingAtom().thrown());
+		}
+
+		@Subscribe
+		public void on(final AtomCommitTimeoutEvent event) 
+		{
+			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" aborted due to timeout");
+			Ledger.this.stateAccumulator.abort(event.getPendingAtom());
+		}
+
+		@Subscribe
+		public void on(final AtomExceptionEvent event) 
+		{
+			// FIXME not a fan of isolating the StateLockedException in this way
+			if (event.getException() instanceof StateLockedException)
+				return;
+			
+			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" aborted", event.getException());
+			Ledger.this.stateAccumulator.abort(event.getPendingAtom());
 		}
 	};
 	
@@ -642,90 +392,78 @@ public final class Ledger implements Service, LedgerInterface
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		private long lastThroughputUpdate = System.currentTimeMillis();
-		private long lastThroughputAtoms = 0;
-		private long lastThroughputParticles = 0;
+		private long lastThroughputReset = System.currentTimeMillis();
+		private long lastThroughputPersistedAtoms = 0;
+		private long lastThroughputPersistedParticles = 0;
+		private long lastThroughputCommittedAtoms = 0;
+		private long lastThroughputRejectedAtoms = 0;
+		private long lastThroughputShardsTouched = 0;
 
 		@Subscribe
-		public void on(BlockCommittedEvent blockCommittedEvent) 
+		public void on(BlockCommittedEvent event) 
 		{
-			if (blockCommittedEvent.getBlock().getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
+			if (event.getBlock().getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
 			{
-				ledgerLog.error(Ledger.this.context.getName()+": Committed block "+blockCommittedEvent.getBlock().getHeader()+" does not attach to current head "+Ledger.this.getHead());
+				ledgerLog.error(Ledger.this.context.getName()+": Committed block "+event.getBlock().getHeader()+" does not attach to current head "+Ledger.this.getHead());
 				return;
 			}
 			
 			// Clone it to make sure to extract the header
-			Ledger.this.setHead(blockCommittedEvent.getBlock().getHeader());
-			Ledger.this.context.getNode().setHead(blockCommittedEvent.getBlock().getHeader());
-			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+blockCommittedEvent.getBlock().getHeader());
-			Ledger.this.context.getMetaData().increment("ledger.commits.atoms", blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS).size());
-			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.CERTIFICATES).size());
+			Ledger.this.setHead(event.getBlock().getHeader());
+			Ledger.this.context.getNode().setHead(event.getBlock().getHeader());
+			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+event.getBlock().getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+event.getBlock().getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+event.getBlock().getHeader());
+			Ledger.this.context.getMetaData().increment("ledger.commits.atoms.local", event.getBlock().getHeader().getInventory(InventoryType.ATOMS).size());
+			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", event.getBlock().getHeader().getInventory(InventoryType.CERTIFICATES).size());
 			
-			Ledger.this.voteRegulator.addVotePower(blockCommittedEvent.getBlock().getHeader().getOwner());
+			Ledger.this.voteRegulator.addVotePower(event.getBlock().getHeader().getHeight(), event.getBlock().getHeader().getOwner());
 			
-			// Lock atom states
-			for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
+			long numShardGroups = Ledger.this.numShardGroups(event.getBlock().getHeader().getHeight());
+			Set<Long> shardGroupsTouched = new HashSet<Long>();
+			for (AtomCertificate atomCertificate : event.getBlock().getCertificates())
 			{
-				if (ledgerLog.hasLevel(Logging.DEBUG))
-					ledgerLog.debug(Ledger.this.context.getName()+": Pre-committed atom "+atom.getHash()+" in "+blockCommittedEvent.getBlock().getHeader());
-				
-				Ledger.this.context.getMetaData().increment("ledger.processed.atoms");
-				this.lastThroughputAtoms++;
-
-				if (System.currentTimeMillis() - this.lastThroughputUpdate > TimeUnit.SECONDS.toMillis(10))
-				{
-					int seconds = (int) TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - this.lastThroughputUpdate);
-					Ledger.this.context.getMetaData().put("ledger.throughput.atoms", (this.lastThroughputAtoms / seconds));
-					Ledger.this.context.getMetaData().put("ledger.throughput.particles", (this.lastThroughputParticles / seconds));
+				shardGroupsTouched.clear();
+				for (StateCertificate stateCertificate : atomCertificate.getAll())
+					shardGroupsTouched.add(ShardMapper.toShardGroup(stateCertificate.getState().get(), numShardGroups));
 					
-					this.lastThroughputUpdate = System.currentTimeMillis();
-					this.lastThroughputAtoms = this.lastThroughputParticles = 0;
-				}
-
-				try
-				{
-					Ledger.this.atomPool.remove(atom.getHash());
-					Ledger.this.stateAccumulator.lock(blockCommittedEvent.getBlock().getHeader(), atom);
-				}
-				catch (Exception ex)
-				{
-		    		ledgerLog.fatal(Ledger.this.context.getName()+": Failed to lock atom state for "+atom, ex);
-				}
+				this.lastThroughputShardsTouched += shardGroupsTouched.size();
+				
+				if (atomCertificate.getDecision().equals(StateDecision.POSITIVE) == true)
+					this.lastThroughputCommittedAtoms++;
+				else if (atomCertificate.getDecision().equals(StateDecision.POSITIVE) == true)
+					this.lastThroughputRejectedAtoms++;
 			}
 
-			// Commit atom states
-			for (AtomCertificate certificate : blockCommittedEvent.getBlock().getCertificates())
+			for (Atom atom : event.getBlock().getAtoms())
 			{
-				try
+				if (ledgerLog.hasLevel(Logging.DEBUG))
+					ledgerLog.debug(Ledger.this.context.getName()+": Pre-committed atom "+atom.getHash()+" in "+event.getBlock().getHeader());
+				
+				Ledger.this.context.getMetaData().increment("ledger.processed.atoms.local");
+				this.lastThroughputPersistedAtoms++;
+				this.lastThroughputPersistedParticles += atom.getParticles().size();
+
+				if (this.lastThroughputShardsTouched > 0 && this.lastThroughputCommittedAtoms > 0)
+					Ledger.this.context.getMetaData().increment("ledger.processed.atoms.total", (numShardGroups / (this.lastThroughputShardsTouched / this.lastThroughputCommittedAtoms)));
+			}
+			
+			if (System.currentTimeMillis() - this.lastThroughputUpdate > TimeUnit.SECONDS.toMillis(10))
+			{
+				int seconds = (int) TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - this.lastThroughputReset);
+				Ledger.this.context.getMetaData().put("ledger.throughput.atoms.local", (this.lastThroughputPersistedAtoms / seconds));
+				Ledger.this.context.getMetaData().put("ledger.throughput.particles", (this.lastThroughputPersistedParticles / seconds));
+				if (this.lastThroughputShardsTouched > 0 && this.lastThroughputCommittedAtoms > 0)
 				{
-					if (ledgerLog.hasLevel(Logging.DEBUG) == true)
-						ledgerLog.debug(Ledger.this.context.getName()+": Committed certificate "+certificate.getHash()+" for atom "+certificate.getAtom());
-					
-					Atom atom = Ledger.this.getLedgerStore().get(certificate.getAtom(), Atom.class);
-					if (certificate.getDecision() == true)
-					{
-						Ledger.this.stateAccumulator.commit(atom);
-						Ledger.this.context.getEvents().post(new AtomCommittedEvent(atom, certificate));
-					}
-					else
-					{
-						Ledger.this.stateAccumulator.abort(atom);
-						for (StateCertificate voteCertificate : certificate.getAll())
-						{
-							if (voteCertificate.getDecision() == false)
-							{
-								Ledger.this.context.getEvents().post(new AtomErrorEvent(atom, new ValidationException("Rejection certificate for state "+voteCertificate.getState())));
-								break;
-							}
-						}
-					}
+					Ledger.this.context.getMetaData().put("ledger.throughput.shards.touched", (this.lastThroughputShardsTouched / this.lastThroughputCommittedAtoms));
+					Ledger.this.context.getMetaData().put("ledger.throughput.atoms.total", (this.lastThroughputPersistedAtoms / seconds) * (numShardGroups / (this.lastThroughputShardsTouched / this.lastThroughputCommittedAtoms)));
 				}
-				catch (Exception ex)
+				
+				this.lastThroughputUpdate = System.currentTimeMillis();
+
+				if (System.currentTimeMillis() - this.lastThroughputReset > TimeUnit.SECONDS.toMillis(60))
 				{
-					// FIXME don't like how this is thrown in an event listener.
-					// 		 should be able to send the commit without having to fetch the atom, state processors *should* have it by the time
-					//		 we're sending commit certificates to them.
-	    			ledgerLog.error(Ledger.this.context.getName()+": Failed to post AtomCommittedEvent for "+certificate.getAtom(), ex);
+					this.lastThroughputReset = System.currentTimeMillis();
+					this.lastThroughputPersistedAtoms = this.lastThroughputPersistedParticles = 0; 
+					this.lastThroughputCommittedAtoms = this.lastThroughputRejectedAtoms = this.lastThroughputShardsTouched = 0;
 				}
 			}
 		}

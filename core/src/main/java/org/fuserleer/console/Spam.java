@@ -13,6 +13,7 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
+import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.tools.Spamathon;
 import org.fuserleer.tools.Spamathon.Spammer;
 
@@ -44,7 +45,7 @@ public class Spam extends Function
 		
 		if (commandLine.hasOption("nodes") == true)
 		{
-			List<ConnectedPeer> connected = context.getNetwork().get(PeerState.CONNECTED);
+			List<ConnectedPeer> connected = context.getNetwork().get(StandardPeerFilter.build(context).setStates(PeerState.CONNECTED));
 			Collections.shuffle(connected);
 			
 			for (int p = 0 ; p < Integer.parseInt(commandLine.getOptionValue("nodes")) ; p++)

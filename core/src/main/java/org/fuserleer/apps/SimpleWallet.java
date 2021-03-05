@@ -4,11 +4,15 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
@@ -17,19 +21,20 @@ import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Identifier;
 import org.fuserleer.events.EventListener;
-import org.fuserleer.ledger.SearchQuery;
-import org.fuserleer.ledger.SearchResponse;
+import org.fuserleer.ledger.AssociationSearchQuery;
+import org.fuserleer.ledger.AssociationSearchResponse;
+import org.fuserleer.ledger.AtomFuture;
+import org.fuserleer.ledger.SearchResult;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.TokenSpecification;
 import org.fuserleer.ledger.atoms.TransferParticle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomCommittedEvent;
-import org.fuserleer.ledger.events.AtomErrorEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
+import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.exceptions.InsufficientBalanceException;
 import org.fuserleer.utils.UInt256;
 
@@ -40,25 +45,27 @@ public class SimpleWallet implements AutoCloseable
 	private final Context context;
 	private final ECKeyPair key;
 	private final Set<TransferParticle> unconsumed = Collections.synchronizedSet(new LinkedHashSet<TransferParticle>());
+	private final Map<Hash, AtomFuture> futures = Collections.synchronizedMap(new HashMap<Hash, AtomFuture>()); 
 	
-	public SimpleWallet(final Context context, final ECKeyPair key) throws IOException
+	public SimpleWallet(final Context context, final ECKeyPair key) throws IOException, InterruptedException, ExecutionException
 	{
 		this.context = Objects.requireNonNull(context);
 		this.key = Objects.requireNonNull(key);
 		
 		long searchOffset = 0;
-		SearchQuery search = new SearchQuery(Identifier.from(key.getPublicKey().asHash()), TransferParticle.class, Order.ASCENDING, 25);
-		SearchResponse<TransferParticle> searchResponse = null;
+		AssociationSearchQuery search = new AssociationSearchQuery(key.getPublicKey().asHash(), TransferParticle.class, Order.ASCENDING, 25);
+		Future<AssociationSearchResponse> searchResponseFuture;
 		
-		while((searchResponse = this.context.getLedger().get(search, TransferParticle.class, Spin.UP)) != null)
+		while((searchResponseFuture = this.context.getLedger().get(search, Spin.UP)).get().isEmpty() == false)
 		{
-			this.unconsumed.addAll(searchResponse.getResults());
+			for (SearchResult searchResult : searchResponseFuture.get().getResults())
+				this.unconsumed.add(searchResult.getPrimitive());
 			
-			searchOffset = searchResponse.getQuery().getOffset();
+			searchOffset = searchResponseFuture.get().getQuery().getOffset();
 			if (searchOffset == -1)
 				break;
 			
-			search = new SearchQuery(Identifier.from(key.getPublicKey().asHash()), Atom.class, Order.ASCENDING, searchOffset, 25);
+			search = new AssociationSearchQuery(key.getPublicKey().asHash(), Atom.class, Order.ASCENDING, searchOffset, 25);
 		}
 		
 		this.context.getEvents().register(this.atomListener);
@@ -219,10 +226,28 @@ public class SimpleWallet implements AutoCloseable
 	
 	public Future<AtomCertificate> submit(Atom atom) throws InterruptedException
 	{
+		AtomFuture atomFuture;
+		synchronized(this.futures)
+		{
+			atomFuture = this.futures.get(atom.getHash());
+			if (atomFuture == null)
+			{
+				atomFuture = new AtomFuture(atom);
+				this.futures.put(atom.getHash(), atomFuture);
+				
+				if (SimpleWallet.this.context.getLedger().submit(atom) == false)
+				{
+					atomFuture.completeExceptionally(new RejectedExecutionException("Submission of atom "+atom.getHash()+" failed"));
+					this.futures.remove(atom.getHash());
+					return atomFuture;
+				}
+			}
+			else
+				return atomFuture;
+		}
+
 		synchronized(this.unconsumed)
 		{
-			Future<AtomCertificate> future = SimpleWallet.this.context.getLedger().submit(atom);
-			
 			atom.getParticles(TransferParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
@@ -232,7 +257,7 @@ public class SimpleWallet implements AutoCloseable
 					SimpleWallet.this.unconsumed.remove(tp.get(Spin.UP));
 			});
 			
-			return future;
+			return atomFuture;
 		}
 	}
 
@@ -240,8 +265,9 @@ public class SimpleWallet implements AutoCloseable
 	private EventListener atomListener = new EventListener() 
 	{
 		@Subscribe
-		public void on(final AtomCommittedEvent event) 
+		public void on(final AtomAcceptedEvent event) 
 		{
+			SimpleWallet.this.futures.remove(event.getAtom().getHash(), event.getAtom());
 			event.getAtom().getParticles(TransferParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
@@ -256,8 +282,9 @@ public class SimpleWallet implements AutoCloseable
 		}
 		
 		@Subscribe
-		public void on(final AtomErrorEvent event) 
+		public void on(final AtomRejectedEvent event) 
 		{
+			SimpleWallet.this.futures.remove(event.getAtom().getHash(), event.getAtom());
 			event.getAtom().getParticles(TransferParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
@@ -274,6 +301,7 @@ public class SimpleWallet implements AutoCloseable
 		@Subscribe
 		public void on(final AtomCommitTimeoutEvent event) 
 		{
+			SimpleWallet.this.futures.remove(event.getAtom().getHash(), event.getAtom());
 			event.getAtom().getParticles(TransferParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
@@ -290,6 +318,7 @@ public class SimpleWallet implements AutoCloseable
 		@Subscribe
 		public void on(final AtomExceptionEvent event) 
 		{
+			SimpleWallet.this.futures.remove(event.getAtom().getHash(), event.getAtom());
 			event.getAtom().getParticles(TransferParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)

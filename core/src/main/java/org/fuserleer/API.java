@@ -2,25 +2,27 @@ package org.fuserleer;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.common.Agent;
 import org.fuserleer.common.Match;
 import org.fuserleer.common.Order;
-import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Indexable;
-import org.fuserleer.database.IndexablePrimitive;
-import org.fuserleer.database.Identifier;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
+import org.fuserleer.ledger.AssociationSearchQuery;
+import org.fuserleer.ledger.AssociationSearchResponse;
 import org.fuserleer.ledger.Block;
 import org.fuserleer.ledger.BlockHeader;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
-import org.fuserleer.ledger.SearchQuery;
-import org.fuserleer.ledger.SearchResponse;
+import org.fuserleer.ledger.SearchResult;
+import org.fuserleer.ledger.StateAddress;
+import org.fuserleer.ledger.StateSearchQuery;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.Particle;
@@ -29,8 +31,8 @@ import org.fuserleer.ledger.atoms.UniqueParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
+import org.fuserleer.network.discovery.StandardDiscoveryFilter;
 import org.fuserleer.network.peers.Peer;
-import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.DsonOutput.Output;
@@ -109,13 +111,14 @@ public class API implements Service
 					JSONObject statistics = new JSONObject();
 					
 					JSONObject processed = new JSONObject();
-					processed.put("atoms", API.this.context.getMetaData().get("ledger.processed.atoms", 0l));
-					processed.put("particles", API.this.context.getMetaData().get("ledger.processed.particles", 0l));
+					processed.put("local", API.this.context.getMetaData().get("ledger.processed.atoms.local", 0l));
+					processed.put("total", API.this.context.getMetaData().get("ledger.processed.atoms.total", 0l));
 					statistics.put("processed", processed);
 
 					JSONObject throughput = new JSONObject();
-					throughput.put("atoms", API.this.context.getMetaData().get("ledger.throughput.atoms", 0l));
-					throughput.put("particles", API.this.context.getMetaData().get("ledger.throughput.particles", 0l));
+					throughput.put("local", API.this.context.getMetaData().get("ledger.throughput.atoms.local", 0l));
+					throughput.put("total", API.this.context.getMetaData().get("ledger.throughput.atoms.total", 0l));
+					throughput.put("shards", API.this.context.getMetaData().get("ledger.throughput.shards.touched", 0l));
 					statistics.put("throughput", throughput);
 
 					statistics.put("finality", API.this.context.getMetaData().get("ledger.commit.latency", 0l));
@@ -237,15 +240,32 @@ public class API implements Service
 				
 				try
 				{
-					Atom atom = API.this.context.getLedger().get(Indexable.from(decodeQueryValue(req.params("hash")), Atom.class));
-					if (atom == null)
-						status(responseJSON, 404, "Atom "+req.params("hash")+" not found");
+					SearchResult searchResult = null;
+					StateAddress stateAddress = new StateAddress(Atom.class, Hash.from(decodeQueryValue(req.params("hash"))));
+					Future<SearchResult> atomFuture = API.this.context.getLedger().get(new StateSearchQuery(stateAddress, Atom.class));
+					searchResult = atomFuture.get(5, TimeUnit.SECONDS);
+					if (searchResult == null)
+						status(responseJSON, 404, "Atom containing particle "+req.params("hash")+" not found");
 					else
 					{
+						Atom atom = searchResult.getPrimitive();
 						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
-						AtomCertificate certificate = API.this.context.getLedger().get(Indexable.from(atom.getHash(), AtomCertificate.class));
-						if (certificate != null)
-							responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
+						
+						Future<SearchResult> certificateFuture = API.this.context.getLedger().get(new StateSearchQuery(new StateAddress(Atom.class, atom.getHash()), AtomCertificate.class));
+						searchResult = certificateFuture.get(5, TimeUnit.SECONDS);
+						if (searchResult != null) 
+						{
+							try
+							{
+								AtomCertificate certificate = searchResult.getPrimitive();
+								responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
+							}
+							catch (Exception ex)
+							{
+								apiLog.warn(API.this.context.getName()+": Certificate for atom "+atom.getHash()+" failed", ex);
+							}
+						}
+						
 						status(responseJSON, 200);
 					}
 				}
@@ -264,15 +284,33 @@ public class API implements Service
 				
 				try
 				{
-					Atom atom = API.this.context.getLedger().get(Indexable.from(decodeQueryValue(req.params("hash")), Particle.class), Atom.class);
-					if (atom == null)
-						status(responseJSON, 404, "Particle "+req.params("hash")+" not found");
+					SearchResult searchResult = null;
+					StateAddress stateAddress = new StateAddress(Particle.class, Hash.from(decodeQueryValue(req.params("hash"))));
+					Future<SearchResult> atomFuture = API.this.context.getLedger().get(new StateSearchQuery(stateAddress, Atom.class));
+
+					searchResult = atomFuture.get(5, TimeUnit.SECONDS);
+					if (searchResult == null)
+						status(responseJSON, 404, "Atom containing particle "+req.params("hash")+" not found");
 					else
 					{
+						Atom atom = searchResult.getPrimitive();
 						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
-						AtomCertificate certificate = API.this.context.getLedger().get(Indexable.from(atom.getHash(), AtomCertificate.class));
-						if (certificate != null)
-							responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
+						
+						Future<SearchResult> certificateFuture = API.this.context.getLedger().get(new StateSearchQuery(new StateAddress(Atom.class, atom.getHash()), AtomCertificate.class));
+						searchResult = certificateFuture.get(5, TimeUnit.SECONDS);
+						if (searchResult != null) 
+						{
+							try
+							{
+								AtomCertificate certificate = searchResult.getPrimitive();
+								responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
+							}
+							catch (Exception ex)
+							{
+								apiLog.warn(API.this.context.getName()+": Certificate for atom "+atom.getHash()+" containing particle "+req.params("hash")+" failed", ex);
+							}
+						}
+						
 						status(responseJSON, 200);
 					}
 				}
@@ -284,31 +322,40 @@ public class API implements Service
 				
 				return responseJSON.toString(4);
 			});
-			
-			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/indexable/:container/:key", (req, res) -> 
+
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/state/:scope/:key", (req, res) -> 
 			{
 				JSONObject responseJSON = new JSONObject();
 				
 				try
 				{
-					Class<?> container = Serialization.getInstance().getClassForId(req.params("container").toLowerCase());
-					if (container == null)
-						status(responseJSON, 404, "Container "+req.params("container").toLowerCase()+" not found");
-					else if (IndexablePrimitive.class.isAssignableFrom(container) == false)
-						status(responseJSON, 500, "Container "+req.params("container").toLowerCase()+" is not a indexable");
+					StateAddress stateAddress = new StateAddress(Hash.from(decodeQueryValue(req.params("scope"))), Hash.from(decodeQueryValue(req.params("key"))));
+					Future<SearchResult> atomFuture = API.this.context.getLedger().get(new StateSearchQuery(stateAddress, Atom.class));
+
+					SearchResult searchResult = atomFuture.get(5, TimeUnit.SECONDS);
+					if (searchResult == null) 
+						status(responseJSON, 404, "Atom containing state "+req.params("scope")+":"+req.params("key")+" not found");
 					else
 					{
-						Atom atom = API.this.context.getLedger().get(Indexable.from(decodeQueryValue(req.params("key")), (Class<? extends IndexablePrimitive>) container), Atom.class);
-						if (atom == null)
-							status(responseJSON, 404, "Indexable "+req.params("container").toLowerCase()+":"+req.params("key")+" not found");
-						else
+						Atom atom = searchResult.getPrimitive();
+						responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
+						
+						Future<SearchResult> certificateFuture = API.this.context.getLedger().get(new StateSearchQuery(new StateAddress(Atom.class, atom.getHash()), AtomCertificate.class));
+						searchResult = certificateFuture.get(5, TimeUnit.SECONDS);
+						if (searchResult != null) 
 						{
-							responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
-							AtomCertificate certificate = API.this.context.getLedger().get(Indexable.from(atom.getHash(), AtomCertificate.class));
-							if (certificate != null)
+							try
+							{
+								AtomCertificate certificate = searchResult.getPrimitive();
 								responseJSON.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.ALL));
-							status(responseJSON, 200);
+							}
+							catch (Exception ex)
+							{
+								apiLog.warn(API.this.context.getName()+": Certificate for atom containing state "+req.params("scope")+":"+req.params("key").toLowerCase()+" failed", ex);
+							}
 						}
+						
+						status(responseJSON, 200);
 					}
 				}
 				catch(Throwable t)
@@ -320,49 +367,43 @@ public class API implements Service
 				return responseJSON.toString(4);
 			});
 
-			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/identifier/:container/:key", (req, res) -> 
+			spark.Spark.get(this.context.getConfiguration().get("api.url", DEFAULT_API_PATH)+"/ledger/association", (req, res) -> 
 			{
 				JSONObject responseJSON = new JSONObject();
 				
 				try
 				{
-					@SuppressWarnings("unchecked")
-					Class<?> container = Serialization.getInstance().getClassForId(req.params("container").toLowerCase());
-					if (container == null)
-						status(responseJSON, 404, "Container "+req.params("container").toLowerCase()+" not found");
-					else if (Primitive.class.isAssignableFrom(container) == false)
-						status(responseJSON, 500, "Container "+req.params("container").toLowerCase()+" is not a primitive");
+					Match matchon = Match.valueOf(req.queryParamOrDefault("match", "all").toUpperCase());
+					List<Hash> associations = new ArrayList<Hash>();
+					for (String secondary : req.queryParamOrDefault("keys", "").split(","))
+						associations.add(Hash.from(decodeQueryValue(secondary)));
+					
+					if (matchon.equals(Match.ALL) && associations.size() > 1)
+					{
+						Hash concatenated = Hash.from(associations);
+						associations.clear();
+						associations.add(concatenated);
+					}
+					
+					Order order = Order.valueOf(req.queryParamOrDefault("order", Order.ASCENDING.toString()).toUpperCase());
+					int offset = Integer.parseInt(req.queryParamOrDefault("offset", "-1"));
+					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
+					Future<AssociationSearchResponse> responseFuture = API.this.context.getLedger().get(new AssociationSearchQuery(associations, matchon, Atom.class, order, offset, limit), Spin.UP);
+					Collection<SearchResult> responseResults = responseFuture.get(5, TimeUnit.SECONDS).getResults();
+
+					if (responseResults.isEmpty() == true)
+						status(responseJSON, 404, "No instances found associated with "+req.queryParamOrDefault("keys", ""));
 					else
 					{
-						Match matchon = Match.valueOf(req.queryParamOrDefault("match", "all").toUpperCase());
-						List<Identifier> identifiers = new ArrayList<Identifier>();
-						for (String secondary : req.params("key").split(","))
-							identifiers.add(Identifier.from(decodeQueryValue(secondary)));
-						
-						if (matchon.equals(Match.ALL) && identifiers.size() > 1)
+						JSONArray atomsArray  = new JSONArray();
+						for (SearchResult result : responseResults)
 						{
-							Identifier concatenated = Identifier.from(identifiers);
-							identifiers.clear();
-							identifiers.add(concatenated);
+							Atom atom  = result.getPrimitive();
+							atomsArray.put(Serialization.getInstance().toJsonObject(atom, Output.ALL));
 						}
-						
-						SearchResponse<Atom> atoms = null;
-						Order order = Order.valueOf(req.queryParamOrDefault("order", Order.ASCENDING.toString()).toUpperCase());
-						int offset = Integer.parseInt(req.queryParamOrDefault("offset", "-1"));
-						int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
-						atoms = API.this.context.getLedger().get(new SearchQuery(identifiers, matchon, (Class<? extends Primitive>) container, order, offset, limit), Atom.class, Spin.UP);
-	
-						if (atoms.isEmpty() == true)
-							status(responseJSON, 404, "Identifier "+req.params("container").toLowerCase()+":"+req.params("key")+" no instances found");
-						else
-						{
-							JSONArray atomsArray  = new JSONArray();
-							for (Atom atom : atoms.getResults())
-								atomsArray.put(Serialization.getInstance().toJsonObject(atom, Output.ALL));
-	
-							responseJSON.put("atoms", atomsArray);
-							status(responseJSON, 200, atoms.getQuery().getOffset(), atoms.getNextOffset(), limit, atoms.isEOR());
-						}
+
+						responseJSON.put("atoms", atomsArray);
+						status(responseJSON, 200, responseFuture.get().getQuery().getOffset(), responseFuture.get().getNextOffset(), limit, responseFuture.get().isEOR());
 					}
 				}
 				catch(Throwable t)
@@ -405,7 +446,7 @@ public class API implements Service
 				{
 					int offset = Integer.parseInt(req.queryParamOrDefault("offset", "0"));
 					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
-					List<Peer> peers = API.this.context.getNetwork().getPeerStore().get(offset, limit, new StandardPeerFilter(API.this.context));
+					List<Peer> peers = API.this.context.getNetwork().getPeerStore().get(offset, limit, new StandardDiscoveryFilter(API.this.context));
 					
 					if (peers.isEmpty())
 					{
@@ -440,14 +481,13 @@ public class API implements Service
 					String bodyString = req.body();
 					JSONObject nodeJSON = new JSONObject(bodyString);
 					String nodeIP = req.ip();
-					URI nodeURI = Agent.getURI(nodeIP, nodeJSON.getInt("port"));
+					URI nodeURI = Agent.getURI(nodeIP, nodeJSON.getInt("network_port"));
 					Peer nodePeer = new Peer(nodeURI, Serialization.getInstance().fromJsonObject(nodeJSON, Node.class), Protocol.TCP, Protocol.UDP);
 					API.this.context.getNetwork().getPeerStore().store(nodePeer);
 
 					int offset = Integer.parseInt(req.queryParamOrDefault("offset", "0"));
 					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
-					List<Peer> peers = API.this.context.getNetwork().getPeerStore().get(offset, limit, new StandardPeerFilter(API.this.context));
-					
+					List<Peer> peers = API.this.context.getNetwork().getPeerStore().get(offset, limit, new StandardDiscoveryFilter(API.this.context));
 					if (peers.isEmpty())
 					{
 						status(responseJSON, 404, "No peers found");
@@ -577,6 +617,6 @@ public class API implements Service
 		if (value.startsWith(JacksonCodecConstants.U256_STR_VALUE) == true)
 			return UInt256.from(value.substring(JacksonCodecConstants.STR_VALUE_LEN));
 
-		return value;
+		return value.toLowerCase();
 	}
 }

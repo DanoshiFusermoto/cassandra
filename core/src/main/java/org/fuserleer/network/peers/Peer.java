@@ -201,7 +201,7 @@ public class Peer extends BasicObject
 	public void setNode(Node node)
 	{
 		this.node = node;
-		setURI(Agent.getURI(getURI().getHost(), node.getPort()));
+		setURI(Agent.getURI(getURI().getHost(), node.getNetworkPort()));
 	}
 
 	public boolean isBanned()

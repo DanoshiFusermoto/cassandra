@@ -21,6 +21,7 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.executors.ScheduledExecutable;
+import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
@@ -145,8 +146,7 @@ public class PeerHandler implements Service
 						// Chunk the sending of Peers so that UDP can handle it
 						// TODO make this better!
 						PeersMessage peersMessage = new PeersMessage();
-						List<Peer> peers = PeerHandler.this.context.getNetwork().getPeerStore().get(new StandardPeerFilter(PeerHandler.this.context));
-	
+						List<Peer> peers = PeerHandler.this.context.getNetwork().getPeerStore().get(new AllPeersFilter());
 						for (Peer p : peers)
 						{
 							if (p.getNode().getIdentity().equals(peer.getNode().getIdentity()))
@@ -255,34 +255,29 @@ public class PeerHandler implements Service
 						}
 	
 						// Ping / pongs //
-						List<ConnectedPeer> peers = PeerHandler.this.context.getNetwork().get(PeerState.CONNECTED);
-						if (peers.isEmpty() == false)
+						for (ConnectedPeer peer : PeerHandler.this.context.getNetwork().get(StandardPeerFilter.build(PeerHandler.this.context).setStates(PeerState.CONNECTED)))
 						{
-							for (ConnectedPeer peer : peers)
+							synchronized(PeerHandler.this.pings)
 							{
-								synchronized(PeerHandler.this.pings)
+								if (PeerHandler.this.pings.remove(peer) != null)
 								{
-									if (PeerHandler.this.pings.remove(peer) != null)
-									{
-										peer.disconnect("Did not respond to ping");
-										continue;
-									}
-									
-									PeerPingMessage ping = new PeerPingMessage(PeerHandler.this.context.getNode(), System.nanoTime()+peer.getURI().hashCode());
-									PeerHandler.this.pings.put(peer, ping.getNonce());
-									networklog.debug("Pinging "+peer+" with nonce '"+ping.getNonce()+"'");
-	
-									PeerHandler.this.context.getNetwork().getMessaging().send(ping, peer);
-								}		
-							}
+									peer.disconnect("Did not respond to ping");
+									continue;
+								}
+								
+								PeerPingMessage ping = new PeerPingMessage(PeerHandler.this.context.getNode(), System.nanoTime()+peer.getURI().hashCode());
+								PeerHandler.this.pings.put(peer, ping.getNonce());
+								networklog.debug("Pinging "+peer+" with nonce '"+ping.getNonce()+"'");
+
+								PeerHandler.this.context.getNetwork().getMessaging().send(ping, peer);
+							}		
 						}
 
 						// Peer refresh
-						peers = PeerHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED);
-						if (peers.isEmpty() == false)
+						for (ConnectedPeer connectedPeer : PeerHandler.this.context.getNetwork().get(StandardPeerFilter.build(PeerHandler.this.context).setStates(PeerState.CONNECTED).
+							    																						setShardGroup(ShardMapper.toShardGroup(PeerHandler.this.context.getNode().getIdentity(), PeerHandler.this.context.getLedger().numShardGroups()))))
 						{
-							for (ConnectedPeer peer : peers)
-								PeerHandler.this.context.getNetwork().getMessaging().send(new GetPeersMessage(), peer);
+							PeerHandler.this.context.getNetwork().getMessaging().send(new GetPeersMessage(), connectedPeer);
 						}
 					}
 					catch (Throwable t)
@@ -329,12 +324,12 @@ public class PeerHandler implements Service
 		return this.context.getNetwork().getPeerStore().get(identity);
 	}
 
-	public List<Peer> getPeers(PeerFilter filter) throws IOException
+	public List<Peer> getPeers(PeerFilter<Peer> filter) throws IOException
 	{
 		return getPeers(filter, null);
 	}
 
-	public List<Peer> getPeers(PeerFilter filter, Comparator<Peer> sorter) throws IOException
+	public List<Peer> getPeers(PeerFilter<Peer> filter, Comparator<Peer> sorter) throws IOException
 	{
 		List<Peer> peers = new ArrayList<Peer>();
 		peers = this.context.getNetwork().getPeerStore().get(filter);
@@ -350,12 +345,12 @@ public class PeerHandler implements Service
 		return getPeers(identities, null, null);
 	}
 
-	public List<Peer> getPeers(Collection<ECPublicKey> identities, PeerFilter filter) throws IOException
+	public List<Peer> getPeers(Collection<ECPublicKey> identities, PeerFilter<Peer> filter) throws IOException
 	{
 		return getPeers(identities, filter, null);
 	}
 
-	public List<Peer> getPeers(Collection<ECPublicKey> identities, PeerFilter filter, Comparator<Peer> sorter) throws IOException
+	public List<Peer> getPeers(Collection<ECPublicKey> identities, PeerFilter<Peer> filter, Comparator<Peer> sorter) throws IOException
 	{
 		List<Peer> peers = new ArrayList<Peer>();
 

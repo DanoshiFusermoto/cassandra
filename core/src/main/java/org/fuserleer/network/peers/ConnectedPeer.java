@@ -192,6 +192,6 @@ public abstract class ConnectedPeer extends Peer
 	@Override
 	public String toString()
 	{
-		return getProtocol()+" "+super.toString()+" "+getState()+" "+getDirection();
+		return getProtocol()+" "+(getNode().isSynced() == true ? "synced" : "unsynced")+" "+super.toString()+" "+getState()+" "+getDirection();
 	}
 }

@@ -40,7 +40,7 @@ public final class UDPPeer extends ConnectedPeer implements Polymorphic
 	}
 
 	@Override
-	public void send(Message message) throws IOException
+	public synchronized void send(Message message) throws IOException
 	{
 		try
 		{

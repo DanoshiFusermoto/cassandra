@@ -165,14 +165,14 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 	}
 	
 	@Override
-	public void send(Message message) throws IOException
+	public synchronized void send(Message message) throws IOException
 	{
 		internalConnect();
 		
 		try
 		{
 			byte[] bytes = Message.prepare(message, getContext().getNode().getKey());
-			if (bytes.length > 1<<20)
+			if (bytes.length > Message.MAX_MESSAGE_SIZE)
 				throw new IOException("Message to "+this+" of size "+bytes.length+" is too large");
 	
 			this.socket.getOutputStream().write(bytes);

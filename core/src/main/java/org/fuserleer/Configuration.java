@@ -3,7 +3,6 @@ package org.fuserleer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Properties;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -48,7 +47,7 @@ public class Configuration extends PersistedConfiguration
 
 	public Configuration(Configuration configuration)
 	{
-		super(new Properties(configuration.properties));
+		super(configuration.properties);
 		
 		this.commandLine = configuration.commandLine;
 	}

@@ -14,6 +14,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @SerializerId2("crypto.merkle.proof")
 public class MerkleProof implements Hashable
 {
+	public static final int BYTES = Hash.BYTES + Byte.BYTES; 
+	
 	public enum Branch 
 	{
         LEFT,
@@ -76,7 +78,7 @@ public class MerkleProof implements Hashable
     
 	public byte[] toByteArray() throws IOException
 	{
-		ByteBuffer bao = ByteBuffer.allocate(Hash.BYTES + Byte.BYTES);
+		ByteBuffer bao = ByteBuffer.allocate(MerkleProof.BYTES);
 		bao.put(this.hash.toByteArray());
 		bao.put((byte) this.direction.ordinal());
 		return bao.array();

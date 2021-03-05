@@ -163,7 +163,8 @@ public class Bytes {
 	 * @param s The string to convert
 	 * @return The decoded bytes
 	 */
-	public static byte[] fromBase64String(String s) {
+	public static byte[] fromBase64String(String s) 
+	{
 		return Base64.getDecoder().decode(s);
 	}
 

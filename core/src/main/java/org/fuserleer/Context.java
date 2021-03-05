@@ -32,6 +32,7 @@ import org.fuserleer.node.Node;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.Serialization;
+import org.java_websocket.WebSocketImpl;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableMap;
@@ -133,9 +134,12 @@ public final class Context implements Service
 			Configuration contextConfig = new Configuration(Objects.requireNonNull(configuration));
 			if (configuration.has("network.address") == false)
 				contextConfig.set("network.address", "127.0.0.1");
-			
 			contextConfig.set("network.port", configuration.get("network.port", Universe.getDefault().getPort())+incrementer.get());
 			contextConfig.set("network.udp", configuration.get("network.udp", Universe.getDefault().getPort())+incrementer.get());
+			
+			if (configuration.has("websocket.address") == false)
+				contextConfig.set("websocket.address", contextConfig.get("network.address"));
+			contextConfig.set("websocket.port", configuration.get("websocket.port", WebSocketImpl.DEFAULT_PORT)+incrementer.get());
 			
 			if (incrementer.get() > 0)
 			{
@@ -146,8 +150,6 @@ public final class Context implements Service
 				seedSet.add(contextConfig.get("network.address"));
 				contextConfig.set("network.seeds", String.join(",", seedSet));
 			}
-			else
-				contextConfig.set("network.seeds", "");
 
 			LocalNode node = LocalNode.create(name.toLowerCase(), contextConfig);
 			for (Context context : contexts.values())

@@ -312,10 +312,15 @@ class PendingBlock implements Hashable
 				return this.header.getCertificate();
 			}
 			
+			ECSignatureBag certificate;
 			if (this.votes.isEmpty() == true)
+			{
 				blocksLog.warn("Block header has no votes "+this.header);
-				
-			ECSignatureBag certificate = new ECSignatureBag(this.votes.values().stream().collect(Collectors.toMap(v -> v.getOwner(), v -> v.getSignature())));
+				certificate = new ECSignatureBag();
+			}
+			else
+				certificate = new ECSignatureBag(this.votes.values().stream().collect(Collectors.toMap(v -> v.getOwner(), v -> v.getSignature())));
+
 			this.header.setCertificate(certificate);
 			return certificate;
 		}

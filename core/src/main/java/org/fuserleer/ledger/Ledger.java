@@ -31,7 +31,8 @@ import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
-import org.fuserleer.ledger.messages.GetAtomPoolMessage;
+import org.fuserleer.ledger.events.SyncBlockEvent;
+import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
@@ -260,7 +261,12 @@ public final class Ledger implements Service, LedgerInterface
 	}
 	
 	private long nextSyncStatusCheck = 0;
-	public synchronized boolean isSynced()
+	public boolean isSynced()
+	{
+		return isSynced(false);
+	}
+	
+	synchronized boolean isSynced(boolean check)
 	{
 		if (this.context.getConfiguration().has("singleton") == true)
 		{
@@ -269,7 +275,7 @@ public final class Ledger implements Service, LedgerInterface
 		}
 		
 		// No point doing this multiple times per second as is quite expensive
-		if (Time.getSystemTime() > this.nextSyncStatusCheck)
+		if (Time.getSystemTime() > this.nextSyncStatusCheck || check == true)
 		{
 			this.nextSyncStatusCheck = Time.getSystemTime()+TimeUnit.SECONDS.toMillis(1);
 			
@@ -400,26 +406,35 @@ public final class Ledger implements Service, LedgerInterface
 		private long lastThroughputShardsTouched = 0;
 
 		@Subscribe
-		public void on(BlockCommittedEvent event) 
+		public void on(final BlockCommittedEvent event) 
 		{
-			if (event.getBlock().getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
+			process(event.getBlock());
+		}
+		
+		@Subscribe
+		public void on(final SyncBlockEvent event) 
+		{
+			process(event.getBlock());
+		}
+
+		private void process(final Block block)
+		{
+			if (block.getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
 			{
-				ledgerLog.error(Ledger.this.context.getName()+": Committed block "+event.getBlock().getHeader()+" does not attach to current head "+Ledger.this.getHead());
+				ledgerLog.error(Ledger.this.context.getName()+": Committed block "+block.getHeader()+" does not attach to current head "+Ledger.this.getHead());
 				return;
 			}
 			
 			// Clone it to make sure to extract the header
-			Ledger.this.setHead(event.getBlock().getHeader());
-			Ledger.this.context.getNode().setHead(event.getBlock().getHeader());
-			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+event.getBlock().getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+event.getBlock().getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+event.getBlock().getHeader());
-			Ledger.this.context.getMetaData().increment("ledger.commits.atoms.local", event.getBlock().getHeader().getInventory(InventoryType.ATOMS).size());
-			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", event.getBlock().getHeader().getInventory(InventoryType.CERTIFICATES).size());
+			Ledger.this.setHead(block.getHeader());
+			Ledger.this.context.getNode().setHead(block.getHeader());
+			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
+			Ledger.this.context.getMetaData().increment("ledger.commits.atoms.local", block.getHeader().getInventory(InventoryType.ATOMS).size());
+			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", block.getHeader().getInventory(InventoryType.CERTIFICATES).size());
 			
-			Ledger.this.voteRegulator.addVotePower(event.getBlock().getHeader().getHeight(), event.getBlock().getHeader().getOwner());
-			
-			long numShardGroups = Ledger.this.numShardGroups(event.getBlock().getHeader().getHeight());
+			long numShardGroups = Ledger.this.numShardGroups(block.getHeader().getHeight());
 			Set<Long> shardGroupsTouched = new HashSet<Long>();
-			for (AtomCertificate atomCertificate : event.getBlock().getCertificates())
+			for (AtomCertificate atomCertificate : block.getCertificates())
 			{
 				shardGroupsTouched.clear();
 				for (StateCertificate stateCertificate : atomCertificate.getAll())
@@ -433,10 +448,10 @@ public final class Ledger implements Service, LedgerInterface
 					this.lastThroughputRejectedAtoms++;
 			}
 
-			for (Atom atom : event.getBlock().getAtoms())
+			for (Atom atom : block.getAtoms())
 			{
 				if (ledgerLog.hasLevel(Logging.DEBUG))
-					ledgerLog.debug(Ledger.this.context.getName()+": Pre-committed atom "+atom.getHash()+" in "+event.getBlock().getHeader());
+					ledgerLog.debug(Ledger.this.context.getName()+": Pre-committed atom "+atom.getHash()+" in "+block.getHeader());
 				
 				Ledger.this.context.getMetaData().increment("ledger.processed.atoms.local");
 				this.lastThroughputPersistedAtoms++;
@@ -475,16 +490,16 @@ public final class Ledger implements Service, LedgerInterface
     	@Subscribe
 		public void on(PeerConnectedEvent event)
 		{
-    		try
+/*    		try
     		{
     			// TODO needs requesting on connect from synced nodes only
     			if (event.getPeer().getProtocol().equals(Protocol.TCP) == true)
-    				Ledger.this.context.getNetwork().getMessaging().send(new GetAtomPoolMessage(), event.getPeer());
+    				Ledger.this.context.getNetwork().getMessaging().send(new GetAtomPoolInventoryMessage(), event.getPeer());
     		}
     		catch (IOException ioex)
     		{
     			ledgerLog.error("Failed to request atom pool items from "+event.getPeer(), ioex);
-    		}
+    		}*/
 		}
 	};
 }

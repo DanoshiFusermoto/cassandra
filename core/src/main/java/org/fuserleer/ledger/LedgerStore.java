@@ -782,16 +782,13 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			}
 			
 			// Update primitives
-			if (this.primitiveLRW.containsKey(block.getHash()) == false)
-			{
-				DatabaseEntry blockHeaderKey = new DatabaseEntry(block.getHash().toByteArray());
-				DatabaseEntry blockHeaderValue = new DatabaseEntry(Serialization.getInstance().toDson(block.getHeader(), DsonOutput.Output.PERSIST));
-				status = this.primitives.put(transaction, blockHeaderKey, blockHeaderValue);
-			    if (status.equals(OperationStatus.SUCCESS) != true) 
-		    		throw new DatabaseException("Failed to commit block header "+block.getHash()+" due to " + status.name());
-			    
-				LRWItems.put(block.getHash(), block.getHash());
-			}
+			DatabaseEntry blockHeaderKey = new DatabaseEntry(block.getHash().toByteArray());
+			DatabaseEntry blockHeaderValue = new DatabaseEntry(Serialization.getInstance().toDson(block.getHeader(), DsonOutput.Output.PERSIST));
+			status = this.primitives.put(transaction, blockHeaderKey, blockHeaderValue);
+		    if (status.equals(OperationStatus.SUCCESS) != true) 
+	    		throw new DatabaseException("Failed to commit block header "+block.getHash()+" due to " + status.name());
+		    
+			LRWItems.put(block.getHash(), block.getHash());
 
 		    for (Atom atom : block.getAtoms())
 		    {

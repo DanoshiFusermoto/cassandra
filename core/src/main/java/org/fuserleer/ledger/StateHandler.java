@@ -47,7 +47,9 @@ import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
+import org.fuserleer.ledger.messages.GetBlockPoolInventoryMessage;
 import org.fuserleer.ledger.messages.GetStateMessage;
+import org.fuserleer.ledger.messages.GetStatePoolInventoryMessage;
 import org.fuserleer.ledger.messages.StateMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -55,11 +57,13 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.messages.BroadcastInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
+import org.fuserleer.node.Node;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.UInt256;
 
@@ -93,7 +97,10 @@ public final class StateHandler implements Service
 	//		 A compromise solution is to persist them for a period of time as with the atom and state votes and prune 
 	//		 periodically, as the state input information is generally transient.
 	//		 Complexity required to do either is beyond immediate Cassandra scope, so for now just cheat and keep a largish cache.
-	private final Cache<Hash, Optional<UInt256>>	stateInputs = CacheBuilder.newBuilder().maximumSize(1<<18).build();
+	private final Cache<Hash, Optional<UInt256>> stateInputs = CacheBuilder.newBuilder().maximumSize(1<<18).build();
+	
+	// Sync cache
+	private final Multimap<Long, StateCertificate> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
 	
 	// TODO clean this up, used to track responses (or lack of) for state provisioning requests to remote validators and trigger peer tasks
 	private final Set<Hash> outboundProvisionRequests = Collections.synchronizedSet(new HashSet<Hash>());
@@ -415,7 +422,7 @@ public final class StateHandler implements Service
 				long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
 				if (stateShardGroup == localShardGroup)
 				{
-					cerbyLog.error(StateHandler.this.context.getName()+": Received state certificate "+stateCertificate.getState()+" not for local shard");
+					cerbyLog.error(StateHandler.this.context.getName()+": Received state certificate "+stateCertificate.getState()+" for local shard");
 					// 	Disconnected and ban
 					return;
 				}
@@ -598,7 +605,72 @@ public final class StateHandler implements Service
 			}
 		});
 		
+		// SYNC //
+		this.context.getNetwork().getMessaging().register(GetStatePoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetStatePoolInventoryMessage>()
+		{
+			@Override
+			public void process(final GetStatePoolInventoryMessage getStatePoolInventoryMessage, final ConnectedPeer peer)
+			{
+				Executor.getInstance().submit(new Executable() 
+				{
+					@Override
+					public void execute()
+					{
+						try
+						{
+							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
+								cerbyLog.debug(StateHandler.this.context.getName()+": State pool (certificates) inventory request from "+peer);
+							
+							final List<PendingAtom> pendingAtoms = new ArrayList<PendingAtom>(StateHandler.this.atoms.values());
+							final List<Hash> stateCertificateInventory = new ArrayList<Hash>();
+							for (PendingAtom pendingAtom : pendingAtoms)
+							{
+								for (StateCertificate stateCertificate : pendingAtom.getCertificates())
+								{
+									long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(stateCertificate.getHeight());
+									long stateShardGroup = ShardMapper.toShardGroup(stateCertificate.getState().get(), numShardGroups);
+									long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
+									
+									if (localShardGroup == stateShardGroup)
+										// Handled by sending state votes from state pool 
+										continue;
+									
+									stateCertificateInventory.add(stateCertificate.getHash());
+								}
+							}
+							
+							synchronized(StateHandler.this.syncCache)
+							{
+								long height = StateHandler.this.context.getLedger().getHead().getHeight();
+								while (height > getStatePoolInventoryMessage.getHead().getHeight())
+								{
+									StateHandler.this.syncCache.get(height).forEach(sc -> stateCertificateInventory.add(sc.getHash()));
+									height--;
+								}
+							}
+							
+							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
+								cerbyLog.debug(StateHandler.this.context.getName()+": Broadcasting about "+stateCertificateInventory+" pool state certificates to "+peer);
+
+							int offset = 0;
+							while(offset < stateCertificateInventory.size())
+							{
+								BroadcastInventoryMessage stateCertificateInventoryMessage = new BroadcastInventoryMessage(stateCertificateInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, stateCertificateInventory.size())), StateCertificate.class);
+								StateHandler.this.context.getNetwork().getMessaging().send(stateCertificateInventoryMessage, peer);
+								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+							}
+						}
+						catch (Exception ex)
+						{
+							cerbyLog.error(StateHandler.this.context.getName()+": ledger.messages.state.get.pool " + peer, ex);
+						}
+					}
+				});
+			}
+		});
+		
 		this.context.getEvents().register(this.syncBlockListener);
+		this.context.getEvents().register(this.asyncBlockListener);
 		this.context.getEvents().register(this.syncAtomListener);
 		this.context.getEvents().register(this.certificateListener);
 		
@@ -621,6 +693,7 @@ public final class StateHandler implements Service
 		
 		this.context.getEvents().unregister(this.certificateListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
+		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
 		
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
@@ -691,6 +764,13 @@ public final class StateHandler implements Service
 			pendingAtom.getStateKeys().forEach(sk -> {
 				StateHandler.this.states.remove(sk, pendingAtom);
 				StateHandler.this.outboundProvisionRequests.remove(Hash.from(sk.get(), pendingAtom.getHash()));
+				
+				long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
+				long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
+				long provisionShardGroup = ShardMapper.toShardGroup(sk.get(), numShardGroups);
+	        	if (provisionShardGroup != localShardGroup)
+	        		this.syncCache.put(this.context.getLedger().getHead().getHeight(), pendingAtom.getCertificate(sk));
+
 			});
 			pendingAtom.getStateKeys().forEach(sk -> StateHandler.this.provisionQueue.remove(sk, pendingAtom));
 		}
@@ -699,34 +779,6 @@ public final class StateHandler implements Service
 			StateHandler.this.lock.writeLock().unlock();
 		}
 	}
-	
-/*	private void processRequests(final PendingAtom pendingAtom)
-	{
-		StateHandler.this.lock.writeLock().lock();
-		try
-		{
-			for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
-			{
-				try
-				{
-					Optional<UInt256> value = pendingAtom.getInput(stateKey);
-					if (value == null)
-						value = Optional.ofNullable(StateHandler.this.context.getLedger().getLedgerStore().get(stateKey));
-					
-					processRequests(pendingAtom.getHash(), stateKey, value.orElse(null));
-				}
-				catch (Exception ex)
-				{
-					cerbyLog.error(StateHandler.this.getName()+": Unable to honour any state requests for "+stateKey+" locked by atom "+pendingAtom, ex);
-				}
-			}
-		}
-		finally
-		{
-			StateHandler.this.lock.writeLock().unlock();
-		}
-	}*/
-
 	
 	private void processRequests(final Hash atom, final StateKey<?, ?> stateKey, final UInt256 value)
 	{
@@ -826,6 +878,18 @@ public final class StateHandler implements Service
 			StateHandler.this.lock.writeLock().unlock();
 		}
 	}
+	
+	void queue(PendingAtom pendingAtom)
+	{
+		for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
+		{
+			if (StateHandler.this.states.putIfAbsent(stateKey, pendingAtom) != null)
+				cerbyLog.warn(StateHandler.this.context.getName()+": State "+stateKey+" should be absent for "+pendingAtom.getHash());
+				
+			if (StateHandler.this.provisionQueue.putIfAbsent(stateKey, pendingAtom) != null)
+				cerbyLog.warn(StateHandler.this.context.getName()+": State "+stateKey+" should be absent for "+pendingAtom.getHash());
+		}
+	}
 
 	// PARTICLE CERTIFICATE LISTENER //
 	private EventListener certificateListener = new EventListener()
@@ -914,6 +978,28 @@ public final class StateHandler implements Service
 		}
 	};
 
+	// ASYNC BLOCK LISTENER //
+	private EventListener asyncBlockListener = new EventListener()
+	{
+		@Subscribe
+		public void on(BlockCommittedEvent blockCommittedEvent)
+		{
+			synchronized(StateHandler.this.syncCache)
+			{
+				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
+				if (trimTo > 0)
+				{
+					Iterator<Long> syncCacheKeyIterator = StateHandler.this.syncCache.keySet().iterator();
+					while(syncCacheKeyIterator.hasNext() == true)
+					{
+						if (syncCacheKeyIterator.next() < trimTo)
+							syncCacheKeyIterator.remove();
+					}
+				}
+			}
+		}
+	};
+
 	// SYNC BLOCK LISTENER //
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
@@ -965,14 +1051,7 @@ public final class StateHandler implements Service
 
                 		// TODO provisioning queue should only have ONE entry for a state address due to locking.  Verify!
 						Set<StateKey<?, ?>> stateKeys = StateHandler.this.context.getLedger().getStateAccumulator().provision(event.getBlock().getHeader(), pendingAtom);
-						for (StateKey<?, ?> stateKey : stateKeys)
-						{
-							if (StateHandler.this.states.putIfAbsent(stateKey, pendingAtom) != null)
-								cerbyLog.warn(StateHandler.this.context.getName()+": State "+stateKey+" should be absent for "+pendingAtom.getHash());
-								
-							if (StateHandler.this.provisionQueue.putIfAbsent(stateKey, pendingAtom) != null)
-								cerbyLog.warn(StateHandler.this.context.getName()+": State "+stateKey+" should be absent for "+pendingAtom.getHash());
-						}
+						queue(pendingAtom);
 					}
 				}
 				catch (Exception ex)

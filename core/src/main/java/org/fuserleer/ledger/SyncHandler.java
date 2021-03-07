@@ -12,13 +12,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Indexable;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
@@ -26,7 +26,11 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
-import org.fuserleer.ledger.events.BlockCommittedEvent;
+import org.fuserleer.ledger.atoms.AtomCertificate;
+import org.fuserleer.ledger.events.SyncBlockEvent;
+import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
+import org.fuserleer.ledger.messages.GetBlockPoolInventoryMessage;
+import org.fuserleer.ledger.messages.GetStatePoolInventoryMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockMessage;
 import org.fuserleer.ledger.messages.InventoryMessage;
@@ -34,13 +38,14 @@ import org.fuserleer.ledger.messages.SyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.SyncBlockMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Protocol;
+import org.fuserleer.network.messages.NodeMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
+import org.fuserleer.network.peers.filters.StandardPeerFilter;
 
 import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
@@ -52,6 +57,7 @@ public class SyncHandler implements Service
 	private static final Logger syncLog = Logging.getLogger("sync");
 	
 	private final Context context;
+	private final Map<Hash, PendingAtom> atoms;
 	private final Map<Hash, Block> blocks;
 	private final Set<Hash> blocksRequested;
 	private final TreeMultimap<ConnectedPeer, Hash> blockInventories;
@@ -70,7 +76,10 @@ public class SyncHandler implements Service
 					{
 						Thread.sleep(TimeUnit.SECONDS.toMillis(1));
 						
-						List<ConnectedPeer> syncPeers = SyncHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED); 
+						long localShardGroup = ShardMapper.toShardGroup(SyncHandler.this.context.getNode().getIdentity(), SyncHandler.this.context.getLedger().numShardGroups());
+						List<ConnectedPeer> syncPeers = SyncHandler.this.context.getNetwork().get(StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).
+							    																  setShardGroup(localShardGroup));
+
 						if (syncPeers.isEmpty() == true)
 							continue;
 
@@ -81,8 +90,7 @@ public class SyncHandler implements Service
 						try
 						{
 							// Wait for block requests to finish or fail
-							if (SyncHandler.this.blocksRequested.isEmpty() == false || 
-								SyncHandler.this.context.getNetwork().get(Protocol.TCP, PeerState.CONNECTED).isEmpty() == true)
+							if (SyncHandler.this.blocksRequested.isEmpty() == false)
 								continue;
 							
 							// Find committable block //
@@ -103,8 +111,8 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
-								long blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getCertificate().getSigners());
-								if (blockVotePower < SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(Collections.singleton(SyncHandler.this.context.getLedger().getShardGroup(SyncHandler.this.context.getNode().getIdentity()))))
+								long blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, block.getHeader().getCertificate().getSigners());
+								if (blockVotePower < SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(block.getHeader().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, Collections.singleton(localShardGroup)))
 									continue;
 								
 								if (bestBlock == null || 
@@ -150,53 +158,117 @@ public class SyncHandler implements Service
 								}
 							}
 	
-							// Clean out inventories that are committed and maybe ask for some blocks //
-							for (ConnectedPeer syncPeer : syncPeers)
+							// Is local replica now synced?
+							if(SyncHandler.this.context.getLedger().isSynced(true) == true)
 							{
-								try
+								synchronized(SyncHandler.this.atoms)
 								{
-									if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false)
-										continue;
-									
-									Iterator<Hash> inventoryIterator = SyncHandler.this.blockInventories.get(syncPeer).iterator();
-									while(inventoryIterator.hasNext() == true)
+									// Inject remaining atoms that may be in a pending consensus phase
+									for (PendingAtom pendingAtom : SyncHandler.this.atoms.values())
 									{
-										Hash block = inventoryIterator.next();
-										if (SyncHandler.this.blocks.containsKey(block) == true || 
-											SyncHandler.this.context.getLedger().getLedgerStore().has(Indexable.from(block, BlockHeader.class)) == CommitState.COMMITTED || 
-											Longs.fromByteArray(block.toByteArray()) <= SyncHandler.this.context.getLedger().getHead().getHeight())
-											inventoryIterator.remove();
+										SyncHandler.this.context.getLedger().getAtomHandler().inject(pendingAtom);
+										SyncHandler.this.context.getLedger().getStateHandler().queue(pendingAtom);
 									}
-								}
-								catch (Exception ex)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Inventory management of "+syncPeer+" failed", ex);
-								}
 
-								try
-								{
-									if (SyncHandler.this.blockInventories.containsKey(syncPeer) == true)
-										SyncHandler.this.requestBlocks(syncPeer, SyncHandler.this.blockInventories.get(syncPeer));
+									SyncHandler.this.atoms.clear();
 								}
-								catch (Exception ex)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Block request from "+syncPeer+" failed", ex);
-								}
-							}
-							
-							// Fetch some inventory? //
-							for (ConnectedPeer syncPeer : syncPeers)
-							{
-								if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false || 
-									SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == true)
+								
+								// Tell all sync peers we're synced
+								NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
+								for (ConnectedPeer syncPeer : syncPeers)
 								{
 									try
 									{
-										SyncHandler.this.context.getNetwork().getMessaging().send(new GetSyncBlockInventoryMessage(SyncHandler.this.context.getLedger().getHead().getHash()), syncPeer);
+										SyncHandler.this.context.getNetwork().getMessaging().send(nodeMessage, syncPeer);
+									}
+									catch (IOException ioex)
+									{
+										syncLog.error("Could not send synced declaration to "+syncPeer, ioex);
+									}
+								}
+								
+								// Requests for current block pool, atom pool and state consensus primitives
+								ConnectedPeer blockPoolInventoryPeer = syncPeers.get(ThreadLocalRandom.current().nextInt(syncPeers.size()));
+								try
+								{
+									SyncHandler.this.context.getNetwork().getMessaging().send(new GetBlockPoolInventoryMessage(SyncHandler.this.context.getLedger().getHead()), blockPoolInventoryPeer);
+								}
+								catch (Exception ex)
+								{
+									syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetBlockPoolInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+blockPoolInventoryPeer, ex);
+								}
+
+								ConnectedPeer atomPoolInventoryPeer = syncPeers.get(ThreadLocalRandom.current().nextInt(syncPeers.size()));
+								try
+								{
+									SyncHandler.this.context.getNetwork().getMessaging().send(new GetAtomPoolInventoryMessage(SyncHandler.this.context.getLedger().getHead()), atomPoolInventoryPeer);
+								}
+								catch (Exception ex)
+								{
+									syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetAtomPoolInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+blockPoolInventoryPeer, ex);
+								}
+
+								ConnectedPeer statePoolInventoryPeer = syncPeers.get(ThreadLocalRandom.current().nextInt(syncPeers.size()));
+								try
+								{
+									SyncHandler.this.context.getNetwork().getMessaging().send(new GetStatePoolInventoryMessage(SyncHandler.this.context.getLedger().getHead()), statePoolInventoryPeer);
+								}
+								catch (Exception ex)
+								{
+									syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetStatePoolInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+blockPoolInventoryPeer, ex);
+								}
+
+							}
+							else
+							{
+								// Clean out inventories that are committed and maybe ask for some blocks //
+								for (ConnectedPeer syncPeer : syncPeers)
+								{
+									try
+									{
+										if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false)
+											continue;
+										
+										Iterator<Hash> inventoryIterator = SyncHandler.this.blockInventories.get(syncPeer).iterator();
+										while(inventoryIterator.hasNext() == true)
+										{
+											Hash block = inventoryIterator.next();
+											if (SyncHandler.this.blocks.containsKey(block) == true || 
+												SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, block)) == CommitStatus.COMMITTED || 
+												Longs.fromByteArray(block.toByteArray()) <= SyncHandler.this.context.getLedger().getHead().getHeight())
+												inventoryIterator.remove();
+										}
 									}
 									catch (Exception ex)
 									{
-										syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetSyncBlockInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
+										syncLog.error(SyncHandler.this.context.getName()+": Inventory management of "+syncPeer+" failed", ex);
+									}
+	
+									try
+									{
+										if (SyncHandler.this.blockInventories.containsKey(syncPeer) == true)
+											SyncHandler.this.requestBlocks(syncPeer, SyncHandler.this.blockInventories.get(syncPeer));
+									}
+									catch (Exception ex)
+									{
+										syncLog.error(SyncHandler.this.context.getName()+": Block request from "+syncPeer+" failed", ex);
+									}
+								}
+								
+								// Fetch some inventory? //
+								for (ConnectedPeer syncPeer : syncPeers)
+								{
+									if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false || 
+										SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == true)
+									{
+										try
+										{
+											SyncHandler.this.context.getNetwork().getMessaging().send(new GetSyncBlockInventoryMessage(SyncHandler.this.context.getLedger().getHead().getHash()), syncPeer);
+										}
+										catch (Exception ex)
+										{
+											syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetSyncBlockInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
+										}
 									}
 								}
 							}
@@ -227,6 +299,7 @@ public class SyncHandler implements Service
 		this.blocksRequested = Collections.synchronizedSet(new HashSet<Hash>());
 		this.blockInventories = TreeMultimap.create(Ordering.natural(), Collections.reverseOrder());
 		this.blocks = Collections.synchronizedMap(new HashMap<Hash, Block>());
+		this.atoms = Collections.synchronizedMap(new HashMap<Hash, PendingAtom>());
 	}
 
 	@Override
@@ -246,7 +319,7 @@ public class SyncHandler implements Service
 						return;
 					}
 
-					if (SyncHandler.this.context.getLedger().getLedgerStore().has(Indexable.from(syncBlockMessage.getBlock().getHeader().getHash(), BlockHeader.class)) == CommitState.COMMITTED)
+					if (SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, syncBlockMessage.getBlock().getHeader().getHash())) == CommitStatus.COMMITTED)
 					{
 						syncLog.warn(SyncHandler.this.context.getName()+": Block is committed "+syncBlockMessage.getBlock().getHeader()+" from "+peer);
 						return;
@@ -526,11 +599,9 @@ public class SyncHandler implements Service
 		}
 	}
 	
-	void commit(LinkedList<Block> branch) throws IOException, ValidationException
+	void commit(LinkedList<Block> branch) throws IOException, ValidationException, StateLockedException
 	{
-		StateAccumulator accumulator = this.context.getLedger().getStateAccumulator();
-
-		// TODO the blocks will be committed separately when sharded
+		// TODO pretty much everything, limited validation here currently, just accepts blocks and atoms almost on faith
 		List<Block> committedBlocks = new ArrayList<Block>();
 		Iterator<Block> blockIterator = branch.descendingIterator();
 		while(blockIterator.hasNext() == true)
@@ -541,17 +612,31 @@ public class SyncHandler implements Service
 			
 			for (Atom atom : block.getAtoms())
 			{
-				StateMachine stateMachine = new StateMachine(this.context, block.getHeader(), atom, accumulator);
-				stateMachine.lock();
-				stateMachine.precommit();
-				accumulator.commit(atom);
+				if (this.atoms.containsKey(atom.getHash()) == true)
+					throw new ValidationException(this.context.getName()+": Atom "+atom.getHash()+" in block "+block.getHash()+" is already pending!");
+				
+				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
+				this.atoms.put(pendingAtom.getHash(), pendingAtom);
+				pendingAtom.prepare();
+				this.context.getLedger().getStateAccumulator().lock(pendingAtom);
+				pendingAtom.provision(block.getHeader());
+			}
+
+			for (AtomCertificate certificate : block.getCertificates())
+			{
+				PendingAtom pendingAtom = this.atoms.get(certificate.getAtom());
+				if (pendingAtom == null)
+					throw new ValidationException(this.context.getName()+": Pending atom "+certificate.getAtom()+" not found for certificate "+certificate.getHash()+" in block "+block.getHash());
+				pendingAtom.setCertificate(certificate);
+				this.context.getLedger().getStateAccumulator().commit(pendingAtom);
+				this.atoms.remove(pendingAtom.getHash());
 			}
 		}
 		
 		for (Block committedBlock : committedBlocks)
 		{
-			BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock);
-			SyncHandler.this.context.getEvents().post(blockCommittedEvent); // TODO Might need to catch exceptions on this from synchronous listeners
+			SyncBlockEvent syncBlockEvent = new SyncBlockEvent(committedBlock);
+			SyncHandler.this.context.getEvents().post(syncBlockEvent); // TODO Might need to catch exceptions on this from synchronous listeners
 		}
 	}
 	

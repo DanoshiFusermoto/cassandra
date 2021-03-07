@@ -37,11 +37,14 @@ import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.PendingBranch.Type;
+import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.messages.BlockMessage;
+import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
 import org.fuserleer.ledger.messages.GetBlockMessage;
+import org.fuserleer.ledger.messages.GetBlockPoolInventoryMessage;
 import org.fuserleer.ledger.messages.GetBlocksMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -49,13 +52,18 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.messages.BroadcastInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
+import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.MathUtils;
 import org.fuserleer.utils.Shorts;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Longs;
 import com.sleepycat.je.OperationStatus;
@@ -208,6 +216,9 @@ public class BlockHandler implements Service
 	private final AtomicReference<BlockHeader> 	lastGenerated;
 	private PendingBranch 						bestBranch;
 
+	// Sync cache
+	private final Multimap<Long, BlockVote> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
+
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
 	BlockHandler(Context context, VoteRegulator voteRegulator)
@@ -356,7 +367,7 @@ public class BlockHandler implements Service
 				}
 			}
 		});
-
+		
 		// BLOCK VOTE GOSSIP //
 		this.context.getNetwork().getGossipHandler().register(BlockVote.class, new GossipFilter(this.context) 
 		{
@@ -579,6 +590,80 @@ public class BlockHandler implements Service
 				});
 			}
 		});
+		
+		// SYNC //
+		this.context.getNetwork().getMessaging().register(GetBlockPoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetBlockPoolInventoryMessage>()
+		{
+			@Override
+			public void process(final GetBlockPoolInventoryMessage getBlockPoolInventoryMessage, final ConnectedPeer peer)
+			{
+				Executor.getInstance().submit(new Executable() 
+				{
+					@Override
+					public void execute()
+					{
+						try
+						{
+							if (blocksLog.hasLevel(Logging.DEBUG) == true)
+								blocksLog.debug(BlockHandler.this.context.getName()+": Block pool inventory request from "+peer);
+
+							
+							if (blocksLog.hasLevel(Logging.DEBUG) == true)
+								blocksLog.debug(BlockHandler.this.context.getName()+": Broadcasting about "+BlockHandler.this.pendingBlocks.size()+" pool blocks to "+peer);
+
+							List<PendingBlock> pendingBlocks = new ArrayList<PendingBlock>(BlockHandler.this.pendingBlocks.values());
+							List<Hash> pendingBlockInventory = new ArrayList<Hash>();
+							List<Hash> blockVoteInventory = new ArrayList<Hash>();
+							
+							for (PendingBlock pendingBlock : pendingBlocks)
+							{
+								pendingBlockInventory.add(pendingBlock.getHash());
+								
+								for (BlockVote blockVote : pendingBlock.votes())
+									blockVoteInventory.add(blockVote.getHash());
+							}
+							
+							long height = BlockHandler.this.context.getLedger().getHead().getHeight();
+							while (height > getBlockPoolInventoryMessage.getHead().getHeight())
+							{
+								pendingBlockInventory.add(BlockHandler.this.context.getLedger().getLedgerStore().get(height));
+								height--;
+							}
+							
+							synchronized(BlockHandler.this.syncCache)
+							{
+								height = BlockHandler.this.context.getLedger().getHead().getHeight();
+								while (height > getBlockPoolInventoryMessage.getHead().getHeight())
+								{
+									BlockHandler.this.syncCache.get(height).forEach(bv -> blockVoteInventory.add(bv.getHash()));
+									height--;
+								}
+							}
+							
+							int offset = 0;
+							while(offset < pendingBlockInventory.size())
+							{
+								BroadcastInventoryMessage pendingBlockInventoryMessage = new BroadcastInventoryMessage(pendingBlockInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, pendingBlockInventory.size())), BlockHeader.class);
+								BlockHandler.this.context.getNetwork().getMessaging().send(pendingBlockInventoryMessage, peer);
+								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+							}
+
+							offset = 0;
+							while(offset < blockVoteInventory.size())
+							{
+								BroadcastInventoryMessage blockVoteInventoryMessage = new BroadcastInventoryMessage(blockVoteInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, blockVoteInventory.size())), BlockVote.class);
+								BlockHandler.this.context.getNetwork().getMessaging().send(blockVoteInventoryMessage, peer);
+								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+							}
+						}
+						catch (Exception ex)
+						{
+							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.get.pool " + peer, ex);
+						}
+					}
+				});
+			}
+		});
 
 		this.context.getEvents().register(this.asyncBlockListener);
 
@@ -785,7 +870,10 @@ public class BlockHandler implements Service
 			{
 				Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
 				if (pendingBlockEntry.getValue().getHeight() <= branchHeadHeight)
+				{
 					pendingBlocksIterator.remove();
+					this.syncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes());
+				}
 			}
 
 			// Signal the commit
@@ -1150,6 +1238,20 @@ public class BlockHandler implements Service
 			{
 				BlockHandler.this.voteClock.set(blockCommittedEvent.getBlock().getHeader().getHeight());
 				BlockHandler.this.currentVote.set(null);
+			}
+			
+			synchronized(BlockHandler.this.syncCache)
+			{
+				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
+				if (trimTo > 0)
+				{
+					Iterator<Long> syncCacheKeyIterator = BlockHandler.this.syncCache.keySet().iterator();
+					while(syncCacheKeyIterator.hasNext() == true)
+					{
+						if (syncCacheKeyIterator.next() < trimTo)
+							syncCacheKeyIterator.remove();
+					}
+				}
 			}
 		}
 	};

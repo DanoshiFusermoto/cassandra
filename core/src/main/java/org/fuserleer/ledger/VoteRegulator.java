@@ -20,6 +20,7 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
+import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 
@@ -305,26 +306,42 @@ public final class VoteRegulator implements Service
 		}
 	}
 	
+	void update(final Block block)
+	{
+		Objects.requireNonNull(block, "Block for vote update is null");
+		
+		addVotePower(block.getHeader().getHeight(), block.getHeader().getOwner());
+
+		long numShardGroups = VoteRegulator.this.context.getLedger().numShardGroups(block.getHeader().getHeight());
+		long localShardGroup = ShardMapper.toShardGroup(VoteRegulator.this.context.getNode().getIdentity(), numShardGroups);
+		for (AtomCertificate atomCertificate : block.getCertificates())
+		{
+			Multimap<Long, ECPublicKey> shardGroupNodes = HashMultimap.create();
+			for (StateCertificate stateCertificate : atomCertificate.getAll())
+				shardGroupNodes.putAll(ShardMapper.toShardGroup(stateCertificate.getState().get(), numShardGroups), stateCertificate.getSignatures().getSigners());
+			
+			for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())
+			{
+				if (votePowerBloom.getShardGroup() != localShardGroup)
+					processVoteBloom(shardGroupNodes.get(votePowerBloom.getShardGroup()), votePowerBloom);
+			}
+		}
+	}
+	
 	// BLOCK LISTENER //
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(BlockCommittedEvent blockCommittedEvent) 
+		public void on(BlockCommittedEvent event) 
 		{
-			long numShardGroups = VoteRegulator.this.context.getLedger().numShardGroups(blockCommittedEvent.getBlock().getHeader().getHeight());
-			long localShardGroup = ShardMapper.toShardGroup(VoteRegulator.this.context.getNode().getIdentity(), numShardGroups);
-			for (AtomCertificate atomCertificate : blockCommittedEvent.getBlock().getCertificates())
-			{
-				Multimap<Long, ECPublicKey> shardGroupNodes = HashMultimap.create();
-				for (StateCertificate stateCertificate : atomCertificate.getAll())
-					shardGroupNodes.putAll(ShardMapper.toShardGroup(stateCertificate.getState().get(), numShardGroups), stateCertificate.getSignatures().getSigners());
-				
-				for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())
-				{
-					if (votePowerBloom.getShardGroup() != localShardGroup)
-						processVoteBloom(shardGroupNodes.get(votePowerBloom.getShardGroup()), votePowerBloom);
-				}
-			}
+			update(event.getBlock());
 		}
+		
+		@Subscribe
+		public void on(final SyncBlockEvent event) 
+		{
+			update(event.getBlock());
+		}
+
 	};
 }

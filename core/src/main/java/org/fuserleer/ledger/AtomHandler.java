@@ -1,10 +1,13 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -16,10 +19,12 @@ import org.fuserleer.Service;
 import org.fuserleer.collections.MappedBlockingQueue;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
+import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
@@ -27,13 +32,22 @@ import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.BlockCommittedEvent;
+import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.messages.BroadcastInventoryMessage;
+import org.fuserleer.network.messaging.MessageProcessor;
+import org.fuserleer.network.peers.ConnectedPeer;
+import org.fuserleer.node.Node;
 
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
 
 public class AtomHandler implements Service
@@ -44,6 +58,9 @@ public class AtomHandler implements Service
 	
 	private final Map<Hash, PendingAtom> pendingAtoms = Collections.synchronizedMap(new HashMap<>());
 	private final MappedBlockingQueue<Hash, Atom> atomQueue;
+
+	// Sync cache
+	private final Multimap<Long, PendingAtom> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
 	
 	private Executable atomProcessor = new Executable()
 	{
@@ -188,8 +205,84 @@ public class AtomHandler implements Service
 				return fetched;
 			}
 		});
+		
+		this.context.getNetwork().getMessaging().register(GetAtomPoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetAtomPoolInventoryMessage>()
+		{
+			@Override
+			public void process(final GetAtomPoolInventoryMessage getAtomPoolInventoryMessage, final ConnectedPeer peer)
+			{
+				Executor.getInstance().submit(new Executable() 
+				{
+					@Override
+					public void execute()
+					{
+						try
+						{
+							if (atomsLog.hasLevel(Logging.DEBUG) == true)
+								atomsLog.debug(AtomHandler.this.context.getName()+": Atom pool inventory request from "+peer);
+
+							// TODO will cause problems when pool is BIG
+							List<PendingAtom> pendingAtoms = new ArrayList<PendingAtom>(AtomHandler.this.pendingAtoms.values());
+							final List<Hash> pendingAtomInventory = new ArrayList<Hash>();
+							final List<Hash> atomVoteInventory = new ArrayList<Hash>();
+							
+							for (PendingAtom pendingAtom : pendingAtoms)
+							{
+								pendingAtomInventory.add(pendingAtom.getHash());
+								
+								for (AtomVote atomVote : pendingAtom.votes())
+									atomVoteInventory.add(atomVote.getHash());
+							}
+							
+							synchronized(AtomHandler.this.syncCache)
+							{
+								long height = AtomHandler.this.context.getLedger().getHead().getHeight();
+								while (height >= getAtomPoolInventoryMessage.getHead().getHeight())
+								{
+									AtomHandler.this.syncCache.get(height).forEach(pa -> {
+										pendingAtomInventory.add(pa.getHash());
+										
+										for (AtomVote atomVote : pa.votes())
+											atomVoteInventory.add(atomVote.getHash());
+									});
+									height--;
+								}
+							}
+							
+							if (atomsLog.hasLevel(Logging.DEBUG) == true)
+								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+pendingAtomInventory.size()+" pool atoms to "+peer);
+
+							int offset = 0;
+							while(offset < pendingAtomInventory.size())
+							{
+								BroadcastInventoryMessage pendingAtomInventoryMessage = new BroadcastInventoryMessage(pendingAtomInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, pendingAtomInventory.size())), Atom.class);
+								AtomHandler.this.context.getNetwork().getMessaging().send(pendingAtomInventoryMessage, peer);
+								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+							}
+
+							if (atomsLog.hasLevel(Logging.DEBUG) == true)
+								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+atomVoteInventory.size()+" pool atom votes to "+peer);
+
+							offset = 0;
+							while(offset < atomVoteInventory.size())
+							{
+								BroadcastInventoryMessage atomVoteInventoryMessage = new BroadcastInventoryMessage(atomVoteInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, atomVoteInventory.size())), AtomVote.class);
+								AtomHandler.this.context.getNetwork().getMessaging().send(atomVoteInventoryMessage, peer);
+								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+							}
+						}
+						catch (Exception ex)
+						{
+							atomsLog.error(AtomHandler.this.context.getName()+": ledger.messages.atom.get.pool " + peer, ex);
+						}
+					}
+				});
+			}
+		});
+
 
 		this.context.getEvents().register(this.syncAtomListener);
+		this.context.getEvents().register(this.asyncBlockListener);
 
 		Thread atomProcessorThread = new Thread(this.atomProcessor);
 		atomProcessorThread.setDaemon(true);
@@ -202,6 +295,7 @@ public class AtomHandler implements Service
 	{
 		this.atomProcessor.terminate(true);
 
+		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
@@ -239,6 +333,22 @@ public class AtomHandler implements Service
 			return pendingAtom;
 		}
 	}
+	
+	void inject(final PendingAtom pendingAtom)
+	{
+		Objects.requireNonNull(pendingAtom, "Pending atom for injection is null");
+		
+		if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == false)
+			throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" for injection must be in PROVISIONING state");
+		
+		synchronized(this.pendingAtoms)
+		{
+			if (this.pendingAtoms.containsKey(pendingAtom.getHash()) == true)
+				throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" is already present");
+			
+			this.pendingAtoms.put(pendingAtom.getHash(), pendingAtom);
+		}
+	}
 
 	boolean submit(Atom atom) throws InterruptedException
 	{
@@ -255,30 +365,57 @@ public class AtomHandler implements Service
 
 		return false;
 	}
+
+	// ASYNC BLOCK LISTENER //
+	private EventListener asyncBlockListener = new EventListener()
+	{
+		@Subscribe
+		public void on(BlockCommittedEvent blockCommittedEvent)
+		{
+			synchronized(AtomHandler.this.syncCache)
+			{
+				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
+				if (trimTo > 0)
+				{
+					Iterator<Long> syncCacheKeyIterator = AtomHandler.this.syncCache.keySet().iterator();
+					while(syncCacheKeyIterator.hasNext() == true)
+					{
+						if (syncCacheKeyIterator.next() < trimTo)
+							syncCacheKeyIterator.remove();
+					}
+				}
+			}
+		}
+	};
+
 	// SYNC ATOM LISTENER //
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
 		public void on(final AtomAcceptedEvent event) 
 		{
+    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
 			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
 		}
 
 		@Subscribe
 		public void on(final AtomRejectedEvent event) 
 		{
+    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
 			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
 		}
 
 		@Subscribe
 		public void on(final AtomCommitTimeoutEvent event) 
 		{
+    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
 			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
 		}
 		
 		@Subscribe
 		public void on(final AtomDiscardedEvent event) 
 		{
+    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
 			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
 		}
 		
@@ -288,6 +425,7 @@ public class AtomHandler implements Service
 			if (event.getException() instanceof StateLockedException)
 				return;
 				
+    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
 			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
 		}
 	};

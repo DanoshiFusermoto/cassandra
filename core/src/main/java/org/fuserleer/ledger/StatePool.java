@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -29,11 +30,13 @@ import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.crypto.MerkleProof.Branch;
+import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
+import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
@@ -41,15 +44,23 @@ import org.fuserleer.ledger.events.AtomExecutedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
+import org.fuserleer.ledger.messages.GetStatePoolInventoryMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.messages.BroadcastInventoryMessage;
+import org.fuserleer.network.messaging.MessageProcessor;
+import org.fuserleer.network.peers.ConnectedPeer;
+import org.fuserleer.node.Node;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.UInt256;
 
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
+import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
 import com.sleepycat.je.OperationStatus;
 
@@ -337,9 +348,12 @@ public final class StatePool implements Service
 									{
 										stateVotesToBroadcast.add(stateVote);
 										
-										StateCertificate stateCertificate = pendingState.buildCertificate();
-										if (stateCertificate != null)
-											StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+										if (pendingState.getCertificate() == null)
+										{
+											StateCertificate stateCertificate = pendingState.buildCertificate();
+											if (stateCertificate != null)
+												StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+										}
 									}
 								}
 								catch (Exception ex)
@@ -438,6 +452,9 @@ public final class StatePool implements Service
 	private final MappedBlockingQueue<Hash, StateVote> votesToCountQueue;
 	private final Map<Hash, PendingState> states = new HashMap<Hash, PendingState>();
 	
+	// Sync cache
+	private final Multimap<Long, StateVote> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
+
 	StatePool(Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
@@ -584,8 +601,62 @@ public final class StatePool implements Service
 				}
 			}
 		});
+		
+		// SYNC //
+		this.context.getNetwork().getMessaging().register(GetStatePoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetStatePoolInventoryMessage>()
+		{
+			@Override
+			public void process(final GetStatePoolInventoryMessage getStatePoolInventoryMessage, final ConnectedPeer peer)
+			{
+				Executor.getInstance().submit(new Executable() 
+				{
+					@Override
+					public void execute()
+					{
+						try
+						{
+							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+								statePoolLog.debug(StatePool.this.context.getName()+": State pool (votes) inventory request from "+peer);
+							
+							List<PendingState> pendingStates = new ArrayList<PendingState>(StatePool.this.states.values());
+							List<Hash> stateVoteInventory = new ArrayList<Hash>();
+							for (PendingState pendingState : pendingStates)
+							{
+								for (StateVote stateVote : pendingState.votes())
+									stateVoteInventory.add(stateVote.getHash());
+							}
+							
+							synchronized(StatePool.this.syncCache)
+							{
+								long height = StatePool.this.context.getLedger().getHead().getHeight();
+								while (height > getStatePoolInventoryMessage.getHead().getHeight())
+								{
+									StatePool.this.syncCache.get(height).forEach(sv -> stateVoteInventory.add(sv.getHash()));
+									height--;
+								}
+							}
+							
+							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+								statePoolLog.debug(StatePool.this.context.getName()+": Broadcasting about "+stateVoteInventory+" pool state votes to "+peer);
 
-		this.context.getEvents().register(this.syncBlockListener);
+							int offset = 0;
+							while(offset < stateVoteInventory.size())
+							{
+								BroadcastInventoryMessage stateVoteInventoryMessage = new BroadcastInventoryMessage(stateVoteInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, stateVoteInventory.size())), StateVote.class);
+								StatePool.this.context.getNetwork().getMessaging().send(stateVoteInventoryMessage, peer);
+								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+							}
+						}
+						catch (Exception ex)
+						{
+							statePoolLog.error(StatePool.this.context.getName()+": ledger.messages.state.get.pool " + peer, ex);
+						}
+					}
+				});
+			}
+		});
+
+		this.context.getEvents().register(this.asyncBlockListener);
 		this.context.getEvents().register(this.syncAtomListener);
 		
 		Thread voteProcessorThread = new Thread(this.voteProcessor);
@@ -599,7 +670,7 @@ public final class StatePool implements Service
 	{
 		this.voteProcessor.terminate(true);
 		this.context.getEvents().unregister(this.syncAtomListener);
-		this.context.getEvents().unregister(this.syncBlockListener);
+		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 
@@ -680,6 +751,8 @@ public final class StatePool implements Service
 				if (pendingState == null)
 					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
 
+				this.syncCache.putAll(this.context.getLedger().getHead().getHeight(), pendingState.votes());
+
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.committed");
 			}
@@ -709,6 +782,8 @@ public final class StatePool implements Service
 				PendingState pendingState = this.states.remove(stateAtomBlockHash);
 				if (pendingState == null)
 					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
+				
+				this.syncCache.putAll(this.context.getLedger().getHead().getHeight(), pendingState.votes());
 				
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.aborted");
@@ -763,28 +838,25 @@ public final class StatePool implements Service
 		}
 	}
 
-	// SYNCHRONOUS BLOCK LISTENER //
-	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
+	// ASYNC BLOCK LISTENER //
+	private EventListener asyncBlockListener = new EventListener()
 	{
 		@Subscribe
-		public void on(final BlockCommittedEvent blockCommittedEvent) 
+		public void on(BlockCommittedEvent blockCommittedEvent)
 		{
-/*			StatePool.this.lock.writeLock().lock();
-			try
+			synchronized(StatePool.this.syncCache)
 			{
-				for (Hash atom : blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS))
+				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
+				if (trimTo > 0)
 				{
-					PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(atom);
-					if (pendingAtom == null)
-						throw new IllegalStateException(StatePool.this.context.getName()+": Pending atom "+atom+" not found");
-					
-					StatePool.this.add(pendingAtom);
+					Iterator<Long> syncCacheKeyIterator = StatePool.this.syncCache.keySet().iterator();
+					while(syncCacheKeyIterator.hasNext() == true)
+					{
+						if (syncCacheKeyIterator.next() < trimTo)
+							syncCacheKeyIterator.remove();
+					}
 				}
 			}
-			finally
-			{
-				StatePool.this.lock.writeLock().unlock();
-			}*/
 		}
 	};
 	

@@ -34,16 +34,12 @@ import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
-import org.fuserleer.ledger.messages.GetAtomPoolMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.messages.BroadcastInventoryMessage;
-import org.fuserleer.network.messaging.MessageProcessor;
-import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.CustomInteger;
 import org.fuserleer.utils.Longs;
@@ -235,45 +231,6 @@ public final class AtomPool implements Service
 					fetched.add(atomVote);
 				}
 				return fetched;
-			}
-		});
-
-		this.context.getNetwork().getMessaging().register(GetAtomPoolMessage.class, this.getClass(), new MessageProcessor<GetAtomPoolMessage>()
-		{
-			@Override
-			public void process(final GetAtomPoolMessage getAtomPoolMessage, final ConnectedPeer peer)
-			{
-				Executor.getInstance().submit(new Executable() 
-				{
-					@Override
-					public void execute()
-					{
-						try
-						{
-							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomPool.this.context.getName()+": Atom pool request from "+peer);
-
-							// TODO will cause problems when pool is BIG
-							// TODO what about the actual votes?
-							List<Atom> atoms = AtomPool.this.get();
-							
-							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomPool.this.context.getName()+": Broadcasting about "+atoms.size()+" pool atoms to "+peer);
-
-							int offset = 0;
-							while(offset < atoms.size())
-							{
-								BroadcastInventoryMessage atomBroadcastInventoryMessage = new BroadcastInventoryMessage(atoms.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, atoms.size())).stream().map(a -> a.getHash()).collect(Collectors.toList()), Atom.class);
-								AtomPool.this.context.getNetwork().getMessaging().send(atomBroadcastInventoryMessage, peer);
-								offset += BroadcastInventoryMessage.MAX_ITEMS; 
-							}
-						}
-						catch (Exception ex)
-						{
-							atomsLog.error(AtomPool.this.context.getName()+": ledger.messages.atom.get.pool " + peer, ex);
-						}
-					}
-				});
 			}
 		});
 

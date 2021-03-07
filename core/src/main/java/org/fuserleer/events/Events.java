@@ -9,6 +9,9 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.fuserleer.Context;
+import org.fuserleer.Service;
+import org.fuserleer.exceptions.StartupException;
+import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 
@@ -17,7 +20,7 @@ import com.google.common.eventbus.EventBus;
 import com.google.common.eventbus.SubscriberExceptionContext;
 import com.google.common.eventbus.SubscriberExceptionHandler;
 
-public final class Events
+public final class Events implements Service
 {
 	private static final Logger eventLog = Logging.getLogger("events");
 
@@ -37,23 +40,17 @@ public final class Events
 	}
 
 	private final Context		context;
-	private final EventBus		eventBus; 
-	private final AsyncEventBus	asyncEventBus; 
-	private final ExecutorService				eventExecutorService;
-	private final ExecutorThreadFactory			eventExecutorThreadFactory;
 	private final SubscriberExceptionHandler	exceptionHandler; 
 	private final SubscriberExceptionHandler	asyncExceptionHandler; 
+
+	private EventBus			eventBus; 
+	private AsyncEventBus		asyncEventBus; 
+	private ExecutorService		eventExecutorService;
+	private ExecutorThreadFactory	eventExecutorThreadFactory;
 
 	public Events(final Context context)
 	{
 		this.context = Objects.requireNonNull(context);
-		this.eventExecutorThreadFactory = new ExecutorThreadFactory();
-		
-		// TODO have EventHandler threads configurable?
-		int eventThreads = Math.max(1, Runtime.getRuntime().availableProcessors()/2);
-		if (this.context.getConfiguration().getCommandLine().hasOption("contexts") == true)
-			eventThreads = Math.max(1, Runtime.getRuntime().availableProcessors() / Integer.parseInt(this.context.getConfiguration().getCommandLine().getOptionValue("contexts")));
-		this.eventExecutorService = Executors.newFixedThreadPool(eventThreads, this.eventExecutorThreadFactory);
 		
 		this.exceptionHandler = new SubscriberExceptionHandler() 
 		{
@@ -63,7 +60,6 @@ public final class Events
 				eventLog.error(Events.this.context.getName(), throwable);
 			}
 		};
-		this.eventBus = new EventBus(this.exceptionHandler);
 		
 		this.asyncExceptionHandler = new SubscriberExceptionHandler() 
 		{
@@ -73,7 +69,29 @@ public final class Events
 				eventLog.error(Events.this.context.getName(), throwable);
 			}
 		};
+	}
+	
+	@Override
+	public void start() throws StartupException
+	{
+		this.eventExecutorThreadFactory = new ExecutorThreadFactory();
+		
+		// TODO have EventHandler threads configurable?
+		int eventThreads = Math.max(1, Runtime.getRuntime().availableProcessors()/2);
+		if (this.context.getConfiguration().getCommandLine().hasOption("contexts") == true)
+			eventThreads = Math.max(1, Runtime.getRuntime().availableProcessors() / Integer.parseInt(this.context.getConfiguration().getCommandLine().getOptionValue("contexts")));
+		this.eventExecutorService = Executors.newFixedThreadPool(eventThreads, this.eventExecutorThreadFactory);
+		
+		this.eventBus = new EventBus(this.exceptionHandler);
 		this.asyncEventBus = new AsyncEventBus(this.eventExecutorService, this.asyncExceptionHandler); 
+	}
+
+	@Override
+	public void stop() throws TerminationException
+	{
+		this.asyncEventBus = null;
+		this.eventBus = null;
+		this.eventExecutorService.shutdown();
 	}
 
 	public void post(final Event event)

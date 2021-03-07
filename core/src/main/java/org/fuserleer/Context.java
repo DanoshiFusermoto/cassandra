@@ -261,6 +261,7 @@ public final class Context implements Service
 	@Override
 	public void start() throws StartupException
 	{
+		this.events.start();
 		this.metaData.start();		
 		if (this.metaData.has("node.local") == true) 
 		{
@@ -312,6 +313,7 @@ public final class Context implements Service
 		this.network.stop();
 		this.metaDataTaskFuture.cancel(false);
 		this.metaData.stop();
+		this.events.stop();
 	}
 	
 	public void clean() throws IOException

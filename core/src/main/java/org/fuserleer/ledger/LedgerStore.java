@@ -1009,6 +1009,27 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		}
 	}
 
+	Hash head() throws DatabaseException
+	{
+		try(Cursor cursor = this.syncChain.openCursor(null, null))
+		{
+			DatabaseEntry key = new DatabaseEntry();
+			DatabaseEntry value = new DatabaseEntry();
+			OperationStatus status = cursor.getLast(key, value, LockMode.DEFAULT);
+			if (status.equals(OperationStatus.SUCCESS) == true)
+				return new Hash(value.getData());
+
+			return Universe.getDefault().getGenesis().getHash();
+        }
+		catch (Throwable t)
+		{
+			if (t instanceof DatabaseException)
+				throw (DatabaseException)t;
+			else
+				throw new DatabaseException(t);
+		}
+	}
+
 	Hash get(long height) throws DatabaseException
 	{
 		try

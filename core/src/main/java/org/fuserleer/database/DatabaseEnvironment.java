@@ -14,7 +14,6 @@ import org.fuserleer.Context;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 
-import com.ibm.icu.util.StringTrieBuilder.Option;
 import com.sleepycat.je.Database;
 import com.sleepycat.je.DatabaseConfig;
 import com.sleepycat.je.DatabaseEntry;

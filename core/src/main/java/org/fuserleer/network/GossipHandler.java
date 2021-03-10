@@ -194,7 +194,8 @@ public class GossipHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context);
 
-		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
+//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override

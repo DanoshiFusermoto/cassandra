@@ -558,9 +558,9 @@ public class PendingBranch
 			{
 				PendingBlock vertex = vertexIterator.next();
 				long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), this.context.getLedger().numShardGroups(vertex.getHeight()));
-				if (vertex.weight() >= this.context.getLedger().getVoteRegulator().getVotePowerThreshold(vertex.getHeight() - VoteRegulator.VOTE_POWER_MATURITY, Collections.singleton(localShardGroup)))
+				if (vertex.weight() >= this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(vertex.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, Collections.singleton(localShardGroup)))
 				{
-					blocksLog.info(this.context.getName()+": Found commit at block with weight "+vertex.weight()+"/"+this.context.getLedger().getVoteRegulator().getTotalVotePower(vertex.getHeight() - VoteRegulator.VOTE_POWER_MATURITY, localShardGroup)+" to commit list "+vertex);
+					blocksLog.info(this.context.getName()+": Found commit at block with weight "+vertex.weight()+"/"+this.context.getLedger().getVotePowerHandler().getTotalVotePower(vertex.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, localShardGroup)+" to commit list "+vertex);
 					return vertex;
 				}
 			}

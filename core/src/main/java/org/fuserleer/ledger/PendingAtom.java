@@ -223,7 +223,7 @@ public final class PendingAtom implements Hashable
 				
 				// FIXME needs to be a threshold per shard group for correctness.  A summed weight will suffice for testing.
 				Set<Long> shardGroups = ShardMapper.toShardGroups(this.stateMachine.getShards(), this.context.getLedger().numShardGroups());
-				this.voteThreshold = this.context.getLedger().getVoteRegulator().getVotePowerThreshold(this.context.getLedger().getHead().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, shardGroups);
+				this.voteThreshold = this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroups);
 			}
 	
 			setStatus(CommitStatus.PREPARED);
@@ -576,7 +576,7 @@ public final class PendingAtom implements Hashable
 			while(queuedIterator.hasNext() == true)
 			{
 				AtomVote vote = queuedIterator.next();
-				long votePower = this.context.getLedger().getVoteRegulator().getVotePower(this.context.getLedger().getHead().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, vote.getOwner());
+				long votePower = this.context.getLedger().getVotePowerHandler().getVotePower(this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, vote.getOwner());
 				if (this.voted.containsKey(vote.getOwner()) == false)
 				{
 					this.votes.add(vote);
@@ -767,7 +767,7 @@ public final class PendingAtom implements Hashable
 			
 			Collection<VotePowerBloom> votePowerBlooms = new ArrayList<VotePowerBloom>();
 			for (long shardGroup : ShardMapper.toShardGroups(this.stateMachine.getShards(), this.context.getLedger().numShardGroups()))
-				votePowerBlooms.add(this.context.getLedger().getVoteRegulator().getVotePowerBloom(this.block, shardGroup));
+				votePowerBlooms.add(this.context.getLedger().getVotePowerHandler().getVotePowerBloom(this.block, shardGroup));
 			
 			AtomCertificate certificate = new AtomCertificate(getHash(), this.certificates.values(), votePowerBlooms);
 			setCertificate(certificate);

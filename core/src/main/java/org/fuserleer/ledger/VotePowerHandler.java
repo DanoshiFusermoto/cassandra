@@ -1,8 +1,11 @@
 package org.fuserleer.ledger;
 
+import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -30,7 +33,7 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Longs;
 
 // TODO Needs persistence methods.  Storing this in memory over long periods will consume a lot of space.  Recovery and rebuilding it from a crash would also be quite the nightmare.
-public final class VoteRegulator implements Service
+public final class VotePowerHandler implements Service
 {
 	private static final Logger powerLog = Logging.getLogger("power");
 
@@ -38,30 +41,63 @@ public final class VoteRegulator implements Service
 	public static long VOTE_POWER_MATURITY = 60;	 
 	
 	private final Context context;
+	private final VotePowerStore votePowerStore;
 	private final Map<ECPublicKey, Map<Long, Long>> votePower;
 	private final Map<Long, VotePowerBloom> votePowerBloomCache;
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
-	VoteRegulator(final Context context)
+	VotePowerHandler(final Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.votePower = new HashMap<ECPublicKey, Map<Long, Long>>();
 		this.votePowerBloomCache = Collections.synchronizedMap(new LRUCacheMap<Long, VotePowerBloom>(this.context.getConfiguration().get("ledger.vote.bloom.cache", 1<<10)));
+		this.votePowerStore = new VotePowerStore(context);
 	}
 	
 	@Override
 	public void start() throws StartupException
 	{
-		this.votePower.clear();
-		for (ECPublicKey genode : Universe.getDefault().getGenodes())
+		try
 		{
-			powerLog.info(this.context.getName()+": Setting vote power for genesis node "+genode+":"+ShardMapper.toShardGroup(genode, Universe.getDefault().shardGroupCount())+" to "+1);
-			Map<Long, Long> powerMap = new HashMap<>();
-			powerMap.put(0l, 1l);
-			this.votePower.put(genode, powerMap);
+			this.votePower.clear();
+			
+			this.votePowerStore.start();
+			Collection<ECPublicKey> identities = this.votePowerStore.getIdentities();
+			if (identities.isEmpty() == false)
+			{
+				for (ECPublicKey identity : identities)
+				{
+					Map<Long, Long> powerMap = this.votePowerStore.get(identity);
+					Iterator<Long> powerHeightIterator = powerMap.keySet().iterator();
+					while(powerHeightIterator.hasNext() == true)
+					{
+						long powerMapHeight = powerHeightIterator.next();
+						if (powerMapHeight > this.context.getLedger().getHead().getHeight())
+							powerHeightIterator.remove();
+					}
+					
+					this.votePower.put(identity, powerMap);
+					powerLog.info(this.context.getName()+": Loaded vote power for "+identity+":"+getVotePower(this.context.getLedger().getHead().getHeight(), identity));
+				}
+			}
+			else
+			{
+				for (ECPublicKey genode : Universe.getDefault().getGenodes())
+				{
+					powerLog.info(this.context.getName()+": Setting vote power for genesis node "+genode+":"+ShardMapper.toShardGroup(genode, Universe.getDefault().shardGroupCount())+" to "+1);
+					Map<Long, Long> powerMap = new HashMap<>();
+					powerMap.put(0l, 1l);
+					this.votePower.put(genode, powerMap);
+					this.votePowerStore.store(genode, powerMap);
+				}
+			}
+			
+			this.context.getEvents().register(this.syncBlockListener);
 		}
-		
-		this.context.getEvents().register(this.syncBlockListener);
+		catch (Exception ex)
+		{
+			throw new StartupException(ex);
+		}
 	}
 
 	@Override
@@ -281,7 +317,7 @@ public final class VoteRegulator implements Service
 		return Math.min(power, T + 1);
 	}
 	
-	private void processVoteBloom(final Collection<ECPublicKey> identities, final VotePowerBloom votePowerBloom)
+	private Set<ECPublicKey> processVoteBloom(final Collection<ECPublicKey> identities, final VotePowerBloom votePowerBloom)
 	{
 		Objects.requireNonNull(votePowerBloom, "Vote power bloom is null");
 		Objects.requireNonNull(identities, "Identities is null");
@@ -289,6 +325,7 @@ public final class VoteRegulator implements Service
 		this.lock.writeLock().lock();
 		try
 		{
+			Set<ECPublicKey> updated = new HashSet<ECPublicKey>();
 			for (ECPublicKey identity : identities)
 			{
 				long power = votePowerBloom.power(identity);
@@ -296,9 +333,11 @@ public final class VoteRegulator implements Service
 				if (power > powerMap.getOrDefault(Longs.fromByteArray(votePowerBloom.getBlock().toByteArray())-1, 0l))
 				{
 					powerMap.put(Longs.fromByteArray(votePowerBloom.getBlock().toByteArray())-1, power);
+					updated.add(identity);
 					powerLog.info(this.context.getName()+": Setting vote power for "+identity+":"+votePowerBloom.getShardGroup()+" to "+power);
 				}
 			}
+			return updated;
 		}
 		finally
 		{
@@ -306,25 +345,38 @@ public final class VoteRegulator implements Service
 		}
 	}
 	
-	void update(final Block block)
+	void update(final Block block) throws IOException
 	{
 		Objects.requireNonNull(block, "Block for vote update is null");
-		
-		addVotePower(block.getHeader().getHeight(), block.getHeader().getOwner());
 
-		long numShardGroups = VoteRegulator.this.context.getLedger().numShardGroups(block.getHeader().getHeight());
-		long localShardGroup = ShardMapper.toShardGroup(VoteRegulator.this.context.getNode().getIdentity(), numShardGroups);
-		for (AtomCertificate atomCertificate : block.getCertificates())
+		this.lock.writeLock().lock();
+		try
 		{
-			Multimap<Long, ECPublicKey> shardGroupNodes = HashMultimap.create();
-			for (StateCertificate stateCertificate : atomCertificate.getAll())
-				shardGroupNodes.putAll(ShardMapper.toShardGroup(stateCertificate.getState().get(), numShardGroups), stateCertificate.getSignatures().getSigners());
-			
-			for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())
+			Set<ECPublicKey> updates = new HashSet<ECPublicKey>();
+			addVotePower(block.getHeader().getHeight(), block.getHeader().getOwner());
+			updates.add(block.getHeader().getOwner());
+
+			long numShardGroups = this.context.getLedger().numShardGroups(block.getHeader().getHeight());
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			for (AtomCertificate atomCertificate : block.getCertificates())
 			{
-				if (votePowerBloom.getShardGroup() != localShardGroup)
-					processVoteBloom(shardGroupNodes.get(votePowerBloom.getShardGroup()), votePowerBloom);
+				Multimap<Long, ECPublicKey> shardGroupNodes = HashMultimap.create();
+				for (StateCertificate stateCertificate : atomCertificate.getAll())
+					shardGroupNodes.putAll(ShardMapper.toShardGroup(stateCertificate.getState().get(), numShardGroups), stateCertificate.getSignatures().getSigners());
+				
+				for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())
+				{
+					if (votePowerBloom.getShardGroup() != localShardGroup)
+						updates.addAll(processVoteBloom(shardGroupNodes.get(votePowerBloom.getShardGroup()), votePowerBloom));
+				}
 			}
+			
+			for (ECPublicKey identity : updates)
+				this.votePowerStore.store(identity, this.votePower.get(identity));
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
 		}
 	}
 	
@@ -334,14 +386,27 @@ public final class VoteRegulator implements Service
 		@Subscribe
 		public void on(BlockCommittedEvent event) 
 		{
-			update(event.getBlock());
+			try
+			{
+				update(event.getBlock());
+			}
+			catch (IOException ioex)
+			{
+				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to update vote powers in block "+event.getBlock().getHeader(), ioex);
+			}
 		}
 		
 		@Subscribe
 		public void on(final SyncBlockEvent event) 
 		{
-			update(event.getBlock());
+			try
+			{
+				update(event.getBlock());
+			}
+			catch (IOException ioex)
+			{
+				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to update vote powers in block "+event.getBlock().getHeader(), ioex);
+			}
 		}
-
 	};
 }

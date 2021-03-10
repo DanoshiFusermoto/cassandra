@@ -32,10 +32,8 @@ import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
-import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Protocol;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
@@ -44,7 +42,6 @@ import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
-import com.google.common.eventbus.AllowConcurrentEvents;
 import com.google.common.eventbus.Subscribe;
 
 public final class Ledger implements Service, LedgerInterface
@@ -65,7 +62,7 @@ public final class Ledger implements Service, LedgerInterface
 
 	private final LedgerStore 	ledgerStore;
 	private final LedgerSearch	ledgerSearch;
-	private final VoteRegulator voteRegulator;
+	private final VotePowerHandler votePowerHandler;
 	
 	private final transient AtomicReference<BlockHeader> head;
 	
@@ -75,8 +72,8 @@ public final class Ledger implements Service, LedgerInterface
 
 		this.ledgerStore = new LedgerStore(this.context);
 
-		this.voteRegulator = new VoteRegulator(this.context);
-		this.blockHandler = new BlockHandler(this.context, this.voteRegulator);
+		this.votePowerHandler = new VotePowerHandler(this.context);
+		this.blockHandler = new BlockHandler(this.context, this.votePowerHandler);
 		this.syncHandler = new SyncHandler(this.context);
 		this.atomPool = new AtomPool(this.context);
 		this.atomHandler = new AtomHandler(this.context);
@@ -105,7 +102,7 @@ public final class Ledger implements Service, LedgerInterface
 			this.context.getEvents().register(this.syncAtomListener);
 			this.context.getEvents().register(this.peerListener);
 
-			this.voteRegulator.start();
+			this.votePowerHandler.start();
 			this.syncHandler.start();
 			this.blockHandler.start();
 			this.atomPool.start();
@@ -138,7 +135,7 @@ public final class Ledger implements Service, LedgerInterface
 		this.atomPool.stop();
 		this.blockHandler.stop();
 		this.syncHandler.stop();
-		this.voteRegulator.stop();
+		this.votePowerHandler.stop();
 		this.ledgerStore.stop();
 	}
 	
@@ -149,9 +146,10 @@ public final class Ledger implements Service, LedgerInterface
 	
 	private void integrity() throws IOException, ValidationException, StateLockedException
 	{
-		BlockHeader nodeBlockHeader = this.context.getNode().getHead();
+		Hash headHash = this.ledgerStore.head();
+
 		// Check if this is just a new ledger store and doesn't need integrity or recovery
-		if (nodeBlockHeader.equals(Universe.getDefault().getGenesis().getHeader()) == true && this.ledgerStore.has(nodeBlockHeader.getHash()) == false)
+		if (headHash.equals(Universe.getDefault().getGenesis().getHeader().getHash()) == true && this.ledgerStore.has(headHash) == false)
 		{
 			// Store the genesis block primitive
 			this.ledgerStore.store(Universe.getDefault().getGenesis());
@@ -172,16 +170,19 @@ public final class Ledger implements Service, LedgerInterface
 			
 			return;
 		}
-		else if (this.ledgerStore.has(nodeBlockHeader.getHash()) == false)
-		{
-			// TODO recover to the best head with committed state
-			ledgerLog.error(Ledger.this.context.getName()+": Local node block header "+nodeBlockHeader+" not found in store");
-			throw new UnsupportedOperationException("Integrity recovery not implemented");
-		}
 		else
 		{
 			// TODO block header is known but is it the strongest head that represents state?
-			setHead(nodeBlockHeader);
+			BlockHeader header = this.ledgerStore.get(headHash, BlockHeader.class);
+			
+			if (header != null)
+				setHead(header);
+			else
+			{
+				// TODO recover to the best head with committed state
+				ledgerLog.error(Ledger.this.context.getName()+": Local block header "+headHash+" not found in store");
+				throw new UnsupportedOperationException("Integrity recovery not implemented");
+			}
 		}
 	}
 	
@@ -190,9 +191,9 @@ public final class Ledger implements Service, LedgerInterface
 		return this.atomHandler;
 	}
 
-	VoteRegulator getVoteRegulator()
+	VotePowerHandler getVotePowerHandler()
 	{
-		return this.voteRegulator;
+		return this.votePowerHandler;
 	}
 
 	public BlockHandler getBlockHandler()
@@ -231,9 +232,10 @@ public final class Ledger implements Service, LedgerInterface
 		return this.head.get();
 	}
 
-	void setHead(BlockHeader head)
+	void setHead(final BlockHeader head)
 	{
-		this.head.set(Objects.requireNonNull(head));
+		this.head.set(Objects.requireNonNull(head, "Head is null"));
+		this.context.getNode().setHead(head);
 	}
 
 	public <T extends Primitive> T get(Hash hash, Class<T> primitive) throws IOException
@@ -427,7 +429,6 @@ public final class Ledger implements Service, LedgerInterface
 			
 			// Clone it to make sure to extract the header
 			Ledger.this.setHead(block.getHeader());
-			Ledger.this.context.getNode().setHead(block.getHeader());
 			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
 			Ledger.this.context.getMetaData().increment("ledger.commits.atoms.local", block.getHeader().getInventory(InventoryType.ATOMS).size());
 			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", block.getHeader().getInventory(InventoryType.CERTIFICATES).size());

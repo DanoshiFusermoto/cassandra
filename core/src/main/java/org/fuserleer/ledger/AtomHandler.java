@@ -13,6 +13,7 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -33,7 +34,7 @@ import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
-import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
@@ -62,6 +63,8 @@ public class AtomHandler implements Service
 	// Sync cache
 	private final Multimap<Long, PendingAtom> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
 	
+	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
+
 	private Executable atomProcessor = new Executable()
 	{
 		@Override
@@ -79,45 +82,56 @@ public class AtomHandler implements Service
 							if (atomsLog.hasLevel(Logging.DEBUG))
 								atomsLog.debug(AtomHandler.this.context.getName()+": Verifying atom "+atom.getValue().getHash());
 
-							// TODO may need another exception wrapping this incase exceptions get thrown ... will be messy though
-							final PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.computeIfAbsent(atom.getKey(), (k) -> PendingAtom.create(AtomHandler.this.context, atom.getValue()));
+							// FIXME some quirky flow logic here to avoid a dead lock
+							final PendingAtom pendingAtom;
+							final Collection<Long> shardGroups;
+							final long numShardGroups = AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight());
+							final long localShardGroup = ShardMapper.toShardGroup(AtomHandler.this.context.getNode().getIdentity(), numShardGroups);
+							AtomHandler.this.lock.writeLock().lock();
 							try
 							{
-								if (pendingAtom.getStatus().equals(CommitStatus.NONE) == false)
+								pendingAtom = AtomHandler.this.pendingAtoms.computeIfAbsent(atom.getKey(), (k) -> PendingAtom.create(AtomHandler.this.context, atom.getValue()));
+								try
 								{
-									atomsLog.warn(AtomHandler.this.context.getName()+": Atom "+atom.getValue().getHash()+" is already pending with state "+pendingAtom.getStatus());
+									if (pendingAtom.getStatus().equals(CommitStatus.NONE) == false)
+									{
+										atomsLog.warn(AtomHandler.this.context.getName()+": Atom "+atom.getValue().getHash()+" is already pending with state "+pendingAtom.getStatus());
+										continue;
+									}
+									
+									if (pendingAtom.getAtom() == null)
+										pendingAtom.setAtom(atom.getValue());
+	
+									pendingAtom.prepare();
+									
+									// TODO atom verification here (signatures etc)
+									
+				                	// Store all valid atoms even if they aren't within the local shard group.
+									// Those atoms will be broadcast the the relevant groups and it needs to be stored
+									// to be able to serve the requests for it.  Such atoms can be pruned per epoch
+				                	AtomHandler.this.context.getLedger().getLedgerStore().store(pendingAtom.getAtom());  // TODO handle failure
+				                	
+				                	shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
+				                	if (shardGroups.contains(localShardGroup) == false)
+				                		AtomHandler.this.pendingAtoms.remove(pendingAtom.getHash(), pendingAtom);
+								}
+								catch (Exception ex)
+								{
+									atomsLog.error(AtomHandler.this.context.getName()+": Error processing for atom for " + atom.getValue().getHash(), ex);
+									AtomHandler.this.context.getEvents().post(new AtomExceptionEvent(pendingAtom, ex));
 									continue;
 								}
-								
-								if (pendingAtom.getAtom() == null)
-									pendingAtom.setAtom(atom.getValue());
-
-								pendingAtom.prepare();
-								
-								// TODO atom verification here (signatures etc)
-								
-			                	// Store all valid atoms even if they aren't within the local shard group.
-								// Those atoms will be broadcast the the relevant groups and it needs to be stored
-								// to be able to serve the requests for it.  Such atoms can be pruned per epoch
-			                	AtomHandler.this.context.getLedger().getLedgerStore().store(pendingAtom.getAtom());  // TODO handle failure
-			                	
-			                	Collection<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight()));
-			                	if (shardGroups.contains(ShardMapper.toShardGroup(AtomHandler.this.context.getNode().getIdentity(), AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight()))) == true)
-			                		AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(pendingAtom));
-			                	else
-			                		AtomHandler.this.pendingAtoms.remove(pendingAtom.getHash(), pendingAtom);
-			                	
-			                	AtomHandler.this.context.getNetwork().getGossipHandler().broadcast(pendingAtom.getAtom(), shardGroups);
-							}
-							catch (Exception ex)
-							{
-								atomsLog.error(AtomHandler.this.context.getName()+": Error processing for atom for " + atom.getValue().getHash(), ex);
-								AtomHandler.this.context.getEvents().post(new AtomExceptionEvent(pendingAtom, ex));
 							}
 							finally
 							{
 			                	AtomHandler.this.atomQueue.remove(atom.getKey());
+			                	AtomHandler.this.lock.writeLock().unlock();
 							}
+							
+		                	if (shardGroups.contains(localShardGroup) == true)
+		                		AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(pendingAtom));
+
+		                	AtomHandler.this.context.getNetwork().getGossipHandler().broadcast(pendingAtom.getAtom(), shardGroups);
 						}
 					} 
 					catch (InterruptedException e) 
@@ -206,16 +220,17 @@ public class AtomHandler implements Service
 			}
 		});
 		
-		this.context.getNetwork().getMessaging().register(GetAtomPoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetAtomPoolInventoryMessage>()
+		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
-			public void process(final GetAtomPoolInventoryMessage getAtomPoolInventoryMessage, final ConnectedPeer peer)
+			public void process(final SyncAcquiredMessage syncAcquiredMessage, final ConnectedPeer peer)
 			{
 				Executor.getInstance().submit(new Executable() 
 				{
 					@Override
 					public void execute()
 					{
+						AtomHandler.this.lock.readLock().lock();
 						try
 						{
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
@@ -234,19 +249,16 @@ public class AtomHandler implements Service
 									atomVoteInventory.add(atomVote.getHash());
 							}
 							
-							synchronized(AtomHandler.this.syncCache)
+							long height = AtomHandler.this.context.getLedger().getHead().getHeight();
+							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								long height = AtomHandler.this.context.getLedger().getHead().getHeight();
-								while (height >= getAtomPoolInventoryMessage.getHead().getHeight())
-								{
-									AtomHandler.this.syncCache.get(height).forEach(pa -> {
-										pendingAtomInventory.add(pa.getHash());
-										
-										for (AtomVote atomVote : pa.votes())
-											atomVoteInventory.add(atomVote.getHash());
-									});
-									height--;
-								}
+								AtomHandler.this.syncCache.get(height).forEach(pa -> {
+									pendingAtomInventory.add(pa.getHash());
+									
+									for (AtomVote atomVote : pa.votes())
+										atomVoteInventory.add(atomVote.getHash());
+								});
+								height--;
 							}
 							
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
@@ -274,6 +286,10 @@ public class AtomHandler implements Service
 						catch (Exception ex)
 						{
 							atomsLog.error(AtomHandler.this.context.getName()+": ledger.messages.atom.get.pool " + peer, ex);
+						}
+						finally
+						{
+							AtomHandler.this.lock.readLock().unlock();
 						}
 					}
 				});
@@ -319,7 +335,8 @@ public class AtomHandler implements Service
 	 */
 	PendingAtom get(Hash atom) throws IOException
 	{
-		synchronized(this.pendingAtoms)
+		AtomHandler.this.lock.readLock().lock();
+		try
 		{
 			PendingAtom pendingAtom = this.pendingAtoms.get(atom);
 			if (pendingAtom != null)
@@ -332,6 +349,10 @@ public class AtomHandler implements Service
 			this.pendingAtoms.put(atom, pendingAtom);
 			return pendingAtom;
 		}
+		finally
+		{
+			AtomHandler.this.lock.readLock().unlock();
+		}
 	}
 	
 	void inject(final PendingAtom pendingAtom)
@@ -341,12 +362,33 @@ public class AtomHandler implements Service
 		if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == false)
 			throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" for injection must be in PROVISIONING state");
 		
-		synchronized(this.pendingAtoms)
+		AtomHandler.this.lock.writeLock().lock();
+		try
 		{
 			if (this.pendingAtoms.containsKey(pendingAtom.getHash()) == true)
 				throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" is already present");
 			
 			this.pendingAtoms.put(pendingAtom.getHash(), pendingAtom);
+		}
+		finally
+		{
+			AtomHandler.this.lock.writeLock().unlock();
+		}
+	}
+
+	void remove(final PendingAtom pendingAtom)
+	{
+		Objects.requireNonNull(pendingAtom, "Pending atom for injection is null");
+		
+		AtomHandler.this.lock.writeLock().lock();
+		try
+		{
+    		this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom);
+			this.pendingAtoms.remove(pendingAtom.getHash());
+		}
+		finally
+		{
+			AtomHandler.this.lock.writeLock().unlock();
 		}
 	}
 
@@ -372,7 +414,8 @@ public class AtomHandler implements Service
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent)
 		{
-			synchronized(AtomHandler.this.syncCache)
+			AtomHandler.this.lock.writeLock().lock();
+			try
 			{
 				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
 				if (trimTo > 0)
@@ -385,6 +428,10 @@ public class AtomHandler implements Service
 					}
 				}
 			}
+			finally
+			{
+				AtomHandler.this.lock.writeLock().unlock();
+			}
 		}
 	};
 
@@ -394,29 +441,25 @@ public class AtomHandler implements Service
 		@Subscribe
 		public void on(final AtomAcceptedEvent event) 
 		{
-    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
-			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+			remove(event.getPendingAtom());
 		}
 
 		@Subscribe
 		public void on(final AtomRejectedEvent event) 
 		{
-    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
-			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+			remove(event.getPendingAtom());
 		}
 
 		@Subscribe
 		public void on(final AtomCommitTimeoutEvent event) 
 		{
-    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
-			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+			remove(event.getPendingAtom());
 		}
 		
 		@Subscribe
 		public void on(final AtomDiscardedEvent event) 
 		{
-    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
-			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+			remove(event.getPendingAtom());
 		}
 		
 		@Subscribe
@@ -425,8 +468,7 @@ public class AtomHandler implements Service
 			if (event.getException() instanceof StateLockedException)
 				return;
 				
-    		AtomHandler.this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom());
-			AtomHandler.this.pendingAtoms.remove(event.getPendingAtom().getHash());
+			remove(event.getPendingAtom());
 		}
 	};
 }

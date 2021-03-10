@@ -47,10 +47,9 @@ import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
-import org.fuserleer.ledger.messages.GetBlockPoolInventoryMessage;
 import org.fuserleer.ledger.messages.GetStateMessage;
-import org.fuserleer.ledger.messages.GetStatePoolInventoryMessage;
 import org.fuserleer.ledger.messages.StateMessage;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
@@ -606,16 +605,17 @@ public final class StateHandler implements Service
 		});
 		
 		// SYNC //
-		this.context.getNetwork().getMessaging().register(GetStatePoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetStatePoolInventoryMessage>()
+		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
-			public void process(final GetStatePoolInventoryMessage getStatePoolInventoryMessage, final ConnectedPeer peer)
+			public void process(final SyncAcquiredMessage syncAcquiredMessage, final ConnectedPeer peer)
 			{
 				Executor.getInstance().submit(new Executable() 
 				{
 					@Override
 					public void execute()
 					{
+						StateHandler.this.lock.readLock().lock();
 						try
 						{
 							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
@@ -639,14 +639,11 @@ public final class StateHandler implements Service
 								}
 							}
 							
-							synchronized(StateHandler.this.syncCache)
+							long height = StateHandler.this.context.getLedger().getHead().getHeight();
+							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								long height = StateHandler.this.context.getLedger().getHead().getHeight();
-								while (height > getStatePoolInventoryMessage.getHead().getHeight())
-								{
-									StateHandler.this.syncCache.get(height).forEach(sc -> stateCertificateInventory.add(sc.getHash()));
-									height--;
-								}
+								StateHandler.this.syncCache.get(height).forEach(sc -> stateCertificateInventory.add(sc.getHash()));
+								height--;
 							}
 							
 							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
@@ -663,6 +660,10 @@ public final class StateHandler implements Service
 						catch (Exception ex)
 						{
 							cerbyLog.error(StateHandler.this.context.getName()+": ledger.messages.state.get.pool " + peer, ex);
+						}
+						finally
+						{
+							StateHandler.this.lock.readLock().unlock();
 						}
 					}
 				});
@@ -984,7 +985,8 @@ public final class StateHandler implements Service
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent)
 		{
-			synchronized(StateHandler.this.syncCache)
+			StateHandler.this.lock.writeLock().lock();
+			try
 			{
 				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
 				if (trimTo > 0)
@@ -996,6 +998,10 @@ public final class StateHandler implements Service
 							syncCacheKeyIterator.remove();
 					}
 				}
+			}
+			finally
+			{
+				StateHandler.this.lock.writeLock().unlock();
 			}
 		}
 	};

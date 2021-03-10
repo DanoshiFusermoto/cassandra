@@ -10,20 +10,20 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.messages.block.get.pool")
-public class GetBlockPoolInventoryMessage extends Message
+@SerializerId2("ledger.messages.sync.acquired")
+public final class SyncAcquiredMessage extends Message
 {
 	@JsonProperty("head")
 	@DsonOutput(Output.ALL)
 	private BlockHeader head;
 	
 	@SuppressWarnings("unused")
-	private GetBlockPoolInventoryMessage()
+	private SyncAcquiredMessage()
 	{
 		super();
 	}
 	
-	public GetBlockPoolInventoryMessage(final BlockHeader head)
+	public SyncAcquiredMessage(final BlockHeader head)
 	{
 		super();
 		

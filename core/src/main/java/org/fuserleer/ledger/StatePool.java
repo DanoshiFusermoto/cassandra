@@ -44,7 +44,7 @@ import org.fuserleer.ledger.events.AtomExecutedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
-import org.fuserleer.ledger.messages.GetStatePoolInventoryMessage;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
@@ -120,8 +120,8 @@ public final class StatePool implements Service
 					throw new IllegalStateException("State certificate for "+this+" already exists");
 				
 				final long shardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups(getHeight()));
-				final long totalVotePower = StatePool.this.context.getLedger().getVoteRegulator().getTotalVotePower(getHeight()  - VoteRegulator.VOTE_POWER_MATURITY, shardGroup);
-				final long votePowerThreshold = StatePool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(getHeight() - VoteRegulator.VOTE_POWER_MATURITY, shardGroup);
+				final long totalVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(getHeight()  - VotePowerHandler.VOTE_POWER_MATURITY, shardGroup);
+				final long votePowerThreshold = StatePool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroup);
 
 				long executionWithMajorityWeight = 0;
 				Hash executionWithMajority = null;
@@ -149,7 +149,7 @@ public final class StatePool implements Service
 					signatureBag.add(vote.getOwner(), vote.getSignature());
 				}
 				
-				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getVoteRegulator().getVotePowerBloom(getBlock(), shardGroup);
+				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getVotePowerHandler().getVotePowerBloom(getBlock(), shardGroup);
 				// TODO need merkles
 				final StateCertificate certificate = new StateCertificate(votes.get(0).getState(), votes.get(0).getAtom(), votes.get(0).getBlock(), 
 																		  votes.get(0).getInput(), votes.get(0).getOutput(), votes.get(0).getExecution(), 
@@ -329,31 +329,31 @@ public final class StatePool implements Service
 											pendingState = new PendingState(stateVote.getState(), stateVote.getAtom(), stateVote.getBlock());
 											add(pendingState);
 										}
+
+										if (pendingState.getBlock().equals(stateVote.getBlock()) == false || 
+											pendingState.getAtom().equals(stateVote.getAtom()) == false)
+										{
+											statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
+											// Disconnect and ban?
+											continue;
+										}
+												
+										long votePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, stateVote.getOwner());
+										if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
+										{
+											stateVotesToBroadcast.add(stateVote);
+											
+											if (pendingState.getCertificate() == null)
+											{
+												StateCertificate stateCertificate = pendingState.buildCertificate();
+												if (stateCertificate != null)
+													StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+											}
+										}
 									}
 									finally
 									{
 										StatePool.this.lock.writeLock().unlock();
-									}
-
-									if (pendingState.getBlock().equals(stateVote.getBlock()) == false || 
-										pendingState.getAtom().equals(stateVote.getAtom()) == false)
-									{
-										statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
-										// Disconnect and ban?
-										continue;
-									}
-											
-									long votePower = StatePool.this.context.getLedger().getVoteRegulator().getVotePower(pendingState.getHeight() - VoteRegulator.VOTE_POWER_MATURITY, stateVote.getOwner());
-									if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
-									{
-										stateVotesToBroadcast.add(stateVote);
-										
-										if (pendingState.getCertificate() == null)
-										{
-											StateCertificate stateCertificate = pendingState.buildCertificate();
-											if (stateCertificate != null)
-												StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
-										}
 									}
 								}
 								catch (Exception ex)
@@ -379,7 +379,7 @@ public final class StatePool implements Service
 									}
 									
 									// Always vote locally even if no vote power so that can determine the accuracy of local execution
-									long localVotePower = StatePool.this.context.getLedger().getVoteRegulator().getVotePower(pendingState.getHeight() - VoteRegulator.VOTE_POWER_MATURITY, StatePool.this.context.getNode().getIdentity());
+									long localVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, StatePool.this.context.getNode().getIdentity());
 									if (pendingAtom.thrown() == null && pendingAtom.getExecution() == null)
 										throw new IllegalStateException("Can not vote on state "+pendingState.getKey()+" when no decision made");
 									
@@ -582,12 +582,13 @@ public final class StatePool implements Service
 					Set<StateVote> fetched = new HashSet<StateVote>();
 					for (Hash item : items)
 					{
-						StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
+						StateVote stateVote = StatePool.this.votesToCountQueue.get(item);
+						if (stateVote == null)
+							stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
+						
 						if (stateVote == null)
 						{
-							if (gossipLog.hasLevel(Logging.DEBUG) == true)
-								gossipLog.debug(StatePool.this.context.getName()+": Requested state vote "+item+" not found");
-							
+							gossipLog.error(StatePool.this.context.getName()+": Requested state vote "+item+" not found");
 							continue;
 						}
 						
@@ -603,16 +604,17 @@ public final class StatePool implements Service
 		});
 		
 		// SYNC //
-		this.context.getNetwork().getMessaging().register(GetStatePoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetStatePoolInventoryMessage>()
+		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
-			public void process(final GetStatePoolInventoryMessage getStatePoolInventoryMessage, final ConnectedPeer peer)
+			public void process(final SyncAcquiredMessage syncAcquiredMessage, final ConnectedPeer peer)
 			{
 				Executor.getInstance().submit(new Executable() 
 				{
 					@Override
 					public void execute()
 					{
+						StatePool.this.lock.readLock().lock();
 						try
 						{
 							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
@@ -626,14 +628,11 @@ public final class StatePool implements Service
 									stateVoteInventory.add(stateVote.getHash());
 							}
 							
-							synchronized(StatePool.this.syncCache)
+							long height = StatePool.this.context.getLedger().getHead().getHeight();
+							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								long height = StatePool.this.context.getLedger().getHead().getHeight();
-								while (height > getStatePoolInventoryMessage.getHead().getHeight())
-								{
-									StatePool.this.syncCache.get(height).forEach(sv -> stateVoteInventory.add(sv.getHash()));
-									height--;
-								}
+								StatePool.this.syncCache.get(height).forEach(sv -> stateVoteInventory.add(sv.getHash()));
+								height--;
 							}
 							
 							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
@@ -650,6 +649,10 @@ public final class StatePool implements Service
 						catch (Exception ex)
 						{
 							statePoolLog.error(StatePool.this.context.getName()+": ledger.messages.state.get.pool " + peer, ex);
+						}
+						finally
+						{
+							StatePool.this.lock.readLock().unlock();
 						}
 					}
 				});
@@ -844,7 +847,8 @@ public final class StatePool implements Service
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent)
 		{
-			synchronized(StatePool.this.syncCache)
+			StatePool.this.lock.writeLock().lock();
+			try
 			{
 				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
 				if (trimTo > 0)
@@ -856,6 +860,10 @@ public final class StatePool implements Service
 							syncCacheKeyIterator.remove();
 					}
 				}
+			}
+			finally
+			{
+				StatePool.this.lock.writeLock().unlock();
 			}
 		}
 	};

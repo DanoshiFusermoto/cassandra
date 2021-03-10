@@ -26,7 +26,6 @@ import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
-import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
@@ -71,7 +70,7 @@ public final class AtomPool implements Service
 							try
 							{
 								// Dont vote if we have no power!
-								long localVotePower = AtomPool.this.context.getLedger().getVoteRegulator().getVotePower(AtomPool.this.context.getLedger().getHead().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, AtomPool.this.context.getNode().getIdentity());
+								long localVotePower = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePower(AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, AtomPool.this.context.getNode().getIdentity());
 								if (localVotePower > 0)
 								{
 									if (atomsLog.hasLevel(Logging.DEBUG))
@@ -280,10 +279,10 @@ public final class AtomPool implements Service
 			this.context.getNetwork().getGossipHandler().broadcast(appliedVote);
 	
 		Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), this.context.getLedger().numShardGroups());
-		long voteThresold = AtomPool.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(AtomPool.this.context.getLedger().getHead().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, shardGroups);
+		long voteThresold = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroups);
 		if (pendingAtom.voteWeight() >= voteThresold)
 		{
-			atomsLog.info(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVoteRegulator().getTotalVotePower(AtomPool.this.context.getLedger().getHead().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, shardGroups));
+			atomsLog.info(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroups));
 			AtomPool.this.context.getMetaData().increment("ledger.pool.atoms.agreed");
 		}
 	}

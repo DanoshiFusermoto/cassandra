@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -37,15 +36,13 @@ import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.PendingBranch.Type;
-import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.messages.BlockMessage;
-import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
 import org.fuserleer.ledger.messages.GetBlockMessage;
-import org.fuserleer.ledger.messages.GetBlockPoolInventoryMessage;
 import org.fuserleer.ledger.messages.GetBlocksMessage;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
@@ -58,7 +55,6 @@ import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.MathUtils;
-import org.fuserleer.utils.Shorts;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
@@ -207,7 +203,7 @@ public class BlockHandler implements Service
 
 	private final Context context;
 
-	private final VoteRegulator 				voteRegulator;
+	private final VotePowerHandler 				votePowerHandler;
 	private final Map<Hash, PendingBlock>		pendingBlocks;
 	private final Set<PendingBranch>			pendingBranches;
 	
@@ -221,12 +217,12 @@ public class BlockHandler implements Service
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
-	BlockHandler(Context context, VoteRegulator voteRegulator)
+	BlockHandler(Context context, VotePowerHandler votePowerHandler)
 	{
 		this.context = Objects.requireNonNull(context);
 		this.pendingBlocks = Collections.synchronizedMap(new HashMap<Hash, PendingBlock>());
 		this.pendingBranches = Collections.synchronizedSet(new HashSet<PendingBranch>());
-		this.voteRegulator = Objects.requireNonNull(voteRegulator, "Vote regulator is null");
+		this.votePowerHandler = Objects.requireNonNull(votePowerHandler, "Vote power handler is null");
 		this.voteClock = new AtomicLong(0);
 		this.currentVote = new AtomicReference<BlockHeader>();
 		this.lastGenerated = new AtomicReference<BlockHeader>();
@@ -445,7 +441,7 @@ public class BlockHandler implements Service
 									blocksLog.debug(BlockHandler.this.context.getName()+": Block vote "+blockVote.getHash()+"/"+blockVote.getBlock()+" for "+blockVote.getOwner());
 		
 								// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-								pendingBlock.vote(blockVote, BlockHandler.this.voteRegulator.getVotePower(pendingBlock.getHeight() - VoteRegulator.VOTE_POWER_MATURITY, blockVote.getOwner()));
+								pendingBlock.vote(blockVote, BlockHandler.this.votePowerHandler.getVotePower(pendingBlock.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, blockVote.getOwner()));
 								
 								BlockHandler.this.context.getNetwork().getGossipHandler().broadcast(blockVote);
 							}
@@ -592,16 +588,17 @@ public class BlockHandler implements Service
 		});
 		
 		// SYNC //
-		this.context.getNetwork().getMessaging().register(GetBlockPoolInventoryMessage.class, this.getClass(), new MessageProcessor<GetBlockPoolInventoryMessage>()
+		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
-			public void process(final GetBlockPoolInventoryMessage getBlockPoolInventoryMessage, final ConnectedPeer peer)
+			public void process(final SyncAcquiredMessage syncAcquiredMessage, final ConnectedPeer peer)
 			{
 				Executor.getInstance().submit(new Executable() 
 				{
 					@Override
 					public void execute()
 					{
+						BlockHandler.this.lock.readLock().lock();
 						try
 						{
 							if (blocksLog.hasLevel(Logging.DEBUG) == true)
@@ -624,20 +621,17 @@ public class BlockHandler implements Service
 							}
 							
 							long height = BlockHandler.this.context.getLedger().getHead().getHeight();
-							while (height > getBlockPoolInventoryMessage.getHead().getHeight())
+							while (height > syncAcquiredMessage.getHead().getHeight())
 							{
 								pendingBlockInventory.add(BlockHandler.this.context.getLedger().getLedgerStore().get(height));
 								height--;
 							}
 							
-							synchronized(BlockHandler.this.syncCache)
+							height = BlockHandler.this.context.getLedger().getHead().getHeight();
+							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								height = BlockHandler.this.context.getLedger().getHead().getHeight();
-								while (height > getBlockPoolInventoryMessage.getHead().getHeight())
-								{
-									BlockHandler.this.syncCache.get(height).forEach(bv -> blockVoteInventory.add(bv.getHash()));
-									height--;
-								}
+								BlockHandler.this.syncCache.get(height).forEach(bv -> blockVoteInventory.add(bv.getHash()));
+								height--;
 							}
 							
 							int offset = 0;
@@ -659,6 +653,10 @@ public class BlockHandler implements Service
 						catch (Exception ex)
 						{
 							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.block.get.pool " + peer, ex);
+						}
+						finally
+						{
+							BlockHandler.this.lock.readLock().unlock();
 						}
 					}
 				});
@@ -689,7 +687,7 @@ public class BlockHandler implements Service
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
 	{
 		// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-		long votePower = BlockHandler.this.voteRegulator.getVotePower(branch.getLast().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, BlockHandler.this.context.getNode().getIdentity());
+		long votePower = BlockHandler.this.votePowerHandler.getVotePower(branch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, BlockHandler.this.context.getNode().getIdentity());
 
 		List<BlockVote> branchVotes = new ArrayList<BlockVote>();
 		synchronized(BlockHandler.this.voteClock)
@@ -1217,7 +1215,7 @@ public class BlockHandler implements Service
 			if (bestBranch != null)
 			{
 				if (blocksLog.hasLevel(Logging.DEBUG) == true)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().getHeader().getAverageStep()+":"+bestBranch.getLast().weight()+"/"+this.voteRegulator.getTotalVotePower(bestBranch.getLast().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups()))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().getHeader().getAverageStep()+":"+bestBranch.getLast().weight()+"/"+this.votePowerHandler.getTotalVotePower(bestBranch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups()))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
 			}
 			
 			return bestBranch;
@@ -1239,8 +1237,9 @@ public class BlockHandler implements Service
 				BlockHandler.this.voteClock.set(blockCommittedEvent.getBlock().getHeader().getHeight());
 				BlockHandler.this.currentVote.set(null);
 			}
-			
-			synchronized(BlockHandler.this.syncCache)
+
+			BlockHandler.this.lock.writeLock().lock();
+			try
 			{
 				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
 				if (trimTo > 0)
@@ -1252,6 +1251,10 @@ public class BlockHandler implements Service
 							syncCacheKeyIterator.remove();
 					}
 				}
+			}
+			finally
+			{
+				BlockHandler.this.lock.writeLock().unlock();
 			}
 		}
 	};

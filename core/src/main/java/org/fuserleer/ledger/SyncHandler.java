@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -25,12 +24,11 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.SyncBlockEvent;
-import org.fuserleer.ledger.messages.GetAtomPoolInventoryMessage;
-import org.fuserleer.ledger.messages.GetBlockPoolInventoryMessage;
-import org.fuserleer.ledger.messages.GetStatePoolInventoryMessage;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockMessage;
 import org.fuserleer.ledger.messages.InventoryMessage;
@@ -111,8 +109,8 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
-								long blockVotePower = SyncHandler.this.context.getLedger().getVoteRegulator().getVotePower(block.getHeader().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, block.getHeader().getCertificate().getSigners());
-								if (blockVotePower < SyncHandler.this.context.getLedger().getVoteRegulator().getVotePowerThreshold(block.getHeader().getHeight() - VoteRegulator.VOTE_POWER_MATURITY, Collections.singleton(localShardGroup)))
+								long blockVotePower = SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePower(block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, block.getHeader().getCertificate().getSigners());
+								if (blockVotePower < SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, Collections.singleton(localShardGroup)))
 									continue;
 								
 								if (bestBlock == null || 
@@ -188,36 +186,17 @@ public class SyncHandler implements Service
 								}
 								
 								// Requests for current block pool, atom pool and state consensus primitives
-								ConnectedPeer blockPoolInventoryPeer = syncPeers.get(ThreadLocalRandom.current().nextInt(syncPeers.size()));
-								try
+								for (ConnectedPeer syncPeer : syncPeers)
 								{
-									SyncHandler.this.context.getNetwork().getMessaging().send(new GetBlockPoolInventoryMessage(SyncHandler.this.context.getLedger().getHead()), blockPoolInventoryPeer);
+									try
+									{
+										SyncHandler.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(SyncHandler.this.context.getLedger().getHead()), syncPeer);
+									}
+									catch (Exception ex)
+									{
+										syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncAcquiredMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
+									}
 								}
-								catch (Exception ex)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetBlockPoolInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+blockPoolInventoryPeer, ex);
-								}
-
-								ConnectedPeer atomPoolInventoryPeer = syncPeers.get(ThreadLocalRandom.current().nextInt(syncPeers.size()));
-								try
-								{
-									SyncHandler.this.context.getNetwork().getMessaging().send(new GetAtomPoolInventoryMessage(SyncHandler.this.context.getLedger().getHead()), atomPoolInventoryPeer);
-								}
-								catch (Exception ex)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetAtomPoolInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+blockPoolInventoryPeer, ex);
-								}
-
-								ConnectedPeer statePoolInventoryPeer = syncPeers.get(ThreadLocalRandom.current().nextInt(syncPeers.size()));
-								try
-								{
-									SyncHandler.this.context.getNetwork().getMessaging().send(new GetStatePoolInventoryMessage(SyncHandler.this.context.getLedger().getHead()), statePoolInventoryPeer);
-								}
-								catch (Exception ex)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetStatePoolInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+blockPoolInventoryPeer, ex);
-								}
-
 							}
 							else
 							{
@@ -325,17 +304,14 @@ public class SyncHandler implements Service
 						return;
 					}
 
-					if (SyncHandler.this.context.getLedger().getLedgerStore().has(syncBlockMessage.getBlock().getHeader().getHash()) == false)
-					{
-						if (syncLog.hasLevel(Logging.DEBUG) == true)
-							syncLog.debug(SyncHandler.this.context.getName()+": Block "+syncBlockMessage.getBlock().getHeader().getHash()+" from "+peer);
+					if (syncLog.hasLevel(Logging.DEBUG) == true)
+						syncLog.debug(SyncHandler.this.context.getName()+": Block "+syncBlockMessage.getBlock().getHeader().getHash()+" from "+peer);
 
-						// TODO need a block validation / verification processor
+					// TODO need a block validation / verification processor
 
-						SyncHandler.this.context.getLedger().getLedgerStore().store(syncBlockMessage.getBlock());
-						SyncHandler.this.blocks.put(syncBlockMessage.getBlock().getHash(), syncBlockMessage.getBlock());
-						SyncHandler.this.blocksRequested.remove(syncBlockMessage.getBlock().getHash());
-					}
+					SyncHandler.this.context.getLedger().getLedgerStore().store(syncBlockMessage.getBlock());
+					SyncHandler.this.blocks.put(syncBlockMessage.getBlock().getHash(), syncBlockMessage.getBlock());
+					SyncHandler.this.blocksRequested.remove(syncBlockMessage.getBlock().getHash());
 				}
 				catch (Exception ex)
 				{
@@ -528,7 +504,17 @@ public class SyncHandler implements Service
 					blocksPending.add(block);
 				}
 				else 
-					SyncHandler.this.blocks.put(block, SyncHandler.this.context.getLedger().getLedgerStore().get(block, Block.class));
+				{
+					Commit blockCommit = this.context.getLedger().getLedgerStore().search(new StateAddress(Block.class, block));
+					if (blockCommit != null)
+					{
+						SyncHandler.this.blocks.put(block, SyncHandler.this.context.getLedger().getLedgerStore().get(block, Block.class));
+						continue;
+					}
+
+					blocksToRequest.add(block);
+					blocksPending.add(block);
+				}
 			}
 
 			if (blocksPending.isEmpty() == true)
@@ -609,12 +595,36 @@ public class SyncHandler implements Service
 			Block block = blockIterator.next();
 			this.context.getLedger().getLedgerStore().commit(block);
 			committedBlocks.add(block);
-			
+
+			// Provision any missing atoms required by certificates
+			for (AtomCertificate certificate : block.getCertificates())
+			{
+				PendingAtom pendingAtom = this.atoms.get(certificate.getAtom());
+				if (pendingAtom != null)
+					continue;
+				
+				Commit atomCommit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, certificate.getAtom()));
+				if (atomCommit == null)
+					throw new ValidationException(this.context.getName()+": Atom "+certificate.getAtom()+" required for provisioning by certificate "+certificate.getHash()+" not committed");
+				
+				Atom atomToProvision = this.context.getLedger().getLedgerStore().get(atomCommit.getPath().get(Elements.ATOM), Atom.class);
+				if (atomToProvision == null)
+					throw new ValidationException(this.context.getName()+": Atom "+certificate.getAtom()+" required for provisioning by certificate "+certificate.getHash()+" committed but not found");
+				
+				BlockHeader atomBlockHeader = this.context.getLedger().getLedgerStore().get(atomCommit.getPath().get(Elements.BLOCK), BlockHeader.class);
+				if (atomBlockHeader == null)
+					throw new ValidationException(this.context.getName()+": Atom "+certificate.getAtom()+" required for provisioning by certificate "+certificate.getHash()+" committed but block "+atomCommit.getPath().get(Elements.BLOCK)+" not found");
+				
+				pendingAtom = PendingAtom.create(this.context, atomToProvision);
+				this.atoms.put(pendingAtom.getHash(), pendingAtom);
+				pendingAtom.prepare();
+				this.context.getLedger().getStateAccumulator().lock(pendingAtom);
+				pendingAtom.provision(atomBlockHeader);
+			}
+
+			// Provision atoms contained in block 
 			for (Atom atom : block.getAtoms())
 			{
-				if (this.atoms.containsKey(atom.getHash()) == true)
-					throw new ValidationException(this.context.getName()+": Atom "+atom.getHash()+" in block "+block.getHash()+" is already pending!");
-				
 				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
 				this.atoms.put(pendingAtom.getHash(), pendingAtom);
 				pendingAtom.prepare();
@@ -622,11 +632,13 @@ public class SyncHandler implements Service
 				pendingAtom.provision(block.getHeader());
 			}
 
+			//  Process certificates contained in block
 			for (AtomCertificate certificate : block.getCertificates())
 			{
 				PendingAtom pendingAtom = this.atoms.get(certificate.getAtom());
 				if (pendingAtom == null)
 					throw new ValidationException(this.context.getName()+": Pending atom "+certificate.getAtom()+" not found for certificate "+certificate.getHash()+" in block "+block.getHash());
+				
 				pendingAtom.setCertificate(certificate);
 				this.context.getLedger().getStateAccumulator().commit(pendingAtom);
 				this.atoms.remove(pendingAtom.getHash());

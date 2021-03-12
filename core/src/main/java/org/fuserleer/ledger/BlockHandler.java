@@ -441,14 +441,14 @@ public class BlockHandler implements Service
 									blocksLog.debug(BlockHandler.this.context.getName()+": Block vote "+blockVote.getHash()+"/"+blockVote.getBlock()+" for "+blockVote.getOwner());
 		
 								// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-								pendingBlock.vote(blockVote, BlockHandler.this.votePowerHandler.getVotePower(pendingBlock.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, blockVote.getOwner()));
+								pendingBlock.vote(blockVote, BlockHandler.this.votePowerHandler.getVotePower(Math.max(0, pendingBlock.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), blockVote.getOwner()));
 								
 								BlockHandler.this.context.getNetwork().getGossipHandler().broadcast(blockVote);
 							}
 						}
 					}
-					else if (blocksLog.hasLevel(Logging.DEBUG) == true)
-						blocksLog.debug(BlockHandler.this.context.getName()+": Received already seen block vote "+blockVote.getBlock()+" for "+blockVote.getOwner());
+					else
+						blocksLog.warn(BlockHandler.this.context.getName()+": Received already seen block vote "+blockVote.getBlock()+" for "+blockVote.getOwner());
 				}
 				finally
 				{
@@ -687,7 +687,7 @@ public class BlockHandler implements Service
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
 	{
 		// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-		long votePower = BlockHandler.this.votePowerHandler.getVotePower(branch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, BlockHandler.this.context.getNode().getIdentity());
+		long votePower = BlockHandler.this.votePowerHandler.getVotePower(Math.max(0, branch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), BlockHandler.this.context.getNode().getIdentity());
 
 		List<BlockVote> branchVotes = new ArrayList<BlockVote>();
 		synchronized(BlockHandler.this.voteClock)
@@ -1160,7 +1160,7 @@ public class BlockHandler implements Service
 		}
 	}
 	
-	private PendingBranch discoverBestBranch()
+	private PendingBranch discoverBestBranch() throws IOException
 	{
 		this.lock.readLock().lock();
 		try
@@ -1215,7 +1215,7 @@ public class BlockHandler implements Service
 			if (bestBranch != null)
 			{
 				if (blocksLog.hasLevel(Logging.DEBUG) == true)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().getHeader().getAverageStep()+":"+bestBranch.getLast().weight()+"/"+this.votePowerHandler.getTotalVotePower(bestBranch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups()))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().getHeader().getAverageStep()+":"+bestBranch.getLast().weight()+"/"+this.votePowerHandler.getTotalVotePower(Math.max(0, bestBranch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups()))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
 			}
 			
 			return bestBranch;

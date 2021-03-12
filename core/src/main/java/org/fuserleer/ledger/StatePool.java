@@ -30,6 +30,7 @@ import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.crypto.MerkleProof.Branch;
+import org.fuserleer.database.DatabaseException;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
@@ -111,7 +112,7 @@ public final class StatePool implements Service
 			return this.atom;
 		}
 		
-		public StateCertificate buildCertificate() throws CryptoException
+		public StateCertificate buildCertificate() throws CryptoException, DatabaseException
 		{
 			this.lock.lock();
 			try
@@ -120,8 +121,8 @@ public final class StatePool implements Service
 					throw new IllegalStateException("State certificate for "+this+" already exists");
 				
 				final long shardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups(getHeight()));
-				final long totalVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(getHeight()  - VotePowerHandler.VOTE_POWER_MATURITY, shardGroup);
-				final long votePowerThreshold = StatePool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroup);
+				final long totalVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, getHeight()  - VotePowerHandler.VOTE_POWER_MATURITY), shardGroup);
+				final long votePowerThreshold = StatePool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroup);
 
 				long executionWithMajorityWeight = 0;
 				Hash executionWithMajority = null;
@@ -338,7 +339,7 @@ public final class StatePool implements Service
 											continue;
 										}
 												
-										long votePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, stateVote.getOwner());
+										long votePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), stateVote.getOwner());
 										if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
 										{
 											stateVotesToBroadcast.add(stateVote);
@@ -379,7 +380,7 @@ public final class StatePool implements Service
 									}
 									
 									// Always vote locally even if no vote power so that can determine the accuracy of local execution
-									long localVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, StatePool.this.context.getNode().getIdentity());
+									long localVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity());
 									if (pendingAtom.thrown() == null && pendingAtom.getExecution() == null)
 										throw new IllegalStateException("Can not vote on state "+pendingState.getKey()+" when no decision made");
 									

@@ -93,7 +93,9 @@ public final class Ledger implements Service, LedgerInterface
 	{
 		try
 		{
+			// Stuff required for integrity check
 			this.ledgerStore.start();
+			this.votePowerHandler.start();
 			
 			integrity();
 			
@@ -102,7 +104,6 @@ public final class Ledger implements Service, LedgerInterface
 			this.context.getEvents().register(this.syncAtomListener);
 			this.context.getEvents().register(this.peerListener);
 
-			this.votePowerHandler.start();
 			this.syncHandler.start();
 			this.blockHandler.start();
 			this.atomPool.start();
@@ -142,6 +143,7 @@ public final class Ledger implements Service, LedgerInterface
 	public void clean() throws IOException
 	{
 		this.ledgerStore.clean();
+		this.votePowerHandler.clean();
 	}
 	
 	private void integrity() throws IOException, ValidationException, StateLockedException

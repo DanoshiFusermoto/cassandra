@@ -223,7 +223,7 @@ public final class PendingAtom implements Hashable
 				
 				// FIXME needs to be a threshold per shard group for correctness.  A summed weight will suffice for testing.
 				Set<Long> shardGroups = ShardMapper.toShardGroups(this.stateMachine.getShards(), this.context.getLedger().numShardGroups());
-				this.voteThreshold = this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroups);
+				this.voteThreshold = this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups);
 			}
 	
 			setStatus(CommitStatus.PREPARED);
@@ -563,7 +563,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 
-	Collection<AtomVote> apply()
+	Collection<AtomVote> apply() throws IOException
 	{
 		this.lock.writeLock().lock();
 		try
@@ -576,7 +576,7 @@ public final class PendingAtom implements Hashable
 			while(queuedIterator.hasNext() == true)
 			{
 				AtomVote vote = queuedIterator.next();
-				long votePower = this.context.getLedger().getVotePowerHandler().getVotePower(this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, vote.getOwner());
+				long votePower = this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), vote.getOwner());
 				if (this.voted.containsKey(vote.getOwner()) == false)
 				{
 					this.votes.add(vote);
@@ -755,6 +755,7 @@ public final class PendingAtom implements Hashable
 			if (isComplete == false && hasRejection == false)
 				return null;
 			
+			final Map<Long, VotePowerBloom> votePowerBlooms = new HashMap<Long, VotePowerBloom>();
 			for (StateCertificate certificate : this.certificates.values())
 			{
 				if (getHash().equals(certificate.getAtom()) == false)
@@ -763,13 +764,23 @@ public final class PendingAtom implements Hashable
 					cerbyLog.error(this.context.getName()+": State certificate for "+certificate.getState()+" does not reference atom "+getHash());
 					continue;
 				}
+				
+				final VotePowerBloom votePowerBloom = certificate.getPowerBloom();
+				votePowerBlooms.compute(votePowerBloom.getShardGroup(), (sg, vpb) -> 
+				{
+					if (vpb == null)
+						return votePowerBloom;
+					
+					long currentVPBHeight = Longs.fromByteArray(vpb.getBlock().toByteArray());
+					long candidateVPBHeight = Longs.fromByteArray(votePowerBloom.getBlock().toByteArray());
+					if (candidateVPBHeight > currentVPBHeight)
+						return votePowerBloom;
+					
+					return vpb;
+				});
 			}
 			
-			Collection<VotePowerBloom> votePowerBlooms = new ArrayList<VotePowerBloom>();
-			for (long shardGroup : ShardMapper.toShardGroups(this.stateMachine.getShards(), this.context.getLedger().numShardGroups()))
-				votePowerBlooms.add(this.context.getLedger().getVotePowerHandler().getVotePowerBloom(this.block, shardGroup));
-			
-			AtomCertificate certificate = new AtomCertificate(getHash(), this.certificates.values(), votePowerBlooms);
+			AtomCertificate certificate = new AtomCertificate(getHash(), this.certificates.values(), votePowerBlooms.values());
 			setCertificate(certificate);
 			this.context.getEvents().post(new AtomCertificateEvent(certificate));
 			this.context.getMetaData().increment("ledger.pool.atom.certificates");

@@ -1,13 +1,8 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -147,66 +142,246 @@ class VotePowerStore extends DatabaseStore
 	@Override
 	public void flush() throws DatabaseException  { /* Not used */ }
 
-	public Map<Long, Long> get(final ECPublicKey identity) throws IOException
+	public long get(final ECPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
+		Longs.greaterThan(height, -1, "Height is negative");
 
-		Map<Long, Long> powers = new HashMap<Long, Long>();
-		DatabaseEntry search = new DatabaseEntry(identity.getBytes());
-		DatabaseEntry key = new DatabaseEntry();
+		byte[] identityBytes = identity.getBytes();
+		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
+		DatabaseEntry search = new DatabaseEntry(identityBytes);
+		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
 	    DatabaseEntry value = new DatabaseEntry();
+	    
+		OperationStatus status = this.votePowerDB.get(null, key, value, LockMode.DEFAULT);
+		if(status.equals(OperationStatus.SUCCESS) == true)
+			return Longs.fromByteArray(value.getData());
 	    
 		try (SecondaryCursor cursor = this.voteIdentityDB.openCursor(null, null)) 
 		{
-			OperationStatus status = cursor.getSearchKey(search, key, value, LockMode.DEFAULT);
-			while (status.equals(OperationStatus.SUCCESS) == true)
+			status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
+			if (status.equals(OperationStatus.SUCCESS) == true)
 			{
-				long height = Longs.fromByteArray(key.getData(), Long.BYTES);
-				long power = Longs.fromByteArray(value.getData());
-				powers.put(height, power);
-				status = cursor.getNextDup(search, key, value, LockMode.DEFAULT);
+				if (Arrays.areEqual(identity.getBytes(), search.getData()) == true)
+				{
+					status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
+					if (status.equals(OperationStatus.SUCCESS) == false)
+						status = cursor.getLast(search, key, value, LockMode.DEFAULT);
+					else
+						status = cursor.getPrev(search, key, value, LockMode.DEFAULT);
+				}
+				else
+				{
+					status = cursor.getPrev(search, key, value, LockMode.DEFAULT);
+					if (status.equals(OperationStatus.SUCCESS) == false)
+						status = cursor.getFirst(search, key, value, LockMode.DEFAULT);
+				}
+				
+				if (status.equals(OperationStatus.SUCCESS) == false || Arrays.areEqual(search.getData(), identityBytes) == false)
+					return 0;
+				
+				return Longs.fromByteArray(value.getData());
 			}
 			
-			return powers;
+			return 0;
 		}
 		catch (Exception e)
 		{
 			throw new DatabaseException(e);
 		}
 	}
-
-	public OperationStatus store(final ECPublicKey identity, final Map<Long, Long> powers) throws IOException
+	
+	public long increment(final ECPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Objects.requireNonNull(powers, "Powers is null");
-		
-		if (powers.isEmpty() == true)
-			return OperationStatus.KEYEMPTY;
-		
+		Longs.greaterThan(height, -1, "Height is negative");
+
+		byte[] identityBytes = identity.getBytes();
+		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
+		DatabaseEntry search = new DatabaseEntry(identityBytes);
+		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
+	    DatabaseEntry value = new DatabaseEntry();
+	    
 		Transaction transaction = this.votePowerDB.getEnvironment().beginTransaction(null, null);
 		try
-        {
-			List<Long> heights = new ArrayList<Long>(powers.keySet());
-			Collections.sort(heights);
-			
-			byte[] identityKeyPrefix = Arrays.copyOf(identity.getBytes(), Long.BYTES);
-			for (long height : heights)
+		{
+			long powerMaxHeight = 0;
+			long powerAtHeight = 0;
+			OperationStatus status;
+
+			try (SecondaryCursor cursor = this.voteIdentityDB.openCursor(transaction, null)) 
 			{
-				DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
-				DatabaseEntry value = new DatabaseEntry(Bytes.concat(Longs.toByteArray(powers.get(height)), identity.getBytes()));
-				if (this.votePowerDB.put(transaction, key, value) == OperationStatus.SUCCESS)
-					powerLog.debug("Store vote power of "+powers.get(height)+" @ "+height+" for "+identity);
+				status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
+				if (status.equals(OperationStatus.SUCCESS) == true)
+				{
+					if (Arrays.areEqual(identity.getBytes(), search.getData()) == true)
+					{
+						status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
+						if (status.equals(OperationStatus.SUCCESS) == false)
+							status = cursor.getLast(search, key, value, LockMode.DEFAULT);
+						else
+							status = cursor.getPrev(search, key, value, LockMode.DEFAULT);
+					}
+					else
+					{
+						status = cursor.getPrev(search, key, value, LockMode.DEFAULT);
+						if (status.equals(OperationStatus.SUCCESS) == false)
+							status = cursor.getFirst(search, key, value, LockMode.DEFAULT);
+					}
+					
+					if (status.equals(OperationStatus.SUCCESS) == true && Arrays.areEqual(search.getData(), identityBytes) == true)
+					{
+						powerMaxHeight = Longs.fromByteArray(key.getData(), Long.BYTES);
+						powerAtHeight = Longs.fromByteArray(value.getData());
+					}
+				}
+			}
+			
+			key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
+			status = this.votePowerDB.get(transaction, key, value, LockMode.DEFAULT);
+			if(status.equals(OperationStatus.SUCCESS) == true)
+				powerAtHeight = Longs.fromByteArray(value.getData());
+			
+			if (powerMaxHeight <= height)
+			{
+				for (long h = powerMaxHeight ; h <= height ; h++)
+				{
+					key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
+					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.getBytes()));
+				    status = this.votePowerDB.put(transaction, key, value);
+					if (status.equals(OperationStatus.SUCCESS) == false)
+						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
+				}	
+			}
+
+			for (long h = height ; h <= Math.max(height, powerMaxHeight) ; h++)
+			{
+				key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
+			    status = this.votePowerDB.get(transaction, key, value, LockMode.READ_UNCOMMITTED);
+
+			    long current = 0;
+				if (status.equals(OperationStatus.SUCCESS) == true)
+					current = Longs.fromByteArray(value.getData());
 				else
-					throw new DatabaseException("Failed to vote power of "+powers.get(height)+" @ "+height+" for "+identity);
+					throw new DatabaseException("Vote power state for "+identity+" @ "+height+" may be corrupted");
+				
+				long incremented = current+1;
+				value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(incremented), identity.getBytes()));
+				status = this.votePowerDB.put(transaction, key, value);
+				if (status.equals(OperationStatus.SUCCESS) == false)
+					throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
 			}
 			
 			transaction.commit();
-			return OperationStatus.SUCCESS;
+			return powerAtHeight+1;
 		}
-		catch (DatabaseException dbex)
+		catch (Exception e)
 		{
 			transaction.abort();
-			throw dbex;
+			throw new DatabaseException(e);
+		}
+	}
+	
+	/**
+	 * Sets the power at a given height for identity and returns the previous power value
+	 * 
+	 * @param identity
+	 * @param height
+	 * @param power
+	 * @return
+	 * @throws DatabaseException
+	 */
+	public long set(final ECPublicKey identity, final long height, final long power) throws DatabaseException
+	{
+		Objects.requireNonNull(identity, "Identity is null");
+		Longs.greaterThan(height, -1, "Height is negative");
+
+		byte[] identityBytes = identity.getBytes();
+		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
+		DatabaseEntry search = new DatabaseEntry(identityBytes);
+		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
+	    DatabaseEntry value = new DatabaseEntry();
+	    
+		Transaction transaction = this.votePowerDB.getEnvironment().beginTransaction(null, null);
+		try
+		{
+			long powerMaxHeight = 0;
+			long powerAtHeight = 0;
+			OperationStatus status;
+
+			try (SecondaryCursor cursor = this.voteIdentityDB.openCursor(transaction, null)) 
+			{
+				status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
+				if (status.equals(OperationStatus.SUCCESS) == true)
+				{
+					if (Arrays.areEqual(identity.getBytes(), search.getData()) == true)
+					{
+						status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
+						if (status.equals(OperationStatus.SUCCESS) == false)
+							status = cursor.getLast(search, key, value, LockMode.DEFAULT);
+						else
+							status = cursor.getPrev(search, key, value, LockMode.DEFAULT);
+					}
+					else
+					{
+						status = cursor.getPrev(search, key, value, LockMode.DEFAULT);
+						if (status.equals(OperationStatus.SUCCESS) == false)
+							status = cursor.getFirst(search, key, value, LockMode.DEFAULT);
+					}
+					
+					if (status.equals(OperationStatus.SUCCESS) == true && Arrays.areEqual(search.getData(), identityBytes) == true)
+					{
+						powerMaxHeight = Longs.fromByteArray(key.getData(), Long.BYTES);
+						powerAtHeight = Longs.fromByteArray(value.getData());
+					}
+				}
+			}
+			
+			key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
+			status = this.votePowerDB.get(transaction, key, value, LockMode.DEFAULT);
+			if(status.equals(OperationStatus.SUCCESS) == true)
+				powerAtHeight = Longs.fromByteArray(value.getData());
+			
+			if (powerAtHeight == power)
+			{
+				transaction.abort();
+				return powerAtHeight;
+			}
+			
+			if (powerMaxHeight <= height)
+			{
+				for (long h = powerMaxHeight ; h <= height ; h++)
+				{
+					key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
+					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.getBytes()));
+				    status = this.votePowerDB.put(transaction, key, value);
+					if (status.equals(OperationStatus.SUCCESS) == false)
+						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
+				}	
+			}
+
+			for (long h = height ; h <= Math.max(height, powerMaxHeight) ; h++)
+			{
+				key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
+			    status = this.votePowerDB.get(transaction, key, value, LockMode.READ_UNCOMMITTED);
+
+			    long current = 0;
+				if (status.equals(OperationStatus.SUCCESS) == true)
+					current = Longs.fromByteArray(value.getData());
+				else
+					throw new DatabaseException("Vote power state for "+identity+" @ "+height+" may be corrupted");
+				
+				if (current < power)
+				{
+					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(power), identity.getBytes()));
+					status = this.votePowerDB.put(transaction, key, value);
+					if (status.equals(OperationStatus.SUCCESS) == false)
+						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
+				}
+			}
+			
+			transaction.commit();
+			return powerAtHeight;
 		}
 		catch (Exception e)
 		{
@@ -215,7 +390,7 @@ class VotePowerStore extends DatabaseStore
 		}
 	}
 
-	public Collection<ECPublicKey> getIdentities() throws IOException
+	public Collection<ECPublicKey> getIdentities() throws DatabaseException
 	{
 		Set<ECPublicKey> identities = new HashSet<ECPublicKey>();
 		DatabaseEntry key = new DatabaseEntry();
@@ -227,7 +402,7 @@ class VotePowerStore extends DatabaseStore
 			while (status.equals(OperationStatus.SUCCESS) == true)
 			{
 				identities.add(ECPublicKey.from(key.getData()));
-				status = cursor.getNext(key, value, LockMode.DEFAULT);
+				status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
 			}
 			
 			return identities;

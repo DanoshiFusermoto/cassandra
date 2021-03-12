@@ -70,7 +70,7 @@ public final class AtomPool implements Service
 							try
 							{
 								// Dont vote if we have no power!
-								long localVotePower = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePower(AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, AtomPool.this.context.getNode().getIdentity());
+								long localVotePower = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), AtomPool.this.context.getNode().getIdentity());
 								if (localVotePower > 0)
 								{
 									if (atomsLog.hasLevel(Logging.DEBUG))
@@ -269,7 +269,7 @@ public final class AtomPool implements Service
 	// as preparation of an atom discovers the state keys.
 	//
 	// In a < prepared state the votes are "cached" in the pending atom and applied when the preparation stage is executed
-	private void applyVotes(final PendingAtom pendingAtom)
+	private void applyVotes(final PendingAtom pendingAtom) throws IOException
 	{
 		Collection<AtomVote> appliedVotes = pendingAtom.apply();
 		if (appliedVotes.isEmpty() == true)
@@ -279,10 +279,10 @@ public final class AtomPool implements Service
 			this.context.getNetwork().getGossipHandler().broadcast(appliedVote);
 	
 		Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), this.context.getLedger().numShardGroups());
-		long voteThresold = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroups);
+		long voteThresold = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups);
 		if (pendingAtom.voteWeight() >= voteThresold)
 		{
-			atomsLog.info(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, shardGroups));
+			atomsLog.info(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups));
 			AtomPool.this.context.getMetaData().increment("ledger.pool.atoms.agreed");
 		}
 	}

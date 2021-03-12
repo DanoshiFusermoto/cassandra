@@ -5,9 +5,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.Objects;
 import java.util.Set;
@@ -18,6 +16,7 @@ import org.fuserleer.Universe;
 import org.fuserleer.collections.LRUCacheMap;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.database.DatabaseException;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
@@ -26,11 +25,12 @@ import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.utils.Longs;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.eventbus.Subscribe;
-import com.google.common.primitives.Longs;
+import com.sleepycat.je.OperationStatus;
 
 // TODO Needs persistence methods.  Storing this in memory over long periods will consume a lot of space.  Recovery and rebuilding it from a crash would also be quite the nightmare.
 public final class VotePowerHandler implements Service
@@ -42,16 +42,23 @@ public final class VotePowerHandler implements Service
 	
 	private final Context context;
 	private final VotePowerStore votePowerStore;
-	private final Map<ECPublicKey, Map<Long, Long>> votePower;
 	private final Map<Long, VotePowerBloom> votePowerBloomCache;
+
+	/**
+	 * Holds a cache of the currently known identities.
+	 * 
+	 * TODO not a problem now, but may get large in super sized networks (1M+ validators), perhaps hold a subset 
+	 */
+	private final Set<ECPublicKey> identityCache;
+	
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
 	VotePowerHandler(final Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
-		this.votePower = new HashMap<ECPublicKey, Map<Long, Long>>();
 		this.votePowerBloomCache = Collections.synchronizedMap(new LRUCacheMap<Long, VotePowerBloom>(this.context.getConfiguration().get("ledger.vote.bloom.cache", 1<<10)));
 		this.votePowerStore = new VotePowerStore(context);
+		this.identityCache = Collections.synchronizedSet(new HashSet<ECPublicKey>());
 	}
 	
 	@Override
@@ -59,36 +66,19 @@ public final class VotePowerHandler implements Service
 	{
 		try
 		{
-			this.votePower.clear();
-			
 			this.votePowerStore.start();
+			
 			Collection<ECPublicKey> identities = this.votePowerStore.getIdentities();
-			if (identities.isEmpty() == false)
+			if (identities.isEmpty() == true)
 			{
-				for (ECPublicKey identity : identities)
-				{
-					Map<Long, Long> powerMap = this.votePowerStore.get(identity);
-					Iterator<Long> powerHeightIterator = powerMap.keySet().iterator();
-					while(powerHeightIterator.hasNext() == true)
-					{
-						long powerMapHeight = powerHeightIterator.next();
-						if (powerMapHeight > this.context.getLedger().getHead().getHeight())
-							powerHeightIterator.remove();
-					}
-					
-					this.votePower.put(identity, powerMap);
-					powerLog.info(this.context.getName()+": Loaded vote power for "+identity+":"+getVotePower(this.context.getLedger().getHead().getHeight(), identity));
-				}
-			}
-			else
-			{
+				long height = 0;
+				long power = 1;
 				for (ECPublicKey genode : Universe.getDefault().getGenodes())
 				{
 					powerLog.info(this.context.getName()+": Setting vote power for genesis node "+genode+":"+ShardMapper.toShardGroup(genode, Universe.getDefault().shardGroupCount())+" to "+1);
-					Map<Long, Long> powerMap = new HashMap<>();
-					powerMap.put(0l, 1l);
-					this.votePower.put(genode, powerMap);
-					this.votePowerStore.store(genode, powerMap);
+					this.votePowerStore.set(genode, height, power);
+					if (this.votePowerStore.get(genode, height) != power)
+						throw new IllegalStateException("Genesis node "+genode+" should have vote power of "+power+" @ "+height);
 				}
 			}
 			
@@ -104,33 +94,42 @@ public final class VotePowerHandler implements Service
 	public void stop() throws TerminationException
 	{
 		this.context.getEvents().unregister(this.syncBlockListener);
+		this.votePowerStore.stop();
+		this.identityCache.clear();
 	}
 	
-	public long getVotePower(final long height, final ECPublicKey identity)
+	void clean() throws DatabaseException
+	{
+		this.votePowerStore.clean();
+	}
+	
+	// NOTE Can use the identity cache directly providing that access outside of this function
+	// wraps the returned set in a lock or a sync block
+	private Set<ECPublicKey> getIdentities() throws DatabaseException
+	{
+		synchronized(this.identityCache)
+		{
+			if (this.identityCache.isEmpty())
+				this.identityCache.addAll(this.votePowerStore.getIdentities());
+			
+			return this.identityCache;
+		}
+	}
+	
+	private void identitiesAreDirty()
+	{
+		this.identityCache.clear();
+	}
+
+	public long getVotePower(final long height, final ECPublicKey identity) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
+		Longs.greaterThan(height, -1, "Height is negative");
 
 		this.lock.readLock().lock();
 		try
 		{
-			Map<Long, Long> powerMap = this.votePower.get(identity);
-			if (powerMap == null)
-				return 0l;
-			
-			long power = 0;
-			if (powerMap.containsKey(height))
-				power = powerMap.getOrDefault(Math.max(0, height), 0l);
-			else
-			{
-				// FIXME this section makes sure that an accurate power is returned in the event of missing information by
-				//		 returning the highest power seen up to a particular height.  It's very expensive though.
-				//		 Evaluate if absolutely required and if so, craft a more efficient method.
-				for (Entry<Long, Long> entry : powerMap.entrySet())
-					if (entry.getKey() <= Math.max(0, height) && entry.getValue() > power)
-						power = entry.getValue();
-			}
-			
-			return power;
+			return this.votePowerStore.get(identity, height);
 		}
 		finally
 		{
@@ -138,13 +137,13 @@ public final class VotePowerHandler implements Service
 		}
 	}
 	
-	public long getTotalVotePower(final long height, final long shardGroup)
+	public long getTotalVotePower(final long height, final long shardGroup) throws DatabaseException
 	{
 		this.lock.readLock().lock();
 		try
 		{
 			long totalVotePower = 0;
-			for (ECPublicKey identity : this.votePower.keySet())
+			for (ECPublicKey identity : getIdentities())
 			{
 				if (shardGroup != ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height)))
 					continue;
@@ -159,7 +158,7 @@ public final class VotePowerHandler implements Service
 		}
 	}
 
-	public long getTotalVotePower(final long height, final Set<Long> shardGroups)
+	public long getTotalVotePower(final long height, final Set<Long> shardGroups) throws DatabaseException
 	{
 		Objects.requireNonNull(shardGroups, "Shard groups is null");
 
@@ -167,7 +166,7 @@ public final class VotePowerHandler implements Service
 		try
 		{
 			long totalVotePower = 0;
-			for (ECPublicKey identity : this.votePower.keySet())
+			for (ECPublicKey identity : getIdentities())
 			{
 				if (shardGroups.contains(ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height))) == false)
 					continue;
@@ -182,7 +181,7 @@ public final class VotePowerHandler implements Service
 		}
 	}
 	
-	public VotePowerBloom getVotePowerBloom(final Hash block, long shardGroup)
+	public VotePowerBloom getVotePowerBloom(final Hash block, long shardGroup) throws DatabaseException
 	{
 		Objects.requireNonNull(block, "Block hash is null");
 		Objects.requireNonNull(shardGroup, "Shard group is null");
@@ -199,7 +198,7 @@ public final class VotePowerHandler implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			for (ECPublicKey identity : this.votePower.keySet())
+			for (ECPublicKey identity : getIdentities())
 			{
 				if (shardGroup != ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height)))
 					continue;
@@ -220,7 +219,7 @@ public final class VotePowerHandler implements Service
 		return votePowerBloom;
 	}
 
-	public long getVotePower(final long height, final Set<ECPublicKey> identities)
+	public long getVotePower(final long height, final Set<ECPublicKey> identities) throws DatabaseException
 	{
 		Objects.requireNonNull(identities, "Identities is null");
 
@@ -228,7 +227,7 @@ public final class VotePowerHandler implements Service
 		try
 		{
 			long votePower = 0l;
-			for (ECPublicKey identity : identities)
+			for (ECPublicKey identity : getIdentities())
 				votePower += getVotePower(height, identity);
 			
 			return votePower;
@@ -239,70 +238,44 @@ public final class VotePowerHandler implements Service
 		}
 	}
 
-	public long getVotePowerThreshold(final long height, final long shardGroup)
+	public long getVotePowerThreshold(final long height, final long shardGroup) throws DatabaseException
 	{
 		return twoFPlusOne(getTotalVotePower(height, shardGroup));
 	}
 	
-	public long getVotePowerThreshold(final long height, final Set<Long> shardGroups)
+	public long getVotePowerThreshold(final long height, final Set<Long> shardGroups) throws DatabaseException
 	{
 		Objects.requireNonNull(shardGroups, "Shard groups is null");
 
 		return twoFPlusOne(getTotalVotePower(height, shardGroups));
 	}
 	
-	long addVotePower(final long height, final ECPublicKey identity)
+	void setVotePower(final long height, final ECPublicKey identity, final long power) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 
 		this.lock.writeLock().lock();
 		try
 		{
-			final long prevPower;
-			final long prevPowerHeight;
-			Map<Long, Long> powerMap = this.votePower.computeIfAbsent(identity, (k) -> new HashMap<Long, Long>());
-			if (powerMap.isEmpty() == false)
-			{
-				long bestPrevPower = -1;
-				long bestPrevPowerHeight = -1;
-				for (Entry<Long, Long> pmh : powerMap.entrySet())
-				{
-					if (pmh.getKey() < height && pmh.getKey() > bestPrevPowerHeight)
-					{
-						bestPrevPowerHeight = pmh.getKey();
-						bestPrevPower = pmh.getValue();
-					}
-				}
-				
-				prevPower = bestPrevPower;
-				prevPowerHeight = bestPrevPowerHeight;
-			}
-			else
-			{
-				prevPower = 0;
-				prevPowerHeight = 0;
-			}
+			this.votePowerStore.set(identity, height, power);
+		}			
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
 
-			long bestPower = 0;
-			for (long h : powerMap.keySet())
-			{
-				if (h > height)
-				{
-					long bp = powerMap.compute(h, (k,v) -> v == null ? prevPower+1l : v+1l);
-					if (bp > bestPower)
-						bestPower = bp;
-				}
-			}
-			
-			for (long h = prevPowerHeight ; h < height ; h++)
-				powerMap.computeIfAbsent(h, (k) -> prevPower);
+	long incrementVotePower(final long height, final ECPublicKey identity) throws DatabaseException
+	{
+		Objects.requireNonNull(identity, "Identity is null");
 
-			long bp = powerMap.compute(height, (k,v) -> v == null ? prevPower+1l : v+1l);
-			if (bp > bestPower)
-				bestPower = bp;
-
-			powerLog.info(this.context.getName()+": Incrementing vote power for "+identity+":"+ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height))+" to "+bestPower);
-			return bestPower;
+		this.lock.writeLock().lock();
+		try
+		{
+			this.votePowerStore.increment(identity, height);
+			long power = this.votePowerStore.get(identity, height);
+			powerLog.info(this.context.getName()+": Incrementing vote power for "+identity+":"+ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height))+" to "+power+" @ "+height);
+			return power;
 		}			
 		finally
 		{
@@ -317,34 +290,6 @@ public final class VotePowerHandler implements Service
 		return Math.min(power, T + 1);
 	}
 	
-	private Set<ECPublicKey> processVoteBloom(final Collection<ECPublicKey> identities, final VotePowerBloom votePowerBloom)
-	{
-		Objects.requireNonNull(votePowerBloom, "Vote power bloom is null");
-		Objects.requireNonNull(identities, "Identities is null");
-
-		this.lock.writeLock().lock();
-		try
-		{
-			Set<ECPublicKey> updated = new HashSet<ECPublicKey>();
-			for (ECPublicKey identity : identities)
-			{
-				long power = votePowerBloom.power(identity);
-				Map<Long, Long> powerMap = this.votePower.computeIfAbsent(identity, (k) -> new HashMap<Long, Long>());
-				if (power > powerMap.getOrDefault(Longs.fromByteArray(votePowerBloom.getBlock().toByteArray())-1, 0l))
-				{
-					powerMap.put(Longs.fromByteArray(votePowerBloom.getBlock().toByteArray())-1, power);
-					updated.add(identity);
-					powerLog.info(this.context.getName()+": Setting vote power for "+identity+":"+votePowerBloom.getShardGroup()+" to "+power);
-				}
-			}
-			return updated;
-		}
-		finally
-		{
-			this.lock.writeLock().unlock();
-		}
-	}
-	
 	void update(final Block block) throws IOException
 	{
 		Objects.requireNonNull(block, "Block for vote update is null");
@@ -352,27 +297,60 @@ public final class VotePowerHandler implements Service
 		this.lock.writeLock().lock();
 		try
 		{
-			Set<ECPublicKey> updates = new HashSet<ECPublicKey>();
-			addVotePower(block.getHeader().getHeight(), block.getHeader().getOwner());
-			updates.add(block.getHeader().getOwner());
+			identitiesAreDirty();
+			
+			incrementVotePower(block.getHeader().getHeight(), block.getHeader().getOwner());
 
 			long numShardGroups = this.context.getLedger().numShardGroups(block.getHeader().getHeight());
 			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			Multimap<Long, ECPublicKey> shardGroupNodes = HashMultimap.create();
+			Map<Long, Long> updates = new HashMap<Long, Long>();
+
+			// Phase 1 process into map to avoid duplicates / overwrites hitting IO efficiency
 			for (AtomCertificate atomCertificate : block.getCertificates())
 			{
-				Multimap<Long, ECPublicKey> shardGroupNodes = HashMultimap.create();
 				for (StateCertificate stateCertificate : atomCertificate.getAll())
 					shardGroupNodes.putAll(ShardMapper.toShardGroup(stateCertificate.getState().get(), numShardGroups), stateCertificate.getSignatures().getSigners());
 				
 				for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())
 				{
 					if (votePowerBloom.getShardGroup() != localShardGroup)
-						updates.addAll(processVoteBloom(shardGroupNodes.get(votePowerBloom.getShardGroup()), votePowerBloom));
+					{
+						long height = Longs.fromByteArray(votePowerBloom.getBlock().toByteArray())-1;
+						for (ECPublicKey identity : shardGroupNodes.get(votePowerBloom.getShardGroup()))
+						{
+							long power = votePowerBloom.power(identity);
+							long key = identity.asLong() * (31l + height);
+							if (updates.containsKey(key) == false || updates.get(key) < power)
+								updates.put(key, power);
+						}
+
+					}
 				}
 			}
 			
-			for (ECPublicKey identity : updates)
-				this.votePowerStore.store(identity, this.votePower.get(identity));
+			// Phase 2 process the update map and perform IO
+			for (AtomCertificate atomCertificate : block.getCertificates())
+			{
+				for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())
+				{
+					if (votePowerBloom.getShardGroup() != localShardGroup)
+					{
+						for (ECPublicKey identity : shardGroupNodes.get(votePowerBloom.getShardGroup()))
+						{
+							long height = Longs.fromByteArray(votePowerBloom.getBlock().toByteArray())-1;
+							long key = identity.asLong() * (31l + height);
+							if (updates.containsKey(key) == true)
+							{
+								long power = updates.remove(key);
+								if (this.votePowerStore.set(identity, height, power) != power)
+									powerLog.info(this.context.getName()+": Setting vote power for "+identity+":"+votePowerBloom.getShardGroup()+" to "+power+" @ "+height);
+							}
+						}
+
+					}
+				}
+			}
 		}
 		finally
 		{

@@ -36,6 +36,7 @@ import org.fuserleer.ledger.messages.SyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.SyncBlockMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.Network;
 import org.fuserleer.network.messages.NodeMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
@@ -76,11 +77,30 @@ public class SyncHandler implements Service
 						
 						long localShardGroup = ShardMapper.toShardGroup(SyncHandler.this.context.getNode().getIdentity(), SyncHandler.this.context.getLedger().numShardGroups());
 						List<ConnectedPeer> syncPeers = SyncHandler.this.context.getNetwork().get(StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).
-							    																  setShardGroup(localShardGroup));
-
+								  																  setShardGroup(localShardGroup));
 						if (syncPeers.isEmpty() == true)
 							continue;
-
+						
+						boolean haveShardGroupCoverage = true;
+						// TODO remove this once sync is stable, adding explicit shard peer checks to relieve a concern and test an assumption of the fault
+						for (long sg = 0 ; sg < SyncHandler.this.context.getLedger().numShardGroups(SyncHandler.this.context.getLedger().getHead().getHeight()) ; sg++)
+						{
+							long shardGroup = sg;
+							if (shardGroup == localShardGroup)
+								continue;
+							
+							List<ConnectedPeer> shardPeers = SyncHandler.this.context.getNetwork().get(StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).
+									  															  	   setShardGroup(shardGroup));
+							if (shardPeers.isEmpty() == true)
+							{
+								haveShardGroupCoverage = false;
+								continue;
+							}
+						}
+						
+						if (haveShardGroupCoverage == false)
+							continue;
+						
 						if (SyncHandler.this.context.getLedger().isSynced() == true)
 							continue;
 
@@ -109,8 +129,8 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
-								long blockVotePower = SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePower(block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, block.getHeader().getCertificate().getSigners());
-								if (blockVotePower < SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY, Collections.singleton(localShardGroup)))
+								long blockVotePower = SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), block.getHeader().getCertificate().getSigners());
+								if (blockVotePower < SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup)))
 									continue;
 								
 								if (bestBlock == null || 

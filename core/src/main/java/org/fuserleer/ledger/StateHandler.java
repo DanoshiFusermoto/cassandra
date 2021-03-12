@@ -165,7 +165,7 @@ public final class StateHandler implements Service
 									final List<ConnectedPeer> provisionPeers = StateHandler.this.context.getNetwork().get(StandardPeerFilter.build(StateHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(provisionShardGroup));
 									if (provisionPeers.isEmpty() == true)
 									{
-										cerbyLog.error(StateHandler.this.getName()+": No provisioning peers available to satisfy request for "+stateKey+" in atom "+pendingAtom.getHash());
+										cerbyLog.error(StateHandler.this.context.getName()+": No provisioning peers available to satisfy request for "+stateKey+" in atom "+pendingAtom.getHash());
 										continue;
 									}
 										
@@ -483,7 +483,8 @@ public final class StateHandler implements Service
 							{
 								// Look for provisioned state in pending corresponding to the atom in question
 								pendingAtom = StateHandler.this.states.get(getStateMessage.getKey());
-								if (pendingAtom != null && pendingAtom.getHash().equals(getStateMessage.getAtom()) == true)
+								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true && 
+									pendingAtom.getHash().equals(getStateMessage.getAtom()) == true)
 								{
 									value = pendingAtom.getInput(getStateMessage.getKey());
 									if (value != null)
@@ -500,7 +501,7 @@ public final class StateHandler implements Service
 
 								// Look for state certificate in a pending atom
 								pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(getStateMessage.getAtom());
-								if (pendingAtom != null)
+								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true)
 								{
 									value = pendingAtom.getInput(getStateMessage.getKey());
 									if (value == null)
@@ -556,9 +557,13 @@ public final class StateHandler implements Service
 									return;
 								}
 								
-								// State is not locked nor committed by the containing atom in a certificate.  Set a request
+								// Pending atom is not found in any pool or commit. Need to set a future response
 								if (pendingAtom == null)
 									cerbyLog.warn(StateHandler.this.context.getName()+": Pending atom "+getStateMessage.getAtom()+" was null for state request "+getStateMessage.getKey()+" for " + peer);
+
+								// Pending atom was found but is not in a suitable state to serve the request. Need to set a future response
+								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == false)
+									cerbyLog.warn(StateHandler.this.context.getName()+": Pending atom "+getStateMessage.getAtom()+" status is "+pendingAtom.getStatus()+" for state request "+getStateMessage.getKey()+" for " + peer);
 									
 								StateHandler.this.inboundProvisionRequests.put(getStateMessage.getKey(), new AbstractMap.SimpleEntry<>(getStateMessage.getAtom(), peer));
 							}
@@ -763,15 +768,14 @@ public final class StateHandler implements Service
 		{
 			StateHandler.this.atoms.remove(pendingAtom.getHash());
 			pendingAtom.getStateKeys().forEach(sk -> {
-				StateHandler.this.states.remove(sk, pendingAtom);
-				StateHandler.this.outboundProvisionRequests.remove(Hash.from(sk.get(), pendingAtom.getHash()));
-				
 				long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
 				long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
 				long provisionShardGroup = ShardMapper.toShardGroup(sk.get(), numShardGroups);
 	        	if (provisionShardGroup != localShardGroup)
 	        		this.syncCache.put(this.context.getLedger().getHead().getHeight(), pendingAtom.getCertificate(sk));
 
+				StateHandler.this.states.remove(sk, pendingAtom);
+				StateHandler.this.outboundProvisionRequests.remove(Hash.from(sk.get(), pendingAtom.getHash()));
 			});
 			pendingAtom.getStateKeys().forEach(sk -> StateHandler.this.provisionQueue.remove(sk, pendingAtom));
 		}

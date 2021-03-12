@@ -16,6 +16,7 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.utils.Longs;
+import org.fuserleer.utils.Numbers;
 
 import com.google.common.primitives.Bytes;
 import com.sleepycat.je.Cursor;
@@ -145,7 +146,7 @@ class VotePowerStore extends DatabaseStore
 	public long get(final ECPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Longs.greaterThan(height, -1, "Height is negative");
+		Numbers.notNegative(height, "Height is negative");
 
 		byte[] identityBytes = identity.getBytes();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
@@ -194,7 +195,7 @@ class VotePowerStore extends DatabaseStore
 	public long increment(final ECPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Longs.greaterThan(height, -1, "Height is negative");
+		Numbers.notNegative(height, "Height is negative");
 
 		byte[] identityBytes = identity.getBytes();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
@@ -294,7 +295,7 @@ class VotePowerStore extends DatabaseStore
 	public long set(final ECPublicKey identity, final long height, final long power) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Longs.greaterThan(height, -1, "Height is negative");
+		Numbers.notNegative(height, "Height is negative");
 
 		byte[] identityBytes = identity.getBytes();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);

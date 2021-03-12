@@ -20,6 +20,7 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.utils.Ints;
 import org.fuserleer.utils.Longs;
+import org.fuserleer.utils.Numbers;
 
 public class MappedBlockingQueue<K, V> 
 {
@@ -373,7 +374,7 @@ public class MappedBlockingQueue<K, V>
 		Objects.requireNonNull(key, "Key to offer is null");
 		Objects.requireNonNull(value, "Value to offer is null");
 		Objects.requireNonNull(unit, "Time unit is null");
-		Longs.greaterThan(timeout, 0, "Time out is less than 1");
+		Numbers.greaterThan(timeout, 0, "Time out is less than 1");
 		
 		long nanos = unit.toNanos(timeout);
 		
@@ -424,7 +425,7 @@ public class MappedBlockingQueue<K, V>
 	public Entry<K,V> peek(final long timeout, final TimeUnit unit) throws InterruptedException
 	{
 		Objects.requireNonNull(unit, "Time unit is null");
-		Longs.greaterThan(timeout, 0, "Time out is less than 1");
+		Numbers.greaterThan(timeout, 0, "Time out is less than 1");
 
 		long nanos = unit.toNanos(timeout);
 		
@@ -474,7 +475,7 @@ public class MappedBlockingQueue<K, V>
 	public Entry<K,V> poll(final long timeout, final TimeUnit unit) throws InterruptedException
 	{
 		Objects.requireNonNull(unit, "Time unit is null");
-		Longs.greaterThan(timeout, 0, "Time out is less than 1");
+		Numbers.greaterThan(timeout, 0, "Time out is less than 1");
 
 		long nanos = unit.toNanos(timeout);
 		this.lock.writeLock().lockInterruptibly();

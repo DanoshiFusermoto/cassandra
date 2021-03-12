@@ -9,6 +9,7 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -76,8 +77,7 @@ public class MessageParticle extends SignedParticle
 			throw new IllegalArgumentException("Subject length "+this.subject.length()+" is greater than MAX_SUBJECT_LENGTH "+MessageParticle.MAX_SUBJECT_LENGTH);
 
 		this.createdAt = createdAt;
-		if (this.createdAt <= Universe.getDefault().getTimestamp())
-			throw new IllegalArgumentException("Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
+		Numbers.greaterThan(this.createdAt, Universe.getDefault().getTimestamp()-1, "Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
 	}
 
 	public String getSubject() 

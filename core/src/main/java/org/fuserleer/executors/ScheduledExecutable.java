@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.utils.Numbers;
 
 public abstract class ScheduledExecutable extends Executable
 {
@@ -23,11 +24,8 @@ public abstract class ScheduledExecutable extends Executable
 	{
 		super();
 		
-		if (initialDelay < 0)
-			throw new IllegalArgumentException("Initial delay is negative");
-		
-		if (recurrentDelay < 0)
-			throw new IllegalArgumentException("Recurrent delay is negative");
+		Numbers.notNegative(initialDelay, "Initial delay is negative");
+		Numbers.notNegative(recurrentDelay, "Recurrent delay is negative");
 
 		this.initialDelay = initialDelay;
 		this.recurrentDelay = recurrentDelay;

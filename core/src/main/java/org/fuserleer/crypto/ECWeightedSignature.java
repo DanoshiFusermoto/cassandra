@@ -13,6 +13,7 @@ import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -44,12 +45,11 @@ public final class ECWeightedSignature
 	/**
      * Constructs a signature with the given components and a weight. Does NOT automatically canonicalise the signature.
      */
-    public ECWeightedSignature(BigInteger r, BigInteger s, int weight)
+    public ECWeightedSignature(final BigInteger r, final BigInteger s, final int weight)
     {
     	super();
-
-    	if (weight < 0)
-    		throw new IllegalArgumentException("Weight is negative");
+    	
+    	Numbers.notNegative(weight, "Weight is negative");
     	
     	this.weight = weight;
     	this.r = Objects.requireNonNull(r);
@@ -61,12 +61,14 @@ public final class ECWeightedSignature
 		return this.weight;
 	}
 
-	public BigInteger getR() {
-		return r;
+	public BigInteger getR() 
+	{
+		return this.r;
 	}
 
-	public BigInteger getS() {
-		return s;
+	public BigInteger getS() 
+	{
+		return this.s;
 	}
 
     @Override

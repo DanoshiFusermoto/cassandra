@@ -26,6 +26,7 @@ import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.utils.Longs;
+import org.fuserleer.utils.Numbers;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
@@ -124,7 +125,7 @@ public final class VotePowerHandler implements Service
 	public long getVotePower(final long height, final ECPublicKey identity) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Longs.greaterThan(height, -1, "Height is negative");
+		Numbers.notNegative(height, "Height is negative");
 
 		this.lock.readLock().lock();
 		try

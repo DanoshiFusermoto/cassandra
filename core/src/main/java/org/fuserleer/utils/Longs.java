@@ -89,15 +89,4 @@ public final class Longs {
 		return (b0 & 0xFFL) << 56 | (b1 & 0xFFL) << 48 | (b2 & 0xFFL) << 40 | (b3 & 0xFFL) << 32 |
 			   (b4 & 0xFFL) << 24 | (b5 & 0xFFL) << 16 | (b6 & 0xFFL) <<  8 | (b7 & 0xFFL);
 	}
-	
-	public static void greaterThan(long value, long bound, String message)
-	{
-		if (value <= bound)
-		{
-			if (message == null)
-				throw new IllegalArgumentException();
-			else
-				throw new IllegalArgumentException(message);
-		}
-	}
 }

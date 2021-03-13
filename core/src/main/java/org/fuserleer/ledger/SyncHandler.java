@@ -36,7 +36,6 @@ import org.fuserleer.ledger.messages.SyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.SyncBlockMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.Network;
 import org.fuserleer.network.messages.NodeMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;

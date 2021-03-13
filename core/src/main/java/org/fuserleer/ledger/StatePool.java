@@ -304,12 +304,12 @@ public final class StatePool implements Service
 										continue;
 									}
 									
-	/*								if (stateVote.verify(stateVote.getOwner()) == false)
+									if (stateVote.verify(stateVote.getOwner()) == false)
 									{
-										cerbyLog.error(StatePool.this.context.getName()+": State vote failed verification for "+stateVote.getOwner());
+										statePoolLog.error(StatePool.this.context.getName()+": State vote failed verification for "+stateVote.getOwner());
 										// TODO penalty
 										continue;
-									}*/
+									}
 							
 									StatePool.this.lock.writeLock().lock();
 									PendingState pendingState;
@@ -533,42 +533,6 @@ public final class StatePool implements Service
 				
 				StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
 				StatePool.this.voteProcessorSemaphore.release();
-
-				
-/*				if (representation.verify(representation.getOwner()) == false)
-				{
-					cerbyLog.error(StatePool.this.context.getName()+": State vote representation failed verification for "+representation.getOwner());
-					// TODO penalty
-					return;
-				}
-
-				if (OperationStatus.KEYEXIST.equals(StatePool.this.context.getLedger().getLedgerStore().store(stateVote)) == false)
-				{
-					// Already completed and committed?
-					// FIXME need this!
-					boolean completed = true; 
-					if (StatePool.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, stateVoteRepresentation.getBlock())).equals(CommitStatus.COMMITTED) == true)
-					{
-						BlockHeader blockHeader = StatePool.this.context.getLedger().getLedgerStore().get(stateVoteRepresentation.getBlock(), BlockHeader.class);
-						if (blockHeader == null)
-							throw new IllegalStateException("Expected to find committed block header "+stateVoteRepresentation.getBlock());
-						
-						// If any atom does not have a certificate, then this block has not been completed so process the representation
-						// TODO What happens if the first atom checked timed out?  will give a false result.
-						for (Hash atom : blockHeader.getInventory(InventoryType.ATOMS))
-						{
-					    	StateAddress atomStateAddress = new StateAddress(Atom.class, atom);
-					    	Commit atomCommit = StatePool.this.context.getLedger().getLedgerStore().search(atomStateAddress);
-					    	if (atomCommit != null && atomCommit.getPath().get(Elements.CERTIFICATE) == null)
-					    	{
-					    		completed = false;
-					    		break;
-					    	}
-						}
-					}
-					
-					if (completed == true)
-						return;*/								
 			}
 		});
 					

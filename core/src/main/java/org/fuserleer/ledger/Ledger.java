@@ -185,6 +185,8 @@ public final class Ledger implements Service, LedgerInterface
 				ledgerLog.error(Ledger.this.context.getName()+": Local block header "+headHash+" not found in store");
 				throw new UnsupportedOperationException("Integrity recovery not implemented");
 			}
+			
+			// TODO clean up vote power if needed after recovery as could be in a compromised state 
 		}
 	}
 	
@@ -432,8 +434,6 @@ public final class Ledger implements Service, LedgerInterface
 			// Clone it to make sure to extract the header
 			Ledger.this.setHead(block.getHeader());
 			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
-			Ledger.this.context.getMetaData().increment("ledger.processed.atoms.local", block.getHeader().getInventory(InventoryType.ATOMS).size());
-			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", block.getHeader().getInventory(InventoryType.CERTIFICATES).size());
 			
 			long numShardGroups = Ledger.this.numShardGroups(block.getHeader().getHeight());
 			Set<Long> shardGroupsTouched = new HashSet<Long>();
@@ -449,6 +449,8 @@ public final class Ledger implements Service, LedgerInterface
 					this.lastThroughputCommittedAtoms++;
 				else if (atomCertificate.getDecision().equals(StateDecision.NEGATIVE) == true)
 					this.lastThroughputRejectedAtoms++;
+				
+				Ledger.this.context.getMetaData().increment("ledger.commits.certificates");
 			}
 
 			for (Atom atom : block.getAtoms())

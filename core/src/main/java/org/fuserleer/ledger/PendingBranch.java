@@ -522,7 +522,6 @@ public class PendingBranch
 		this.lock.lock();
 		try
 		{
-			// TODO the blocks will be committed separately when sharded
 			LinkedList<PendingBlock> committed = new LinkedList<PendingBlock>();
 			Iterator<PendingBlock> vertexIterator = this.blocks.iterator();
 			while(vertexIterator.hasNext() == true)

@@ -32,7 +32,6 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.eventbus.Subscribe;
 
-// TODO Needs persistence methods.  Storing this in memory over long periods will consume a lot of space.  Recovery and rebuilding it from a crash would also be quite the nightmare.
 public final class VotePowerHandler implements Service
 {
 	private static final Logger powerLog = Logging.getLogger("power");

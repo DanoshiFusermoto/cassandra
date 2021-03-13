@@ -58,6 +58,7 @@ public final class Block extends BasicObject implements Primitive
 		this.header = Objects.requireNonNull(header, "Header is null");
 
 		// TODO prevent duplicate atoms
+		//		allowed currently to allow testing of duplicate atom injections which should fail during consensus
 		this.atoms = new LinkedList<Atom>(atoms);
 
 		this.certificates = new LinkedHashMap<Hash, AtomCertificate>();
@@ -78,6 +79,7 @@ public final class Block extends BasicObject implements Primitive
 			throw new IllegalArgumentException("Atoms is empty");
 		
 		// TODO prevent duplicate atoms
+		//		allowed currently to allow testing of duplicate atom injections which should fail during consensus
 		this.atoms = new LinkedList<Atom>(atoms);
 		
 		this.certificates = new LinkedHashMap<Hash, AtomCertificate>();

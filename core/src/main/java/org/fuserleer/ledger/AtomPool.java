@@ -108,8 +108,7 @@ public final class AtomPool implements Service
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 	private final Map<Hash, PendingAtom> pending = new HashMap<Hash, PendingAtom>();
-	private final Map<Hash, Hash> states = new HashMap<Hash, Hash>();
-	// TODO still need to lock indexables?  probably prudent
+	private final Map<Hash, Hash> states = new HashMap<Hash, Hash>(); // TODO still need to lock states in the pool?  probably prudent, but is worth the compute hit?
 	private final Map<Long, Set<PendingAtom>> buckets = new HashMap<Long, Set<PendingAtom>>();
 	private final BlockingQueue<PendingAtom> voteQueue;
 
@@ -172,12 +171,13 @@ public final class AtomPool implements Service
 				if (atomsLog.hasLevel(Logging.DEBUG) == true)
 					atomsLog.debug(AtomPool.this.context.getName()+": Atom pool vote "+vote.getHash()+":"+vote.getAtom()+" for "+vote.getOwner());
 				
-/*				if (object.verify(object.getOwner()) == false)
+				// TODO move this to a producer / comsumer model as its expensive and may time out gossip here
+				if (vote.verify(vote.getOwner()) == false)
 				{
-					atomsLog.error(AtomPool.this.context.getName()+": Atom pool votes failed verification for "+object.getOwner());
+					atomsLog.error(AtomPool.this.context.getName()+": Atom pool votes failed verification for "+vote.getOwner());
 					// TODO disconnect and ban
 					return;
-				}*/
+				}
 	
 				if (OperationStatus.KEYEXIST.equals(AtomPool.this.context.getLedger().getLedgerStore().store(vote)) == false)
 				{

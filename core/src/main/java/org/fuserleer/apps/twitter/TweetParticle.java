@@ -5,7 +5,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -13,14 +16,13 @@ import java.util.regex.Pattern;
 import org.fuserleer.Universe;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.database.Field;
-import org.fuserleer.database.Fields;
-import org.fuserleer.database.Identifier;
-import org.fuserleer.database.Indexable;
-import org.fuserleer.exceptions.DependencyNotFoundException;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.StateAddress;
+import org.fuserleer.ledger.StateField;
 import org.fuserleer.ledger.StateMachine;
-import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.StateOp;
+import org.fuserleer.ledger.StateOp.Instruction;
+import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.SignedParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -28,6 +30,8 @@ import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.utils.Longs;
+import org.fuserleer.utils.Numbers;
+import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
@@ -37,6 +41,7 @@ public class TweetParticle extends SignedParticle
 {
 	private static final Logger twitterLog = Logging.getLogger("twitter");
 
+	public static int MIN_TEXT_LENGTH = 3;
 	public static int MAX_TEXT_LENGTH = 512;
 	public static int MAX_HASH_TAGS = 32;
 	public static int MAX_MENTIONS = 32;
@@ -92,49 +97,6 @@ public class TweetParticle extends SignedParticle
 		
 		if (media != null && media.isEmpty() == false)
 			this.media = new LinkedHashSet<Hash>(media);
-
-/*		this.text = new String(Objects.requireNonNull(text, "Text is null").getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
-		if (this.text.isEmpty())
-			throw new IllegalArgumentException("Text is empty");
-		if (this.text.length() > TweetOperation.MAX_TEXT_LENGTH)
-			throw new IllegalArgumentException("Text length "+this.text.length()+" is greater than MAX_TEXT_LENGTH "+TweetOperation.MAX_TEXT_LENGTH);
-		
-		this.user = new String(Objects.requireNonNull(user, "User is null").toLowerCase().getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
-		if (this.user.isEmpty())
-			throw new IllegalArgumentException("User is empty");
-		if (this.user.length() > TwitterUserRegistration.MAX_SCREENNAME_LENGTH)
-			throw new IllegalArgumentException("User "+this.user+" length "+this.user.length()+" is greater than MAX_NAME_LENGTH "+TwitterUserRegistration.MAX_SCREENNAME_LENGTH);
-		
-		this.createdAt = createdAt;
-		if (this.createdAt <= Deployment.getDefault().getTimestamp())
-			throw new IllegalArgumentException("Created time "+this.createdAt+" is before genesis time "+Deployment.getDefault().getTimestamp());
-		
-		if (replyTo != null)
-		{
-			if (replyTo.equals(Hash.ZERO) == true)
-				throw new IllegalArgumentException("Reply hash is ZERO");
-
-			this.replyTo = replyTo;
-		}
-
-		if (retweetOf != null)
-		{
-			if (this.replyTo != null)
-				throw new IllegalStateException("Tweets can not be a reply and retweet");
-			
-			if (retweetOf.equals(Hash.ZERO) == true)
-				throw new IllegalArgumentException("Retweet hash is ZERO");
-
-			this.retweetOf = retweetOf;
-		}
-
-		if (media != null && media.isEmpty() == false)
-		{
-			if (media.size() > TweetOperation.MAX_MEDIA)
-				throw new IllegalArgumentException("Maximum media items is "+TweetOperation.MAX_MEDIA);
-
-			this.media = new LinkedHashSet<Hash>(media);
-		}*/
 		
 		extractHashTags();
 		extractMentions();
@@ -163,8 +125,7 @@ public class TweetParticle extends SignedParticle
 
 	private void extractHashTags()
 	{
-		if (this.text == null)
-			return;
+		Objects.requireNonNull(this.text, "Text is null");
 		
 		this.hashtags = new LinkedHashSet<String>();
 		// TODO Trims the # from the match... seems sensible as we know what it is, but maybe it should be included in full form?
@@ -184,8 +145,7 @@ public class TweetParticle extends SignedParticle
 	
 	private void extractMentions()
 	{
-		if (this.text == null)
-			return;
+		Objects.requireNonNull(this.text, "Text is null");
 
 		this.mentions = new LinkedHashSet<String>();
 		// TODO Trims the @ from the match leaving the user name only, as @ symbols 
@@ -289,65 +249,20 @@ public class TweetParticle extends SignedParticle
 		return this.retweetOf;
 	}
 
-	@Override
-	public Set<Indexable> getIndexables() 
-	{
-		Set<Indexable> indexables = super.getIndexables();
-		indexables.add(Indexable.from(this.id, getClass()));
-		return indexables;
-	}
-
-	@Override
-	public Set<Identifier> getIdentifiers()
-	{
-		Set<Identifier> identifiers = super.getIdentifiers();
-		identifiers.add(Identifier.from(this.user));
-		
-		// Concatenated user + owner for faster searches
-		identifiers.add(Identifier.from(Identifier.from(this.user), Identifier.from(getOwner().getBytes())));
-		
-		if (this.hashtags != null)
-		{
-			for (String hashTag : this.hashtags)
-				identifiers.add(Identifier.from(hashTag));
-		}
-
-		if (this.mentions != null)
-		{
-			for (String mention : this.mentions)
-				identifiers.add(Identifier.from(mention));
-		}
-		
-		if (this.replyTo != null)
-			identifiers.add(Identifier.from(this.replyTo));
-
-		return identifiers;
-	}
-
 	private void verifyArguments()
 	{
-		if (this.text == null)
-			throw new NullPointerException("Text is null");
+		Objects.requireNonNull(this.text, "Text is null");
+		Numbers.inRange(this.text.length(), TweetParticle.MIN_TEXT_LENGTH, TweetParticle.MAX_TEXT_LENGTH, "Test length "+this.text.length()+" is not in range "+TweetParticle.MIN_TEXT_LENGTH+" -> "+TweetParticle.MAX_TEXT_LENGTH);
 		
-		if (this.text.isEmpty() == true)
-			throw new IllegalArgumentException("Text is empty");
+		Numbers.lessThan(this.createdAt, Universe.getDefault().getTimestamp(), "Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
 
-		if (this.text.length() > TweetParticle.MAX_TEXT_LENGTH)
-			throw new IllegalArgumentException("Text length "+this.text.length()+" is greater than MAX_TEXT_LENGTH "+TweetParticle.MAX_TEXT_LENGTH);
-		
-		if (this.createdAt <= Universe.getDefault().getTimestamp())
-			throw new IllegalArgumentException("Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
-		
 		// Hashtags
 		if (this.hashtags != null)
 		{
-			if (this.hashtags.size() > TweetParticle.MAX_HASH_TAGS)
-				throw new IllegalStateException("Hashtags exceeds max of "+TweetParticle.MAX_HASH_TAGS);
-			
+			Numbers.lessThan(this.hashtags.size(), TweetParticle.MAX_HASH_TAGS, "Hashtags exceeds max of "+TweetParticle.MAX_HASH_TAGS);
 			for (String hashTag : this.hashtags)
 			{
-				if (hashTag.length() == 0)
-					throw new IllegalStateException("Hashtag length is zero");
+				Numbers.notZero(hashTag.length(), "Hashtag length is zero");
 					
 				if (this.text.toLowerCase().contains("#"+hashTag.toLowerCase()) == false)
 					throw new IllegalStateException("Tweet doesn't contain hashtag "+hashTag.toLowerCase());
@@ -357,14 +272,10 @@ public class TweetParticle extends SignedParticle
 		// Mentions
 		if (this.mentions != null)
 		{
-			if (this.mentions.size() > TweetParticle.MAX_MENTIONS)
-				throw new IllegalStateException("Mentions exceeds max of "+TweetParticle.MAX_MENTIONS);
-	
+			Numbers.lessThan(this.mentions.size(), TweetParticle.MAX_MENTIONS, "Mentions exceeds max of "+TweetParticle.MAX_MENTIONS);
 			for (String mention : this.mentions)
 			{
-				if (mention.length() == 0)
-					throw new IllegalStateException("Mention length is zero");
-					
+				Numbers.notZero(mention.length(), "Mention length is zero");
 				if (this.text.toLowerCase().contains("@"+mention.toLowerCase()) == false)
 					throw new IllegalStateException("Tweet doesn't contain mention "+mention.toLowerCase());
 			}
@@ -372,34 +283,24 @@ public class TweetParticle extends SignedParticle
 		
 		// Media 
 		if (this.media != null)
-		{
-			if (this.media.size() > TweetParticle.MAX_MEDIA)
-				throw new IllegalStateException("Maximum media items is "+TweetParticle.MAX_MEDIA);
-		}
+			Numbers.lessThan(this.media.size(), TweetParticle.MAX_MEDIA, "Maximum media items is "+TweetParticle.MAX_MEDIA);
 		
-		if (this.replyTo != null && this.replyTo.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Reply hash is ZERO");
+		if (this.replyTo != null)
+			Hash.notZero(this.replyTo, "Reply hash is ZERO");
 
-		if (this.retweetOf != null && this.retweetOf.equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Retweet hash is ZERO");
+		if (this.retweetOf != null)
+			Hash.notZero(this.retweetOf, "Retweet hash is ZERO");
 		
 		if (this.replyTo != null && this.retweetOf != null)
 			throw new IllegalStateException("Tweets can not be a reply and retweet");
 
 		// User
-		if (this.user == null)
-			throw new NullPointerException("User is null");
-
-		if (this.user.isEmpty() == true)
-			throw new IllegalArgumentException("User is empty");
-
-		if (this.user.length() > TwitterUserRegistration.MAX_SCREENNAME_LENGTH)
-			throw new IllegalArgumentException("User "+this.user+" length "+this.user.length()+" is greater than MAX_NAME_LENGTH "+TwitterUserRegistration.MAX_SCREENNAME_LENGTH);
-
+		Objects.requireNonNull(this.user, "User is null");
+		Numbers.inRange(this.user.length(), TwitterUserRegistration.MIN_HANDLE_LENGTH, TwitterUserRegistration.MAX_HANDLE_LENGTH, "User Handle "+this.user+" length "+this.user.length()+" is not in range "+TwitterUserRegistration.MIN_HANDLE_LENGTH+" -> "+TwitterUserRegistration.MAX_HANDLE_LENGTH);
 	}
 	
 	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
 	{
 		try
 		{
@@ -410,118 +311,72 @@ public class TweetParticle extends SignedParticle
 			// Can just throw the causes as they are uncaught exceptions?
 			throw new ValidationException(ex);
 		}
-	}
+		
+		stateMachine.sop(new StateOp(new StateAddress(TweetParticle.class, this.id), Instruction.NOT_EXISTS), this);
+		stateMachine.sop(new StateOp(new StateField(this.id, "replies"), Instruction.NOT_EXISTS), this);
+		stateMachine.sop(new StateOp(new StateField(this.id, "retweets"), Instruction.NOT_EXISTS), this);
 
-	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException
-	{
-		String user = stateMachine.get("user");
-		if (user != null && user.equalsIgnoreCase(this.user) == false)
-			throw new ValidationException("Expected users "+this.user+" but found "+user);
-		else if (user == null)
+		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(this.user.toLowerCase())), Instruction.EXISTS), this);
+		
+		if (this.replyTo != null)
 		{
-			Indexable userStateIndexable = Indexable.from(this.user, TwitterUserRegistration.class);
-			if (stateMachine.state(userStateIndexable) == false)
-				throw new DependencyNotFoundException("User "+this.user+" not found", stateMachine.getAtom().getHash(), userStateIndexable.getHash());
+			stateMachine.sop(new StateOp(new StateAddress(TweetParticle.class, this.replyTo), Instruction.EXISTS), this);
+			stateMachine.sop(new StateOp(new StateField(this.replyTo, "replies"), Instruction.GET), this);
+		}
+			
+		if (this.retweetOf != null)
+		{
+			stateMachine.sop(new StateOp(new StateAddress(TweetParticle.class, this.retweetOf), Instruction.EXISTS), this);
+			stateMachine.sop(new StateOp(new StateField(this.retweetOf, "retweets"), Instruction.GET), this);
 		}
 		
-		try
-		{
-			if (this.replyTo != null)
-			{
-				Indexable replyToIndexable = Indexable.from(this.replyTo, TweetParticle.class);
-				Atom replyToAtom = stateMachine.get(replyToIndexable, Atom.class);
-				if (replyToAtom != null)
-				{
-					Fields fields = replyToAtom.getFields();
+		if (this.media != null)
+			this.media.forEach(media -> stateMachine.sop(new StateOp(new StateAddress(Particle.class, media), Instruction.EXISTS), this));
 
-					Field repliesField = fields.getOrDefault(Indexable.from(this.replyTo, TweetParticle.class), "num_replies", 0);
-					fields.set(repliesField.getScope(), repliesField.getName(), ((int) repliesField.getValue()) + 1);
-					
-					Field favoriteRatioField = fields.getOrDefault(Indexable.from(this.replyTo, TweetParticle.class), "favourite_ratio", 1);
-					Field favoritesField = fields.getOrDefault(Indexable.from(this.replyTo, TweetParticle.class), "num_favourites", 0);
-					fields.set(favoritesField.getScope(), favoritesField.getName(), ((int) favoritesField.getValue()) + ((int) favoriteRatioField.getValue()));
-
-					stateMachine.set(replyToAtom.getHash(), fields);
-				}
-				else
-					throw new DependencyNotFoundException("REPLY: Atom containing tweet "+this.replyTo+" not found", stateMachine.getAtom().getHash(), replyToIndexable.getHash());
-			}
-	
-			if (this.retweetOf != null)
-			{
-				Indexable retweetIndexable = Indexable.from(this.retweetOf, TweetParticle.class);
-				Atom retweetAtom = stateMachine.get(retweetIndexable, Atom.class);
-				if (retweetAtom != null)
-				{
-					Fields fields = retweetAtom.getFields();
-					
-					Field repliesField = fields.getOrDefault(Indexable.from(this.retweetOf, TweetParticle.class), "num_retweets", 0);
-					fields.set(repliesField.getScope(), repliesField.getName(), ((int) repliesField.getValue()) + 1);
-					
-					Field favoriteRatioField = fields.getOrDefault(Indexable.from(this.retweetOf, TweetParticle.class), "favourite_ratio", 1);
-					Field favoritesField = fields.getOrDefault(Indexable.from(this.retweetOf, TweetParticle.class), "num_favourites", 0);
-					fields.set(favoritesField.getScope(), favoritesField.getName(), ((int) favoritesField.getValue()) + ((int) favoriteRatioField.getValue()));
-
-					stateMachine.set(retweetAtom.getHash(), fields);
-				}
-				else
-					throw new DependencyNotFoundException("RETWEET: Atom containing tweet "+this.retweetOf+" not found", stateMachine.getAtom().getHash(), retweetIndexable.getHash());
-			}
-		}
-		catch (IOException ioex)
-		{
-			// FIXME throwing a ValidationException to wrap an IOException on an atom update isn't right
-			//		 but throwing an IOException stalls the ledger update loop ... can fix this when the latter is fixed
-			throw new ValidationException(ioex);
-		}
+		super.prepare(stateMachine, arguments);
 	}
 	
 	@Override
-	public void unexecute(StateMachine stateMachine) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine, Object... arguments) throws ValidationException, IOException
 	{
-		try
+		stateMachine.sop(new StateOp(new StateAddress(TweetParticle.class, this.id), UInt256.from(this.id.toByteArray()), Instruction.SET), this);
+		stateMachine.sop(new StateOp(new StateField(this.id, "replies"), UInt256.ZERO, Instruction.SET), this);
+		stateMachine.sop(new StateOp(new StateField(this.id, "retweets"), UInt256.ZERO, Instruction.SET), this);
+
+		if (this.replyTo != null && this.replyTo.equals(Hash.ZERO) == false)
 		{
-			if (this.replyTo != null)
-			{
-				Atom replyToAtom = stateMachine.get(Indexable.from(this.replyTo, TweetParticle.class), Atom.class);
-				if (replyToAtom != null)
-				{
-					Fields fields = replyToAtom.getFields();
-					Field field = fields.getOrDefault(Indexable.from(this.replyTo, TweetParticle.class), "num_replies", 0);
-					fields.set(field.getScope(), field.getName(), ((int) field.getValue()) - 1);
-					stateMachine.set(replyToAtom.getHash(), fields);
-				}
-				else
-				{
-					twitterLog.warn("REPLY: Atom containing tweet "+this.replyTo+" not found");
-					throw new ValidationException("RETWEET: Atom containing tweet "+this.replyTo+" not found");
-				}
-			}
-	
-			if (this.retweetOf != null)
-			{
-				Atom retweetAtom = stateMachine.get(Indexable.from(this.retweetOf, TweetParticle.class), Atom.class);
-				if (retweetAtom != null)
-				{
-					Fields fields = retweetAtom.getFields();
-					Field field = fields.getOrDefault(Indexable.from(this.retweetOf, TweetParticle.class), "num_retweets", 0);
-					fields.set(field.getScope(), field.getName(), ((int) field.getValue()) - 1);
-					stateMachine.set(retweetAtom.getHash(), fields);
-				}
-				else
-				{
-					twitterLog.warn("RETWEET: Atom containing tweet "+this.retweetOf+" not found");
-					throw new ValidationException("RETWEET: Atom containing tweet "+this.retweetOf+" not found");
-				}
-			}
+			Optional<UInt256> replies = stateMachine.getInput(new StateField(this.replyTo, "replies"));
+			stateMachine.sop(new StateOp(new StateField(this.replyTo, "replies"), replies.get().increment(), Instruction.SET), this);
+			stateMachine.associate(this.replyTo, this);
 		}
-		catch (IOException ioex)
+			
+		if (this.retweetOf != null && this.retweetOf.equals(Hash.ZERO) == false)
 		{
-			// FIXME throwing a ValidationException to wrap an IOException on an atom update isn't right
-			//		 but throwing an IOException stalls the ledger update loop ... can fix this when the latter is fixed
-			throw new ValidationException(ioex);
+			Optional<UInt256> retweets = stateMachine.getInput(new StateField(this.retweetOf, "retweets"));
+			stateMachine.sop(new StateOp(new StateField(this.retweetOf, "retweets"), retweets.get().increment(), Instruction.SET), this);
 		}
+		
+		// ASSOCIATIONS //
+		Set<Hash> associations = new HashSet<Hash>();
+		associations.add(Hash.from(this.user));
+
+		// Concatenated user + owner for faster searches
+		associations.add(Hash.from(Hash.from(this.user), getOwner().asHash()));
+		
+		if (this.hashtags != null)
+		{
+			for (String hashTag : this.hashtags)
+				associations.add(Hash.from(hashTag));
+		}
+
+		if (this.mentions != null)
+		{
+			for (String mention : this.mentions)
+				associations.add(Hash.from(mention));
+		}
+		
+		for (Hash association : associations)
+			stateMachine.associate(association, this);
 	}
 
 	@Override

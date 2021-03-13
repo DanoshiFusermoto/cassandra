@@ -55,18 +55,14 @@ abstract class Vote<T> extends BasicObject implements Primitive
 		this.decision = Objects.requireNonNull(decision, "Decision is null");
 		
 		// TODO check object is serializable
-		// TODO turn this back on!
-		if (1==0)
+		try
 		{
-			try
-			{
-				if (verify(owner) == false)
-					throw new CryptoException("Vote invalid / not verified");
-			}
-			catch (SerializationException ex)
-			{
-				throw new CryptoException("Vote invalid / not verified", ex);
-			}
+			if (verify(owner) == false)
+				throw new CryptoException("Vote invalid / not verified");
+		}
+		catch (SerializationException ex)
+		{
+			throw new CryptoException("Vote invalid / not verified", ex);
 		}
 	}
 

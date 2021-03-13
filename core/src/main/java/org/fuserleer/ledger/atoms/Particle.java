@@ -10,6 +10,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.StateExecutable;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
@@ -20,7 +21,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 @SerializerId2("ledger.atoms.particle")
-public abstract class Particle extends BasicObject implements Primitive
+public abstract class Particle extends BasicObject implements Primitive, StateExecutable
 {
 	public enum Spin
 	{

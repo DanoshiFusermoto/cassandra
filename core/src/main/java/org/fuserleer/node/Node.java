@@ -11,6 +11,7 @@ import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializationException;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableMap;
@@ -66,7 +67,7 @@ public class Node extends BasicObject
 		this.synced = false;
 	}
 
-	public Node(Node node)
+	public Node(final Node node)
 	{
 		super();
 
@@ -83,7 +84,8 @@ public class Node extends BasicObject
 		this.synced = node.isSynced();
 	}
 
-	public Node(ECPublicKey identity, BlockHeader head, String agent, int agentVersion, int protocolVersion, int networkPort, int apiPort, int websocketPort, boolean synced)
+	public Node(final ECPublicKey identity, final BlockHeader head, final String agent, final int agentVersion, final int protocolVersion, 
+				final int networkPort, final int apiPort, final int websocketPort, final boolean synced)
 	{
 		this();
 
@@ -91,20 +93,12 @@ public class Node extends BasicObject
 		this.agent = Objects.requireNonNull(agent, "Agent is null");
 		this.head = Objects.requireNonNull(head, "BlockHeader is null");
 		
-		if (agentVersion < 0)
-			throw new IllegalArgumentException("Agent version is negative");
+		Numbers.notNegative(agentVersion, "Agent version is negative");
+		Numbers.notNegative(protocolVersion, "Protocol version is negative");
 		
-		if (protocolVersion < 0)
-			throw new IllegalArgumentException("Protocol version is negative");
-		
-		if (networkPort <= 0 || networkPort > 65535)
-			throw new IllegalArgumentException("Network port is invalid");
-		
-		if (apiPort <= 0 || apiPort > 65535)
-			throw new IllegalArgumentException("API port is invalid");
-		
-		if (websocketPort <= 0 || websocketPort > 65535)
-			throw new IllegalArgumentException("Websocket port is invalid");
+		Numbers.inRange(networkPort, 1, 65535, "Network port is invalid");
+		Numbers.inRange(apiPort, 1, 65535, "API port is invalid");
+		Numbers.inRange(websocketPort, 1, 65535, "Websocket port is invalid");
 
 		this.agentVersion = agentVersion;
 		this.protocolVersion = protocolVersion;
@@ -134,11 +128,9 @@ public class Node extends BasicObject
 		return this.networkPort;
 	}
 
-	void setNetworkPort(int port)
+	void setNetworkPort(final int port)
 	{
-		if (port <= 0 || port > 65535)
-			throw new IllegalArgumentException("Network port is invalid");
-
+		Numbers.inRange(port, 1, 65535, "Network port is invalid");
 		this.networkPort = port;
 	}
 
@@ -147,11 +139,9 @@ public class Node extends BasicObject
 		return this.apiPort;
 	}
 
-	void setAPIPort(int port)
+	void setAPIPort(final int port)
 	{
-		if (port <= 0 || port > 65535)
-			throw new IllegalArgumentException("API port is invalid");
-
+		Numbers.inRange(port, 1, 65535, "API port is invalid");
 		this.apiPort = port;
 	}
 
@@ -160,12 +150,10 @@ public class Node extends BasicObject
 		return this.websocketPort;
 	}
 
-	void setWebsocketPort(int websocketPort)
+	void setWebsocketPort(final int port)
 	{
-		if (websocketPort <= 0 || websocketPort > 65535)
-			throw new IllegalArgumentException("Websocket port is invalid");
-
-		this.websocketPort = websocketPort;
+		Numbers.inRange(port, 1, 65535, "Websocket port is invalid");
+		this.websocketPort = port;
 	}
 
 	public BlockHeader getHead()

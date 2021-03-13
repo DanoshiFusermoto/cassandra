@@ -14,6 +14,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 import org.fuserleer.serialization.DsonOutput.Output;
 
@@ -76,11 +77,9 @@ public final class StateCertificate extends Certificate
 	{
 		this(state, atom, block, input, output, execution, merkle, audit, powers.getHash(), signatures);
 		
-		if (Objects.requireNonNull(powers, "Powers is null").count() == 0)
-			throw new IllegalArgumentException("Powers is empty");
-
-		if (Objects.requireNonNull(powers, "Total vote power null").getTotalPower() == 0)
-			throw new IllegalArgumentException("Total vote power is ZERO");
+		Objects.requireNonNull(powers, "Powers is null");
+		Numbers.lessThan(powers.count(), 1, "Powers is empty");
+		Numbers.notZero(powers.getTotalPower(), "Total vote power is zero");
 
 		this.powerBloom = powers;
 	}

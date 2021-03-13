@@ -38,6 +38,7 @@ import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.mapper.JacksonCodecConstants;
 import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -142,8 +143,8 @@ public class API implements Service
 				try
 				{
 					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
-					if (limit > 100)
-						throw new IllegalArgumentException("Limit is greater than 100");
+					Numbers.lessThan(limit, 1, "Limit is less than 1");
+					Numbers.greaterThan(limit, 100, "Limit is greater than 100");
 
 					Block block = API.this.context.getLedger().get(API.this.context.getLedger().getHead().getHash(), Block.class);
 					long offset = block.getHeader().getIndex()+block.getHeader().getInventory(InventoryType.ATOMS).size();
@@ -185,8 +186,8 @@ public class API implements Service
 				try
 				{
 					int limit = Integer.parseUnsignedInt(req.queryParamOrDefault("limit", "100"));
-					if (limit > 100)
-						throw new IllegalArgumentException("Limit is greater than 100");
+					Numbers.lessThan(limit, 1, "Limit is less than 1");
+					Numbers.greaterThan(limit, 100, "Limit is greater than 100");
 
 					@SuppressWarnings("unchecked")
 					Class<? extends Particle> container = (Class<? extends Particle>) Serialization.getInstance().getClassForId(req.params("container").toLowerCase());

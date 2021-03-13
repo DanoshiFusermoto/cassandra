@@ -12,6 +12,7 @@ import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializationException;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -46,8 +47,7 @@ public class InventoryItemsMessage extends Message
 		super();
 
 		Objects.requireNonNull(type, "Type is null");
-		if (type.length() == 0)
-			throw new IllegalArgumentException("Type is empty");
+		Numbers.notZero(type.length(), "Type is empty");
 
 		this.type = type;
 		this.data = new ArrayList<byte[]>();

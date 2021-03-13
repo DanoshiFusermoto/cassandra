@@ -15,6 +15,7 @@ import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -84,14 +85,9 @@ public class AssociationSearchQuery extends BasicObject
 	{ 
 		super();
 		
-		if (offset < -1)
-			throw new IllegalArgumentException("Offset is less than -1");
-
-		if (limit < 0)
-			throw new IllegalArgumentException("Limit is negative");
-
-		if (limit > AssociationSearchQuery.MAX_LIMIT)
-			throw new IllegalArgumentException("Limit is greater than "+MAX_LIMIT);
+		Numbers.lessThan(offset, -1, "Offset is less than -1");
+		Numbers.notNegative(limit, "Limit is negative");
+		Numbers.greaterThan(limit, AssociationSearchQuery.MAX_LIMIT, "Limit is greater than "+MAX_LIMIT);
 
 		this.matchOn = Objects.requireNonNull(matchOn, "Match is null");
 		this.associations = new ArrayList<Hash>(Objects.requireNonNull(associations));

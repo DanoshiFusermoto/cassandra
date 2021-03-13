@@ -77,7 +77,7 @@ public class MessageParticle extends SignedParticle
 			throw new IllegalArgumentException("Subject length "+this.subject.length()+" is greater than MAX_SUBJECT_LENGTH "+MessageParticle.MAX_SUBJECT_LENGTH);
 
 		this.createdAt = createdAt;
-		Numbers.greaterThan(this.createdAt, Universe.getDefault().getTimestamp()-1, "Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
+		Numbers.lessThan(this.createdAt, Universe.getDefault().getTimestamp(), "Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
 	}
 
 	public String getSubject() 

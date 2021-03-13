@@ -9,6 +9,7 @@ import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -49,19 +50,17 @@ public final class VotePowerBloom extends BasicObject
 		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, EXPECTED_VOTE_POWER_ENTRIES);
 		this.totalPower = 0l;
 		
-		if (shardGroup < 0)
-			throw new IllegalArgumentException("Shard group is negative");
+		Numbers.notNegative(shardGroup, "Shard group is negative");
 		this.shardGroup = shardGroup;
 	}
 	
 	void add(final ECPublicKey identity, final long power)
 	{
 		Objects.requireNonNull(identity, "Identity is null");
+		Numbers.notNegative(power, "Power is negative");
+
 		if (power == 0)
 			return;
-		
-		if (power < 0)
-			throw new IllegalArgumentException("Power is negative");
 		
 		for (int shift = 0 ; shift < MAX_VOTE_POWER_SHIFTS ; shift++)
 			if (((power >> shift) & 1) == 1)

@@ -30,6 +30,7 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.Longs;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
 
@@ -118,14 +119,12 @@ public final class PendingAtom implements Hashable
 		return this.commitTimeout;
 	}
 
-	private void setCommitTimeout(long commitTimeout)
+	private void setCommitTimeout(final long commitTimeout)
 	{
 		if (this.block == null)
 			throw new IllegalStateException("Can not set commit timeout "+commitTimeout+" without being included in a block");
 		
-		if (commitTimeout < this.commitTimeout)
-			throw new IllegalArgumentException(commitTimeout+" is less than current commit block timeout "+this.commitTimeout);
-		
+		Numbers.lessThan(commitTimeout, this.commitTimeout, commitTimeout+" is less than current commit block timeout "+this.commitTimeout);
 		this.commitTimeout = commitTimeout;
 	}
 
@@ -139,11 +138,9 @@ public final class PendingAtom implements Hashable
 		return this.inclusionTimeout;
 	}
 
-	private void setInclusionTimeout(long inclusionTimeout)
+	private void setInclusionTimeout(final long inclusionTimeout)
 	{
-		if (inclusionTimeout < this.inclusionTimeout)
-			throw new IllegalArgumentException(inclusionTimeout+" is less than current inclusion timeout "+this.inclusionTimeout);
-		
+		Numbers.lessThan(inclusionTimeout, this.inclusionTimeout, inclusionTimeout+" is less than current inclusion timeout "+this.inclusionTimeout);
 		this.inclusionTimeout = inclusionTimeout;
 	}
 
@@ -160,7 +157,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 			
-	void setAtom(Atom atom)
+	void setAtom(final Atom atom)
 	{
 		this.lock.writeLock().lock();
 		try
@@ -255,7 +252,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
-	synchronized boolean provision(StateKey<?, ?> key, UInt256 value) throws ValidationException
+	synchronized boolean provision(final StateKey<?, ?> key, final UInt256 value) throws ValidationException
 	{
 		this.lock.writeLock().lock();
 		try
@@ -325,7 +322,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
-	Optional<UInt256> getInput(StateKey<?, ?> key)
+	Optional<UInt256> getInput(final StateKey<?, ?> key)
 	{
 		this.lock.readLock().lock();
 		try
@@ -338,7 +335,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
-	Optional<UInt256> getOutput(StateKey<?, ?> key)
+	Optional<UInt256> getOutput(final StateKey<?, ?> key)
 	{
 		this.lock.readLock().lock();
 		try
@@ -481,8 +478,9 @@ public final class PendingAtom implements Hashable
 		return this.inclusionDelay;
 	}
 			
-	void setInclusionDelay(long delay)
+	void setInclusionDelay(final long delay)
 	{
+		Numbers.lessThan(delay, this.inclusionDelay, delay+" is less than current inclusion delay "+this.inclusionDelay);
 		this.inclusionDelay = delay;
 	}
 
@@ -510,7 +508,7 @@ public final class PendingAtom implements Hashable
 		return this.hash+" @ "+this.witnessed;
 	}
 	
-	boolean voted(ECPublicKey identity)
+	boolean voted(final ECPublicKey identity)
 	{
 		this.lock.readLock().lock();
 		try
@@ -683,7 +681,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 
-	StateCertificate getCertificate(StateKey<?, ?> key)
+	StateCertificate getCertificate(final StateKey<?, ?> key)
 	{
 		this.lock.readLock().lock();
 		try
@@ -696,7 +694,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 
-	void setCertificate(AtomCertificate certificate)
+	void setCertificate(final AtomCertificate certificate)
 	{
 		this.lock.writeLock().lock();
 		try

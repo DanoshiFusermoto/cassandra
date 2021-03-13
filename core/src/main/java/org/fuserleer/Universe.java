@@ -22,6 +22,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Numbers;
 
 @SerializerId2("universe")
 public class Universe extends BasicObject
@@ -93,9 +94,7 @@ public class Universe extends BasicObject
 		 */
 		public Builder port(int port) 
 		{
-			if (port < 0 || port > 65535)
-				throw new IllegalArgumentException("Invalid port number: " + port);
-
+			Numbers.inRange(port, 1, 65535, "Invalid port number: " + port);
 			this.port = port;
 			return this;
 		}
@@ -146,9 +145,7 @@ public class Universe extends BasicObject
 		 */
 		public Builder timestamp(long timestamp) 
 		{
-			if (timestamp < 0)
-				throw new IllegalArgumentException("Invalid timestamp: " + timestamp);
-			
+			Numbers.notNegative(timestamp, "Invalid timestamp: " + timestamp);
 			this.timestamp = timestamp;
 			return this;
 		}
@@ -161,9 +158,7 @@ public class Universe extends BasicObject
 		 */
 		public Builder epoch(int epoch) 
 		{
-			if (epoch < 0)
-				throw new IllegalArgumentException("Invalid epoch: " + epoch);
-			
+			Numbers.notNegative(epoch, "Invalid epoch: " + timestamp);
 			this.epoch = epoch;
 			return this;
 		}
@@ -176,9 +171,7 @@ public class Universe extends BasicObject
 		 */
 		public Builder shardGroups(int shardGroups) 
 		{
-			if (shardGroups < 1)
-				throw new IllegalArgumentException("Invalid shard groups: " + shardGroups);
-			
+			Numbers.lessThan(shardGroups, 1, "Invalid shard groups: " + shardGroups);
 			this.shardGroups = shardGroups;
 			return this;
 		}

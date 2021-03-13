@@ -25,6 +25,7 @@ import org.fuserleer.serialization.SerializerConstants;
 import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.utils.MathUtils;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 import org.fuserleer.serialization.DsonOutput.Output;
 
@@ -121,12 +122,10 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	
 	BlockHeader(final long height, final Hash previous, final UInt256 stepped, final long index, final Map<InventoryType, List<Hash>> inventory, final Hash merkle, final long timestamp, final ECPublicKey owner)
 	{
-		if (height < 0)
-			throw new IllegalArgumentException("Height is negative");
-
-		if (index < 0)
-			throw new IllegalArgumentException("Index is negative");
-
+		Numbers.notNegative(height, "Height is negative");
+		Numbers.notNegative(index, "Index is negative");
+		Numbers.notNegative(timestamp, "Timestamp is negative");
+		
 		Objects.requireNonNull(previous, "Previous block is null");
 		if (height == 0 && previous.equals(Hash.ZERO) == false)
 			throw new IllegalArgumentException("Previous block hash must be ZERO for genesis");
@@ -134,9 +133,6 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		if (height != 0)
 			Hash.notZero(previous, "Previous block hash is ZERO");
 		
-		if (timestamp < 0)
-			throw new IllegalArgumentException("Timestamp is negative");
-
 		this.owner = Objects.requireNonNull(owner, "Block owner is null");
 		this.merkle = Objects.requireNonNull(merkle, "Block merkle is null");
 		this.stepped = Objects.requireNonNull(stepped, "Stepped is null");

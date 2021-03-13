@@ -10,6 +10,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.Serialization;
 
@@ -43,15 +44,12 @@ public final class BroadcastInventoryMessage extends Message
 		super();
 
 		Objects.requireNonNull(type, "Type is null");
-		if (type.length() == 0)
-			throw new IllegalArgumentException("Type is empty");
+		Numbers.notZero(type.length(), "Type is empty");
 
 		Objects.requireNonNull(items, "Items is null");
 		if (items.isEmpty() == true)
 			throw new IllegalArgumentException("Items is empty");
-		
-		if (items.size() > MAX_ITEMS)
-			throw new IllegalArgumentException("Items is greater than allowed max of "+MAX_ITEMS);
+		Numbers.greaterThan(items.size(), MAX_ITEMS, "Items is greater than allowed max of "+MAX_ITEMS);
 
 		this.type = type;
 		this.items = new ArrayList<Hash>(items);

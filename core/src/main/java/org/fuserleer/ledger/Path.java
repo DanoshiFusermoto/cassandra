@@ -136,17 +136,17 @@ public final class Path
 		return this.endpoint;
 	}
 	
-	public final Hash get(Elements element)
+	public final Hash get(final Elements element)
 	{
 		Objects.requireNonNull(element, "Path element is null");
 		return this.elements.get(element);
 	}
 
-	public final void add(Elements element, Hash object)
+	public final void add(final Elements element, final Hash object)
 	{
 		Objects.requireNonNull(element, "Path element is null");
-		if (Objects.requireNonNull(object, "Object hash is null").equals(Hash.ZERO) == true)
-			throw new IllegalArgumentException("Object hash is ZERO");
+		Objects.requireNonNull(object, "Object hash is null");
+		Hash.notZero(object, "Element object hash is ZERO");
 		
 		this.elements.put(element, object);
 	}

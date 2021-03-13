@@ -14,6 +14,7 @@ import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.network.Protocol;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
+import org.fuserleer.utils.Numbers;
 
 public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 {
@@ -68,8 +69,8 @@ public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 
 	public StandardPeerFilter setStates(final PeerState ... states)
 	{
-		if (Objects.requireNonNull(states).length == 0)
-			throw new IllegalArgumentException("Peer states is empty");
+		Objects.requireNonNull(states, "States is null");
+		Numbers.notZero(states.length, "Peer states is empty");
 		
 		this.states = Arrays.stream(states).collect(Collectors.toSet());
 		return this;

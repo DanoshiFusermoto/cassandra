@@ -16,6 +16,7 @@ import org.fuserleer.serialization.SerializerConstants;
 import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -82,15 +83,11 @@ public final class Commit
 	{
 		Objects.requireNonNull(path);
 		Objects.requireNonNull(merkleProof);
+		Numbers.notNegative(index , "Index is negative");
+		Numbers.notNegative(timestamp, "Timestamp is negative");
 //		if (merkleProof.isEmpty() == true)
 //			throw new IllegalArgumentException("Merkle proof is empty");
 		
-		if (timestamp < 1)
-			throw new IllegalArgumentException("Timestamp is negative");
-		
-		if (index < 0)
-			throw new IllegalArgumentException("Index is negative");
-
 		this.index = index;
 		this.path = path;
 		this.merkleProof = new ArrayList<MerkleProof>(merkleProof);

@@ -8,6 +8,7 @@ import java.util.Set;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.utils.Longs;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
 public final class ShardMapper 
@@ -43,15 +44,7 @@ public final class ShardMapper
 	
 	private static long toShardGroup(final long truncatedShard, final long numShardGroups)
 	{
-		if (numShardGroups < 0)
-			throw new IllegalArgumentException("Num shard groups is negative");
-
+		Numbers.notNegative(numShardGroups, "Num shard groups is negative");
 		return Math.abs(truncatedShard % numShardGroups);
-		
-/*		UInt256 divisor = UInt256.ZERO.invert().divide(UInt256.from(numShardGroups)).add(UInt256.ONE);
-		if (divisor.compareTo(UInt256.ZERO) != 0)
-			return shard.divide(divisor).getLow();
-		else
-			return UInt128.ZERO;*/
 	}
 }

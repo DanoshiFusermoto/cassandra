@@ -9,6 +9,7 @@ import java.io.IOException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 
 @SerializerId2("ledger.state.field")
 public final class StateField extends StateKey<Hash, String>
@@ -27,8 +28,7 @@ public final class StateField extends StateKey<Hash, String>
 		if (scope instanceof Hash) 
 			Hash.notZero(scope, "Scope is ZERO");
 
-		if (key.length() == 0)
-			throw new IllegalArgumentException("Key length is zero");
+		Numbers.notZero(key.length(), "Key length is zero");
 	}
 
 	@Override

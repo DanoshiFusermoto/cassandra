@@ -10,6 +10,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
+import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
@@ -33,10 +34,9 @@ public abstract class InventoryMessage extends Message
 		super();
 
 		Objects.requireNonNull(inventory, "Inventory is null");
+		Numbers.greaterThan(inventory.size(), InventoryMessage.MAX_INVENTORY, "Too many inventory items");
 		if (inventory.isEmpty() == true)
 			throw new IllegalArgumentException("Inventory is empty");
-		if (inventory.size() > InventoryMessage.MAX_INVENTORY == true)
-			throw new IllegalArgumentException("Too many inventory items");
 		
 		this.inventory = new LinkedHashSet<Hash>(inventory);
 	}

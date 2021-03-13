@@ -13,6 +13,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.peers.Peer;
+import org.fuserleer.utils.Numbers;
 
 public class RemoteLedgerDiscovery implements Discovery
 {
@@ -30,8 +31,7 @@ public class RemoteLedgerDiscovery implements Discovery
 	public Collection<Peer> discover(final DiscoveryFilter filter, int limit) throws IOException
 	{
 		Objects.requireNonNull(filter, "Discovery filter is null");
-		if (limit < 0)
-			throw new IllegalArgumentException("Discovery limit is negative");
+		Numbers.notNegative(limit, "Discovery limit is negative");
 		
 		final Hash locator = this.context.getNode().getIdentity().asHash();
 		final List<Peer> known = this.context.getNetwork().getPeerStore().get(filter);

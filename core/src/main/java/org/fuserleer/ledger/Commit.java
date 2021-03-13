@@ -83,8 +83,8 @@ public final class Commit
 	{
 		Objects.requireNonNull(path);
 		Objects.requireNonNull(merkleProof);
-		Numbers.notNegative(index , "Index is negative");
-		Numbers.notNegative(timestamp, "Timestamp is negative");
+		Numbers.isNegative(index , "Index is negative");
+		Numbers.isNegative(timestamp, "Timestamp is negative");
 //		if (merkleProof.isEmpty() == true)
 //			throw new IllegalArgumentException("Merkle proof is empty");
 		

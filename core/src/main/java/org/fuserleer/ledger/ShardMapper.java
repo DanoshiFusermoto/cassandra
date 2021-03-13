@@ -44,7 +44,7 @@ public final class ShardMapper
 	
 	private static long toShardGroup(final long truncatedShard, final long numShardGroups)
 	{
-		Numbers.notNegative(numShardGroups, "Num shard groups is negative");
+		Numbers.isNegative(numShardGroups, "Num shard groups is negative");
 		return Math.abs(truncatedShard % numShardGroups);
 	}
 }

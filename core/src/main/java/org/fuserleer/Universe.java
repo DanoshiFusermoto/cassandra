@@ -145,7 +145,7 @@ public class Universe extends BasicObject
 		 */
 		public Builder timestamp(long timestamp) 
 		{
-			Numbers.notNegative(timestamp, "Invalid timestamp: " + timestamp);
+			Numbers.isNegative(timestamp, "Invalid timestamp: " + timestamp);
 			this.timestamp = timestamp;
 			return this;
 		}
@@ -158,7 +158,7 @@ public class Universe extends BasicObject
 		 */
 		public Builder epoch(int epoch) 
 		{
-			Numbers.notNegative(epoch, "Invalid epoch: " + timestamp);
+			Numbers.isNegative(epoch, "Invalid epoch: " + timestamp);
 			this.epoch = epoch;
 			return this;
 		}

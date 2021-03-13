@@ -123,7 +123,7 @@ public final class VotePowerHandler implements Service
 	public long getVotePower(final long height, final ECPublicKey identity) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Numbers.notNegative(height, "Height is negative");
+		Numbers.isNegative(height, "Height is negative");
 
 		this.lock.readLock().lock();
 		try

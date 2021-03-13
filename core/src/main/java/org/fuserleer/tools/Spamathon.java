@@ -147,7 +147,20 @@ public class Spamathon
 							{
 								long value = ThreadLocalRandom.current().nextLong();
 								Hash valueHash = new Hash(Longs.toByteArray(value), Mode.STANDARD);
-								particles.add(new UniqueParticle(valueHash, owners.get(ThreadLocalRandom.current().nextInt(owners.size())).getPublicKey()));
+								ECKeyPair owner = owners.get(ThreadLocalRandom.current().nextInt(owners.size()));
+								UniqueParticle particle = new UniqueParticle(valueHash, owner.getPublicKey());
+								
+								try
+								{
+									particle.sign(owner);
+								}
+								catch (CryptoException cex)
+								{
+									spammerLog.info("Signing of "+particle.toString()+" with owner "+owner.getPublicKey()+" failed", cex);
+									continue;
+								}
+								
+								particles.add(particle);
 							}
 							
 							Atom atom = new Atom(particles);

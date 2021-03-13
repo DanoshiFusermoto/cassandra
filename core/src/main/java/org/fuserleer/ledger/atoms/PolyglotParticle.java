@@ -78,7 +78,7 @@ public final class PolyglotParticle extends Particle
 		
 		this.language = Objects.requireNonNull(language, "Language is null");
 		Objects.requireNonNull(code, "Code is null");
-		Numbers.lessThan(code.length(), PolyglotParticle.MAX_CODE_SIZE, "Code size "+code.length()+" is greater than max "+PolyglotParticle.MAX_CODE_SIZE);
+		Numbers.greaterThan(code.length(), PolyglotParticle.MAX_CODE_SIZE, "Code size "+code.length()+" is greater than max "+PolyglotParticle.MAX_CODE_SIZE);
 		this.code = code;
 	}
 

@@ -170,7 +170,7 @@ public class TwitterUserRegistration extends SignedParticle
 
 	public void setNumFollowers(final long numFollowers) 
 	{
-		Numbers.notNegative(numFollowers, "Followers can not be negative");
+		Numbers.isNegative(numFollowers, "Followers can not be negative");
 		this.numFollowers = numFollowers;
 	}
 
@@ -181,7 +181,7 @@ public class TwitterUserRegistration extends SignedParticle
 
 	public void setNumFriends(long numFriends) 
 	{		
-		Numbers.notNegative(numFriends, "Friends can not be negative");
+		Numbers.isNegative(numFriends, "Friends can not be negative");
 		this.numFriends = numFriends;
 	}
 	
@@ -192,7 +192,7 @@ public class TwitterUserRegistration extends SignedParticle
 
 	public void setNumStatuses(long numStatuses) 
 	{		
-		Numbers.notNegative(numStatuses, "Status count can not be negative");
+		Numbers.isNegative(numStatuses, "Status count can not be negative");
 		this.numStatuses = numStatuses;
 	}
 	
@@ -218,9 +218,9 @@ public class TwitterUserRegistration extends SignedParticle
 		if (this.description != null)
 			Numbers.inRange(this.description.length(), TwitterUserRegistration.MIN_DESCRIPTION_LENGTH, TwitterUserRegistration.MAX_DESCRIPTION_LENGTH, "Description "+this.description+" length "+this.description.length()+" is not in range "+TwitterUserRegistration.MIN_DESCRIPTION_LENGTH+" -> "+TwitterUserRegistration.MAX_DESCRIPTION_LENGTH);
 
-		Numbers.notNegative(this.numFriends, "Friends can not be negative");
-		Numbers.notNegative(this.numFollowers, "Followers can not be negative");
-		Numbers.notNegative(this.numStatuses, "Status count can not be negative");
+		Numbers.isNegative(this.numFriends, "Friends can not be negative");
+		Numbers.isNegative(this.numFollowers, "Followers can not be negative");
+		Numbers.isNegative(this.numStatuses, "Status count can not be negative");
 		
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(UInt256.from(this.id))), Instruction.NOT_EXISTS), this);
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(this.handle.toLowerCase())), Instruction.NOT_EXISTS), this);

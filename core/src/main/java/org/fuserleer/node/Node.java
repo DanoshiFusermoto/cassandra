@@ -93,8 +93,8 @@ public class Node extends BasicObject
 		this.agent = Objects.requireNonNull(agent, "Agent is null");
 		this.head = Objects.requireNonNull(head, "BlockHeader is null");
 		
-		Numbers.notNegative(agentVersion, "Agent version is negative");
-		Numbers.notNegative(protocolVersion, "Protocol version is negative");
+		Numbers.isNegative(agentVersion, "Agent version is negative");
+		Numbers.isNegative(protocolVersion, "Protocol version is negative");
 		
 		Numbers.inRange(networkPort, 1, 65535, "Network port is invalid");
 		Numbers.inRange(apiPort, 1, 65535, "API port is invalid");

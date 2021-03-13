@@ -52,7 +52,7 @@ public final class Atom extends BasicObject implements Primitive
 		this();
 		
 		Objects.requireNonNull(particles, "Particles is null");
-		Numbers.notZero(particles.length, "Particles is empty");
+		Numbers.isZero(particles.length, "Particles is empty");
 		
 		Set<Particle> verifiedNonDuplicates = new LinkedHashSet<Particle>();
 		for (int p = 0 ; p < particles.length ; p++)
@@ -69,7 +69,7 @@ public final class Atom extends BasicObject implements Primitive
 		this();
 		
 		Objects.requireNonNull(particles, "Particles is null");
-		Numbers.notZero(particles.size(), "Particles is empty");
+		Numbers.isZero(particles.size(), "Particles is empty");
 		
 		Set<Particle> verifiedNonDuplicates = new LinkedHashSet<Particle>();
 		for (Particle particle : particles)

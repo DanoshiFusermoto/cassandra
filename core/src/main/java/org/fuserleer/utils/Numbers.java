@@ -22,7 +22,7 @@ public class Numbers
 		}
 	}
 
-	public static void notNegative(int value, String message)
+	public static void isNegative(int value, String message)
 	{
 		if (value < 0)
 		{
@@ -33,7 +33,7 @@ public class Numbers
 		}
 	}
 	
-	public static void notPositive(int value, String message)
+	public static void isPositive(int value, String message)
 	{
 		if (value > 0)
 		{
@@ -44,7 +44,7 @@ public class Numbers
 		}
 	}
 
-	public static void notZero(int  value, String message)
+	public static void isZero(int value, String message)
 	{
 		if (value == 0)
 		{
@@ -55,7 +55,7 @@ public class Numbers
 		}
 	}
 
-	public static void lessThan(int  value, int  bound, String message)
+	public static void lessThan(int value, int bound, String message)
 	{
 		if (value < bound)
 		{
@@ -66,7 +66,7 @@ public class Numbers
 		}
 	}
 
-	public static void greaterThan(int  value, int  bound, String message)
+	public static void greaterThan(int value, int bound, String message)
 	{
 		if (value > bound)
 		{
@@ -97,7 +97,7 @@ public class Numbers
 		}
 	}
 
-	public static void notNegative(long value, String message)
+	public static void isNegative(long value, String message)
 	{
 		if (value < 0)
 		{
@@ -108,7 +108,7 @@ public class Numbers
 		}
 	}
 	
-	public static void notPositive(long value, String message)
+	public static void isPositive(long value, String message)
 	{
 		if (value > 0)
 		{
@@ -119,7 +119,7 @@ public class Numbers
 		}
 	}
 
-	public static void notZero(long value, String message)
+	public static void isZero(long value, String message)
 	{
 		if (value == 0)
 		{

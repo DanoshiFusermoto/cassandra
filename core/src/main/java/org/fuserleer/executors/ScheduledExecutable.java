@@ -24,8 +24,8 @@ public abstract class ScheduledExecutable extends Executable
 	{
 		super();
 		
-		Numbers.notNegative(initialDelay, "Initial delay is negative");
-		Numbers.notNegative(recurrentDelay, "Recurrent delay is negative");
+		Numbers.isNegative(initialDelay, "Initial delay is negative");
+		Numbers.isNegative(recurrentDelay, "Recurrent delay is negative");
 
 		this.initialDelay = initialDelay;
 		this.recurrentDelay = recurrentDelay;

@@ -18,7 +18,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
-import org.fuserleer.utils.Ints;
 import org.fuserleer.utils.Numbers;
 
 public class MappedBlockingQueue<K, V> 
@@ -42,7 +41,7 @@ public class MappedBlockingQueue<K, V>
 
 	public MappedBlockingQueue(int capacity) 
 	{
-		Ints.greaterThan(capacity, 0, "Capacity is less than 1");
+		Numbers.isZero(capacity, "Capacity is zero");
 		
 		this.map = new LinkedHashMap<K, V>(capacity);
 		this.lock = new ReentrantReadWriteLock(true);
@@ -141,7 +140,7 @@ public class MappedBlockingQueue<K, V>
 		if (collection == this)
             throw new IllegalArgumentException("Can not drain to self");
 		
-		Ints.greaterThan(maxElements, 0, "Max elements is less than 1");
+		Numbers.isZero(maxElements, "Max elements is zero");
 
 		this.lock.writeLock().lock();
 		try
@@ -210,7 +209,7 @@ public class MappedBlockingQueue<K, V>
 		if (collection == this)
             throw new IllegalArgumentException("Can not drain to self");
 		
-		Ints.greaterThan(maxElements, 0, "Max elements is less than 1");
+		Numbers.isZero(maxElements, "Max elements is zero");
 
 		this.lock.writeLock().lock();
 		try

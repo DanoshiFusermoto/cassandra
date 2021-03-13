@@ -78,8 +78,8 @@ public final class StateCertificate extends Certificate
 		this(state, atom, block, input, output, execution, merkle, audit, powers.getHash(), signatures);
 		
 		Objects.requireNonNull(powers, "Powers is null");
-		Numbers.lessThan(powers.count(), 1, "Powers is empty");
-		Numbers.notZero(powers.getTotalPower(), "Total vote power is zero");
+		Numbers.isZero(powers.count(), "Powers is empty");
+		Numbers.isZero(powers.getTotalPower(), "Total vote power is zero");
 
 		this.powerBloom = powers;
 	}

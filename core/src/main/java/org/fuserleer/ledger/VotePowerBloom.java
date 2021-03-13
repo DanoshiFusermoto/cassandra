@@ -50,14 +50,14 @@ public final class VotePowerBloom extends BasicObject
 		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, EXPECTED_VOTE_POWER_ENTRIES);
 		this.totalPower = 0l;
 		
-		Numbers.notNegative(shardGroup, "Shard group is negative");
+		Numbers.isNegative(shardGroup, "Shard group is negative");
 		this.shardGroup = shardGroup;
 	}
 	
 	void add(final ECPublicKey identity, final long power)
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Numbers.notNegative(power, "Power is negative");
+		Numbers.isNegative(power, "Power is negative");
 
 		if (power == 0)
 			return;

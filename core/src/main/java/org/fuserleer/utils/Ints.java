@@ -106,15 +106,4 @@ public final class Ints {
 	public static int fromBytes(byte b0, byte b1, byte b2, byte b3) {
 	    return b0 << 24 | (b1 & 0xFF) << 16 | (b2 & 0xFF) << 8 | (b3 & 0xFF);
 	}
-
-	public static void greaterThan(int value, int bound, String message)
-	{
-		if (value <= bound)
-		{
-			if (message == null)
-				throw new IllegalArgumentException();
-			else
-				throw new IllegalArgumentException(message);
-		}
-	}
 }

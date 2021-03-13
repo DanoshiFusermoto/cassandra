@@ -39,7 +39,7 @@ public class Whitelist
 	private int[] convert(final String host)
 	{
 		Objects.requireNonNull(host, "Whitelist host is null");
-		Numbers.notZero(host.length(), "Whitelist host has length zero");
+		Numbers.isZero(host.length(), "Whitelist host has length zero");
 
 		String[] segments;
 		int[] output;
@@ -74,7 +74,7 @@ public class Whitelist
 	private boolean isRange(final String parameter)
 	{
 		Objects.requireNonNull(parameter, "Whitelist range parameter is null");
-		Numbers.notZero(parameter.length(), "Whitelist range parameter has length zero");
+		Numbers.isZero(parameter.length(), "Whitelist range parameter has length zero");
 
 		if (parameter.contains("-"))
 			return true;
@@ -85,10 +85,10 @@ public class Whitelist
 	private boolean isInRange(final String parameter, final String address)
 	{
 		Objects.requireNonNull(address, "Whitelist range address is null");
-		Numbers.notZero(address.length(), "Whitelist range address has length zero");
+		Numbers.isZero(address.length(), "Whitelist range address has length zero");
 
 		Objects.requireNonNull(parameter, "Whitelist range parameter is null");
-		Numbers.notZero(parameter.length(), "Whitelist range parameter has length zero");
+		Numbers.isZero(parameter.length(), "Whitelist range parameter has length zero");
 
 		String[] hosts = parameter.split("-");
 		
@@ -122,7 +122,7 @@ public class Whitelist
 	private boolean isMask(final String parameter)
 	{
 		Objects.requireNonNull(parameter, "Whitelist mask parameter is null");
-		Numbers.notZero(parameter.length(), "Whitelist range parameter has length zero");
+		Numbers.isZero(parameter.length(), "Whitelist range parameter has length zero");
 
 		if (parameter.contains("*") || parameter.contains("::"))
 			return true;
@@ -133,10 +133,10 @@ public class Whitelist
 	private boolean isMasked(final String parameter, final String address) throws UnknownHostException, URISyntaxException
 	{
 		Objects.requireNonNull(address, "Whitelist mask address is null");
-		Numbers.notZero(address.length(), "Whitelist mask address has length zero");
+		Numbers.isZero(address.length(), "Whitelist mask address has length zero");
 
 		Objects.requireNonNull(parameter, "Whitelist mask parameter is null");
-		Numbers.notZero(parameter.length(), "Whitelist range parameter has length zero");
+		Numbers.isZero(parameter.length(), "Whitelist range parameter has length zero");
 
 		int[] target = convert(address);
 		int[] mask = convert(parameter);

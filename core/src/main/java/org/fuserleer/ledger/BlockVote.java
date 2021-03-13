@@ -28,7 +28,7 @@ public final class BlockVote extends Vote<Hash>
 	{
 		super(object, StateDecision.POSITIVE, owner);
 		
-		Numbers.notNegative(clock, "Clock is negative");
+		Numbers.isNegative(clock, "Clock is negative");
 		
 		this.clock = clock;
 	}

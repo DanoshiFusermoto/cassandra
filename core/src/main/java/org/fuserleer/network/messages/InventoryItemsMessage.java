@@ -47,7 +47,7 @@ public class InventoryItemsMessage extends Message
 		super();
 
 		Objects.requireNonNull(type, "Type is null");
-		Numbers.notZero(type.length(), "Type is empty");
+		Numbers.isZero(type.length(), "Type is empty");
 
 		this.type = type;
 		this.data = new ArrayList<byte[]>();

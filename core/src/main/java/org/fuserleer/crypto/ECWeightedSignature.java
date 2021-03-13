@@ -49,7 +49,7 @@ public final class ECWeightedSignature
     {
     	super();
     	
-    	Numbers.notNegative(weight, "Weight is negative");
+    	Numbers.isNegative(weight, "Weight is negative");
     	
     	this.weight = weight;
     	this.r = Objects.requireNonNull(r);

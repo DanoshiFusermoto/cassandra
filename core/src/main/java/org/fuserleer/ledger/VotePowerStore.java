@@ -146,7 +146,7 @@ class VotePowerStore extends DatabaseStore
 	public long get(final ECPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Numbers.notNegative(height, "Height is negative");
+		Numbers.isNegative(height, "Height is negative");
 
 		byte[] identityBytes = identity.getBytes();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
@@ -195,7 +195,7 @@ class VotePowerStore extends DatabaseStore
 	public long increment(final ECPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Numbers.notNegative(height, "Height is negative");
+		Numbers.isNegative(height, "Height is negative");
 
 		byte[] identityBytes = identity.getBytes();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
@@ -295,7 +295,7 @@ class VotePowerStore extends DatabaseStore
 	public long set(final ECPublicKey identity, final long height, final long power) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
-		Numbers.notNegative(height, "Height is negative");
+		Numbers.isNegative(height, "Height is negative");
 
 		byte[] identityBytes = identity.getBytes();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);

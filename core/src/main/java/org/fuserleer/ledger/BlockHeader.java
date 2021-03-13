@@ -122,9 +122,9 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	
 	BlockHeader(final long height, final Hash previous, final UInt256 stepped, final long index, final Map<InventoryType, List<Hash>> inventory, final Hash merkle, final long timestamp, final ECPublicKey owner)
 	{
-		Numbers.notNegative(height, "Height is negative");
-		Numbers.notNegative(index, "Index is negative");
-		Numbers.notNegative(timestamp, "Timestamp is negative");
+		Numbers.isNegative(height, "Height is negative");
+		Numbers.isNegative(index, "Index is negative");
+		Numbers.isNegative(timestamp, "Timestamp is negative");
 		
 		Objects.requireNonNull(previous, "Previous block is null");
 		if (height == 0 && previous.equals(Hash.ZERO) == false)

@@ -28,7 +28,7 @@ public final class StateField extends StateKey<Hash, String>
 		if (scope instanceof Hash) 
 			Hash.notZero(scope, "Scope is ZERO");
 
-		Numbers.notZero(key.length(), "Key length is zero");
+		Numbers.isZero(key.length(), "Key length is zero");
 	}
 
 	@Override

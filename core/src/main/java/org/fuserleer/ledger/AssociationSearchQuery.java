@@ -86,7 +86,7 @@ public class AssociationSearchQuery extends BasicObject
 		super();
 		
 		Numbers.lessThan(offset, -1, "Offset is less than -1");
-		Numbers.notNegative(limit, "Limit is negative");
+		Numbers.isNegative(limit, "Limit is negative");
 		Numbers.greaterThan(limit, AssociationSearchQuery.MAX_LIMIT, "Limit is greater than "+MAX_LIMIT);
 
 		this.matchOn = Objects.requireNonNull(matchOn, "Match is null");

@@ -31,7 +31,7 @@ public class RemoteLedgerDiscovery implements Discovery
 	public Collection<Peer> discover(final DiscoveryFilter filter, int limit) throws IOException
 	{
 		Objects.requireNonNull(filter, "Discovery filter is null");
-		Numbers.notNegative(limit, "Discovery limit is negative");
+		Numbers.isNegative(limit, "Discovery limit is negative");
 		
 		final Hash locator = this.context.getNode().getIdentity().asHash();
 		final List<Peer> known = this.context.getNetwork().getPeerStore().get(filter);

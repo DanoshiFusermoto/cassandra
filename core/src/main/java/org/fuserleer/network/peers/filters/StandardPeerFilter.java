@@ -70,7 +70,7 @@ public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 	public StandardPeerFilter setStates(final PeerState ... states)
 	{
 		Objects.requireNonNull(states, "States is null");
-		Numbers.notZero(states.length, "Peer states is empty");
+		Numbers.isZero(states.length, "Peer states is empty");
 		
 		this.states = Arrays.stream(states).collect(Collectors.toSet());
 		return this;

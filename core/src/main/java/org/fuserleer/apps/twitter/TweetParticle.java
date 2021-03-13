@@ -259,10 +259,10 @@ public class TweetParticle extends SignedParticle
 		// Hashtags
 		if (this.hashtags != null)
 		{
-			Numbers.lessThan(this.hashtags.size(), TweetParticle.MAX_HASH_TAGS, "Hashtags exceeds max of "+TweetParticle.MAX_HASH_TAGS);
+			Numbers.greaterThan(this.hashtags.size(), TweetParticle.MAX_HASH_TAGS, "Hashtags exceeds max of "+TweetParticle.MAX_HASH_TAGS);
 			for (String hashTag : this.hashtags)
 			{
-				Numbers.notZero(hashTag.length(), "Hashtag length is zero");
+				Numbers.isZero(hashTag.length(), "Hashtag length is zero");
 					
 				if (this.text.toLowerCase().contains("#"+hashTag.toLowerCase()) == false)
 					throw new IllegalStateException("Tweet doesn't contain hashtag "+hashTag.toLowerCase());
@@ -272,10 +272,10 @@ public class TweetParticle extends SignedParticle
 		// Mentions
 		if (this.mentions != null)
 		{
-			Numbers.lessThan(this.mentions.size(), TweetParticle.MAX_MENTIONS, "Mentions exceeds max of "+TweetParticle.MAX_MENTIONS);
+			Numbers.greaterThan(this.mentions.size(), TweetParticle.MAX_MENTIONS, "Mentions exceeds max of "+TweetParticle.MAX_MENTIONS);
 			for (String mention : this.mentions)
 			{
-				Numbers.notZero(mention.length(), "Mention length is zero");
+				Numbers.isZero(mention.length(), "Mention length is zero");
 				if (this.text.toLowerCase().contains("@"+mention.toLowerCase()) == false)
 					throw new IllegalStateException("Tweet doesn't contain mention "+mention.toLowerCase());
 			}
@@ -283,7 +283,7 @@ public class TweetParticle extends SignedParticle
 		
 		// Media 
 		if (this.media != null)
-			Numbers.lessThan(this.media.size(), TweetParticle.MAX_MEDIA, "Maximum media items is "+TweetParticle.MAX_MEDIA);
+			Numbers.greaterThan(this.media.size(), TweetParticle.MAX_MEDIA, "Maximum media items is "+TweetParticle.MAX_MEDIA);
 		
 		if (this.replyTo != null)
 			Hash.notZero(this.replyTo, "Reply hash is ZERO");

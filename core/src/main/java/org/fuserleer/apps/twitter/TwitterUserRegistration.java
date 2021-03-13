@@ -123,7 +123,7 @@ public class TwitterUserRegistration extends SignedParticle
 	public void setName(final String name) 
 	{
 		Objects.requireNonNull(name, "Name is null");
-		Numbers.inRange(name.length(), TwitterUserRegistration.MIN_NAME_LENGTH, TwitterUserRegistration.MIN_NAME_LENGTH, "Name "+name+" length "+name.length()+" is not in range "+TwitterUserRegistration.MIN_NAME_LENGTH+" -> "+TwitterUserRegistration.MAX_NAME_LENGTH);
+		Numbers.inRange(name.length(), TwitterUserRegistration.MIN_NAME_LENGTH, TwitterUserRegistration.MAX_NAME_LENGTH, "Name "+name+" length "+name.length()+" is not in range "+TwitterUserRegistration.MIN_NAME_LENGTH+" -> "+TwitterUserRegistration.MAX_NAME_LENGTH);
 		this.name = name;
 	}
 

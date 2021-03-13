@@ -12,14 +12,13 @@ public class Numbers
 			rh = low;
 		}
 			
+		if (value >= rl && value <= rh)
+			return;
 		
-		if (value < rl || value > rh)
-		{
-			if (message == null)
-				throw new IllegalArgumentException();
-			else
-				throw new IllegalArgumentException(message);
-		}
+		if (message == null)
+			throw new IllegalArgumentException();
+		else
+			throw new IllegalArgumentException(message);
 	}
 
 	public static void isNegative(int value, String message)
@@ -87,14 +86,13 @@ public class Numbers
 			rh = low;
 		}
 			
-		
-		if (value < rl || value > rh)
-		{
-			if (message == null)
-				throw new IllegalArgumentException();
-			else
-				throw new IllegalArgumentException(message);
-		}
+		if (value >= rl && value <= rh)
+			return;
+
+		if (message == null)
+			throw new IllegalArgumentException();
+		else
+			throw new IllegalArgumentException(message);
 	}
 
 	public static void isNegative(long value, String message)

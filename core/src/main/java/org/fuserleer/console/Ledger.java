@@ -36,13 +36,11 @@ public class Ledger extends Function
 			printStream.println("Identity: "+context.getNode().getIdentity());
 			printStream.println("Current head: "+context.getLedger().getHead());
 			printStream.println("Ledger timestamp: "+Time.getLedgerTimeSeconds()+" / "+new Date(Time.getLedgerTimeMS())); // TODO only accurate for simulated time
-			printStream.println("Committed atoms: "+context.getMetaData().get("ledger.commits.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.commits.atoms.total", 0l));
+			printStream.println("Processed atoms: "+context.getMetaData().get("ledger.processed.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.processed.atoms.total", 0l));
 			printStream.println("Certificates (A/R/T): "+context.getMetaData().get("ledger.commits.certificates.accept", 0l)+"/"+context.getMetaData().get("ledger.commits.certificates.reject", 0l)+"/"+context.getMetaData().get("ledger.commits.certificates", 0l));
-			printStream.println("Commit gets: "+context.getMetaData().get("ddb.commit.gets", 0l));
 			printStream.println("Accumulation (I/A/T): "+context.getMetaData().get("ledger.accumulator.iterations", 0l)+"/"+(context.getMetaData().get("ledger.accumulator.duration", 0l) / Math.max(1, context.getMetaData().get("ledger.accumulator.iterations", 0l)))+"/"+context.getMetaData().get("ledger.accumulator.duration", 0l));
 			printStream.println("Block throughput: "+context.getMetaData().get("ledger.throughput.blocks", 0l));
-			printStream.println("Atom throughput: "+context.getMetaData().get("ledger.throughput.atoms", 0l)+"/"+context.getMetaData().get("ledger.throughput.shards.atoms", 0l));
-			printStream.println("Particle throughput: "+context.getMetaData().get("ledger.throughput.particles", 0l));
+			printStream.println("Atom throughput: "+context.getMetaData().get("ledger.throughput.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.throughput.atoms.total", 0l));
 			printStream.println("Commit latency: "+context.getMetaData().get("ledger.throughput.latency", 0l));
 			printStream.println("Atom pool (S/A/R/C/Q): "+context.getLedger().getAtomPool().size()+" / "+context.getMetaData().get("ledger.pool.atoms.added", 0l)+" / "+context.getMetaData().get("ledger.pool.atoms.removed", 0l)+" / "+context.getMetaData().get("ledger.pool.atoms.agreed", 0l)+" / "+context.getMetaData().get("ledger.pool.atom.certificates", 0l));
 			printStream.println("State pool (S/A/R/V/C): "+context.getLedger().getStatePool().size()+" / "+context.getMetaData().get("ledger.pool.state.added", 0l)+" / "+context.getMetaData().get("ledger.pool.state.removed", 0l)+" / "+context.getMetaData().get("ledger.pool.state.votes", 0l)+" / "+context.getMetaData().get("ledger.pool.state.certificates", 0l));

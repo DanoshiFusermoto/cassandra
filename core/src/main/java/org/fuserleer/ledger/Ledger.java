@@ -432,7 +432,7 @@ public final class Ledger implements Service, LedgerInterface
 			// Clone it to make sure to extract the header
 			Ledger.this.setHead(block.getHeader());
 			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
-			Ledger.this.context.getMetaData().increment("ledger.commits.atoms.local", block.getHeader().getInventory(InventoryType.ATOMS).size());
+			Ledger.this.context.getMetaData().increment("ledger.processed.atoms.local", block.getHeader().getInventory(InventoryType.ATOMS).size());
 			Ledger.this.context.getMetaData().increment("ledger.commits.certificates", block.getHeader().getInventory(InventoryType.CERTIFICATES).size());
 			
 			long numShardGroups = Ledger.this.numShardGroups(block.getHeader().getHeight());
@@ -447,7 +447,7 @@ public final class Ledger implements Service, LedgerInterface
 				
 				if (atomCertificate.getDecision().equals(StateDecision.POSITIVE) == true)
 					this.lastThroughputCommittedAtoms++;
-				else if (atomCertificate.getDecision().equals(StateDecision.POSITIVE) == true)
+				else if (atomCertificate.getDecision().equals(StateDecision.NEGATIVE) == true)
 					this.lastThroughputRejectedAtoms++;
 			}
 
@@ -460,8 +460,8 @@ public final class Ledger implements Service, LedgerInterface
 				this.lastThroughputPersistedAtoms++;
 				this.lastThroughputPersistedParticles += atom.getParticles().size();
 
-				if (this.lastThroughputShardsTouched > 0 && this.lastThroughputCommittedAtoms > 0)
-					Ledger.this.context.getMetaData().increment("ledger.processed.atoms.total", (numShardGroups / (this.lastThroughputShardsTouched / this.lastThroughputCommittedAtoms)));
+				if (this.lastThroughputShardsTouched > 0 && (this.lastThroughputCommittedAtoms > 0 || this.lastThroughputRejectedAtoms > 0))
+					Ledger.this.context.getMetaData().increment("ledger.processed.atoms.total", (numShardGroups / (this.lastThroughputShardsTouched / (this.lastThroughputCommittedAtoms + this.lastThroughputRejectedAtoms))));
 			}
 			
 			if (System.currentTimeMillis() - this.lastThroughputUpdate > TimeUnit.SECONDS.toMillis(10))
@@ -471,8 +471,8 @@ public final class Ledger implements Service, LedgerInterface
 				Ledger.this.context.getMetaData().put("ledger.throughput.particles", (this.lastThroughputPersistedParticles / seconds));
 				if (this.lastThroughputShardsTouched > 0 && this.lastThroughputCommittedAtoms > 0)
 				{
-					Ledger.this.context.getMetaData().put("ledger.throughput.shards.touched", (this.lastThroughputShardsTouched / this.lastThroughputCommittedAtoms));
-					Ledger.this.context.getMetaData().put("ledger.throughput.atoms.total", (this.lastThroughputPersistedAtoms / seconds) * (numShardGroups / (this.lastThroughputShardsTouched / this.lastThroughputCommittedAtoms)));
+					Ledger.this.context.getMetaData().put("ledger.throughput.shards.touched", (this.lastThroughputShardsTouched / (this.lastThroughputCommittedAtoms + this.lastThroughputRejectedAtoms)));
+					Ledger.this.context.getMetaData().put("ledger.throughput.atoms.total", (this.lastThroughputPersistedAtoms / seconds) * (numShardGroups / (this.lastThroughputShardsTouched / (this.lastThroughputCommittedAtoms + this.lastThroughputRejectedAtoms))));
 				}
 				
 				this.lastThroughputUpdate = System.currentTimeMillis();

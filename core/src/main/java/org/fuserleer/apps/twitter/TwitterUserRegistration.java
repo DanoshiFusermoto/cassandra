@@ -205,7 +205,7 @@ public class TwitterUserRegistration extends SignedParticle
 		Numbers.lessThan(this.createdAt, Universe.getDefault().getTimestamp(), "Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
 
 		if (this.name != null)		
-			Numbers.inRange(this.name.length(), TwitterUserRegistration.MIN_NAME_LENGTH, TwitterUserRegistration.MIN_NAME_LENGTH, "Name "+this.name+" length "+this.name.length()+" is not in range "+TwitterUserRegistration.MIN_NAME_LENGTH+" -> "+TwitterUserRegistration.MAX_NAME_LENGTH);
+			Numbers.inRange(this.name.length(), TwitterUserRegistration.MIN_NAME_LENGTH, TwitterUserRegistration.MAX_NAME_LENGTH, "Name "+this.name+" length "+this.name.length()+" is not in range "+TwitterUserRegistration.MIN_NAME_LENGTH+" -> "+TwitterUserRegistration.MAX_NAME_LENGTH);
 
 		if (this.location != null)		
 			Numbers.inRange(this.location.length(), TwitterUserRegistration.MIN_LOCATION_LENGTH, TwitterUserRegistration.MAX_LOCATION_LENGTH, "Location "+this.location+" length "+this.location.length()+" is not in range "+TwitterUserRegistration.MIN_LOCATION_LENGTH+" -> "+TwitterUserRegistration.MAX_LOCATION_LENGTH);

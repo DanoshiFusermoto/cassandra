@@ -84,7 +84,7 @@ public class TweetParticle extends SignedParticle
 		super();
 	}
 
-	public TweetParticle(long id, String user, String text, Collection<Hash> media, Hash replyTo, Hash retweetOf, long createdAt, ECPublicKey owner)
+	public TweetParticle(final long id, final String user, final String text, final Collection<Hash> media, final Hash replyTo, final Hash retweetOf, final long createdAt, final ECPublicKey owner)
 	{
 		super(Spin.UP, owner);
 		

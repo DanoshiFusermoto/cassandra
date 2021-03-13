@@ -19,7 +19,6 @@ import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.primitives.Longs;
 
 @SerializerId2("apps.twitter.user")
 public class TwitterUserRegistration extends SignedParticle

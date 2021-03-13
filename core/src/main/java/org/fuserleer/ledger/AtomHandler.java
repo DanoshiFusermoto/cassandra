@@ -104,8 +104,6 @@ public class AtomHandler implements Service
 	
 									pendingAtom.prepare();
 									
-									// TODO atom verification here (signatures etc)
-									
 				                	// Store all valid atoms even if they aren't within the local shard group.
 									// Those atoms will be broadcast the the relevant groups and it needs to be stored
 									// to be able to serve the requests for it.  Such atoms can be pruned per epoch

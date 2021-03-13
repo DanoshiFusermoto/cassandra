@@ -18,6 +18,7 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
+import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.crypto.MerkleTree;
@@ -28,6 +29,7 @@ import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.atoms.SignedParticle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.DsonOutput;
@@ -310,21 +312,19 @@ public final class StateMachine // implements LedgerInterface
 
 				particle.prepare(this);
 				
-				// TODO these are off for prototyping, turn back on!
-	/*			if (operation instanceof SignedOperation)
+				if (particle instanceof SignedParticle)
 				{
 					try
 					{
-						SignedOperation signedOperation = (SignedOperation) operation;
-						if (signedOperation.requiresSignature() == true && 
-							signedOperation.verify(operation.getOwner()) == false)
-							throw new ValidationException("Signature for "+operation+" in Action "+action.getHash()+" did not verify with public key "+operation.getOwner());
+						SignedParticle signedParticle = (SignedParticle) particle;
+						if (signedParticle.verify(signedParticle.getOwner()) == false)
+							throw new ValidationException("Signature for "+particle.toString()+" in atom "+atom.getHash()+" did not verify with public key "+signedParticle.getOwner());
 					}
 					catch (CryptoException cex)
 					{
-						throw new ValidationException("Verification of "+operation+" in Action "+action.getHash()+" failed", cex);
+						throw new ValidationException("Preparation of "+particle.toString()+" in atom "+atom.getHash()+" failed", cex);
 					}
-				}*/
+				}
 			}
 			
 			Map<Hash, StateObject> statesForAtom = new HashMap<Hash, StateObject>();

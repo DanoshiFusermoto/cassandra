@@ -17,12 +17,13 @@ import org.fuserleer.ledger.StateObject;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.SerializerId2;
+import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 @SerializerId2("ledger.atom")
-public final class Atom extends BasicObject implements Primitive // TODO not sure if this needs to be state primitive as its really an envelope for particle state primitives
+public final class Atom extends BasicObject implements Primitive
 {
 	@JsonProperty("particles")
 	@DsonOutput(Output.ALL)
@@ -38,24 +39,23 @@ public final class Atom extends BasicObject implements Primitive // TODO not sur
 		super();
 	}
 
-	public Atom(Particle particle)
+	public Atom(final Particle particle)
 	{
 		this();
 		
 		this.particles = new ArrayList<Particle>();
-		this.particles.add(Objects.requireNonNull(particle));
+		this.particles.add(Objects.requireNonNull(particle, "Particle is null"));
 	}
 
-	public Atom(Particle ... particles)
+	public Atom(final Particle ... particles)
 	{
 		this();
 		
 		Objects.requireNonNull(particles, "Particles is null");
-		if (particles.length == 0)
-			throw new IllegalArgumentException("Particles is empty");
+		Numbers.notZero(particles.length, "Particles is empty");
 		
 		Set<Particle> verifiedNonDuplicates = new LinkedHashSet<Particle>();
-		for (int p = 0 ; p < Objects.requireNonNull(particles).length ; p++)
+		for (int p = 0 ; p < particles.length ; p++)
 		{
 			if (verifiedNonDuplicates.add(particles[p]) == false)
 				throw new IllegalArgumentException("Particle "+particles[p].getHash()+" is duplicated");
@@ -64,13 +64,12 @@ public final class Atom extends BasicObject implements Primitive // TODO not sur
 		this.particles = new ArrayList<Particle>(verifiedNonDuplicates);
 	}
 
-	public Atom(Collection<? extends Particle> particles)
+	public Atom(final Collection<? extends Particle> particles)
 	{
 		this();
 		
 		Objects.requireNonNull(particles, "Particles is null");
-		if (particles.isEmpty() == true)
-			throw new IllegalArgumentException("Particles is empty");
+		Numbers.notZero(particles.size(), "Particles is empty");
 		
 		Set<Particle> verifiedNonDuplicates = new LinkedHashSet<Particle>();
 		for (Particle particle : particles)
@@ -88,7 +87,7 @@ public final class Atom extends BasicObject implements Primitive // TODO not sur
 	}
 	
 	@SuppressWarnings("unchecked")
-	public <T> T getParticle(Hash hash) 
+	public <T> T getParticle(final Hash hash) 
 	{
 		Objects.requireNonNull(hash);
 		
@@ -100,14 +99,14 @@ public final class Atom extends BasicObject implements Primitive // TODO not sur
 	}
 	
 	@SuppressWarnings("unchecked")
-	public <T extends Particle> List<T> getParticles(Class<T> type)
+	public <T extends Particle> List<T> getParticles(final Class<T> type)
 	{
 		List<T> particles = new ArrayList<T>();
 		this.particles.stream().filter(p -> type.isAssignableFrom(p.getClass())).forEach(p -> particles.add((T) p));
 		return particles;
 	}
 
-	public boolean hasParticle(Class<? extends Particle> type)
+	public boolean hasParticle(final Class<? extends Particle> type)
 	{
 		for (Particle particle : this.particles)
 			if (type.isAssignableFrom(particle.getClass()))
@@ -116,7 +115,7 @@ public final class Atom extends BasicObject implements Primitive // TODO not sur
 		return false;
 	}
 	
-	public boolean hasParticle(Hash hash) 
+	public boolean hasParticle(final Hash hash) 
 	{
 		for (Particle particle : this.particles)
 			if (particle.getHash().equals(hash) == true)

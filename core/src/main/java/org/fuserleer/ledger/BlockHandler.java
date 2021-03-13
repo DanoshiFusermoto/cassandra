@@ -68,9 +68,9 @@ public class BlockHandler implements Service
 {
 	private static final Logger blocksLog = Logging.getLogger("blocks");
 
-	public final static long 	BASELINE_DISTANCE_FACTOR = 2;
+	public final static long 	BASELINE_DISTANCE_FACTOR = 8;
 	public final static long 	BASELINE_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BASELINE_DISTANCE_FACTOR * Math.log(BASELINE_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
-	public final static long 	BLOCK_DISTANCE_FACTOR = 8;
+	public final static long 	BLOCK_DISTANCE_FACTOR = 32;
 	public final static long 	BLOCK_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BLOCK_DISTANCE_FACTOR * Math.log(BLOCK_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
 	
 	public static boolean withinRange(long location, long point, long range)

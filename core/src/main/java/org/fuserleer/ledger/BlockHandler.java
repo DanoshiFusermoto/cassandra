@@ -1,7 +1,6 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
-import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -68,11 +67,6 @@ public class BlockHandler implements Service
 {
 	private static final Logger blocksLog = Logging.getLogger("blocks");
 
-	public final static long 	BASELINE_DISTANCE_FACTOR = 8;
-	public final static long 	BASELINE_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BASELINE_DISTANCE_FACTOR * Math.log(BASELINE_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
-	public final static long 	BLOCK_DISTANCE_FACTOR = 32;
-	public final static long 	BLOCK_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BLOCK_DISTANCE_FACTOR * Math.log(BLOCK_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
-	
 	public static boolean withinRange(long location, long point, long range)
 	{
 		long distance = MathUtils.ringDistance64(point, location);
@@ -204,6 +198,8 @@ public class BlockHandler implements Service
 	private final Context context;
 
 	private final VotePowerHandler 				votePowerHandler;
+	private final BlockRegulator				blockRegulator;
+
 	private final Map<Hash, PendingBlock>		pendingBlocks;
 	private final Set<PendingBranch>			pendingBranches;
 	
@@ -223,6 +219,7 @@ public class BlockHandler implements Service
 		this.pendingBlocks = Collections.synchronizedMap(new HashMap<Hash, PendingBlock>());
 		this.pendingBranches = Collections.synchronizedSet(new HashSet<PendingBranch>());
 		this.votePowerHandler = Objects.requireNonNull(votePowerHandler, "Vote power handler is null");
+		this.blockRegulator = new BlockRegulator(context);
 		this.voteClock = new AtomicLong(0);
 		this.currentVote = new AtomicReference<BlockHeader>();
 		this.lastGenerated = new AtomicReference<BlockHeader>();
@@ -233,6 +230,7 @@ public class BlockHandler implements Service
 	public void start() throws StartupException
 	{
 		this.voteClock.set(this.context.getLedger().getHead().getHeight());
+		this.blockRegulator.start();
 
 		// BLOCK HEADER GOSSIP //
 		this.context.getNetwork().getGossipHandler().register(BlockHeader.class, new GossipFilter(this.context) 
@@ -677,6 +675,8 @@ public class BlockHandler implements Service
 		this.blockProcessor.terminate(true);
 		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
+		
+		this.blockRegulator.stop();
 	}
 	
 	public int size()
@@ -739,7 +739,7 @@ public class BlockHandler implements Service
 		}
 		
 		final BlockHeader previous = head;
-		final long initialTarget = (this.context.getNode().getIdentity().asHash().asLong()+previous.getHash().asLong()); 
+		final long initialAtomTarget = (this.context.getNode().getIdentity().asHash().asLong()+previous.getHash().asLong()); 
 
 		PendingBlock strongestBlock = null;
 		for (int i=0 ; i < this.context.getConfiguration().get("ledger.accumulator.iterations", 1) ; i++)
@@ -750,9 +750,9 @@ public class BlockHandler implements Service
 			Set<Hash> atomExclusions = accumulator.getPendingAtoms().stream().map(pa -> pa.getHash()).collect(Collectors.toSet());
 			List<Hash> certificateExclusions = new ArrayList<Hash>(branchCertificateExclusions);
 			final long timestamp = Time.getSystemTime();
-			final List<PendingAtom> seedAtoms = this.context.getLedger().getAtomPool().get(initialTarget-Long.MIN_VALUE, initialTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 8, atomExclusions);
+			final List<PendingAtom> seedAtoms = this.context.getLedger().getAtomPool().get(initialAtomTarget-Long.MIN_VALUE, initialAtomTarget, BlockRegulator.BASELINE_DISTANCE_TARGET, 8, atomExclusions);
 			final Collection<AtomCertificate> candidateCertificates = this.context.getLedger().getStateHandler().get(BlockHeader.MAX_ATOMS, certificateExclusions);
-			long nextTarget = initialTarget;
+			long nextAtomTarget = initialAtomTarget;
 			Hash stepHash = Hash.from(Hash.from(previous.getHeight()+1), previous.getHash(), this.context.getNode().getIdentity().asHash(), Hash.from(timestamp));
 
 			final Map<Hash, PendingAtom> candidateAtoms = new LinkedHashMap<Hash, PendingAtom>();
@@ -761,10 +761,10 @@ public class BlockHandler implements Service
 			boolean foundAtom = false;
 			do
 			{
-				if (nextTarget != initialTarget)
+				if (nextAtomTarget != initialAtomTarget)
 				{
 					// Should only select atoms from the pool that have 2/3 agreement
-					atoms = this.context.getLedger().getAtomPool().get(nextTarget-Long.MIN_VALUE, nextTarget, BlockHandler.BASELINE_DISTANCE_TARGET, 16, atomExclusions);
+					atoms = this.context.getLedger().getAtomPool().get(nextAtomTarget-Long.MIN_VALUE, nextAtomTarget, BlockRegulator.BASELINE_DISTANCE_TARGET, 16, atomExclusions);
 					if (atoms.isEmpty() == true)
 						break;
 					
@@ -789,26 +789,27 @@ public class BlockHandler implements Service
 				for (PendingAtom atom : atoms)
 				{
 					// Discover an atom in range of nextTarget
-					if (withinRange(atom.getHash().asLong(), nextTarget, BlockHandler.BASELINE_DISTANCE_TARGET) == true)
+					if (withinRange(atom.getHash().asLong(), nextAtomTarget, BlockRegulator.BASELINE_DISTANCE_TARGET) == true)
 					{
 						try
 						{
 							accumulator.lock(atom);
 							atomExclusions.add(atom.getHash());
 							candidateAtoms.put(atom.getHash(), atom);
-							nextTarget = atom.getHash().asLong();
+							nextAtomTarget = atom.getHash().asLong();
 							foundAtom = true;
 							
 							stepHash = new Hash(stepHash, atom.getHash(), Mode.STANDARD);
-							long step = MathUtils.ringDistance64(previous.getHash().asLong(), stepHash.asLong());
+							long blockStep = MathUtils.ringDistance64(previous.getHash().asLong(), stepHash.asLong());
+							long blockTarget = this.blockRegulator.computeTarget(head, branch); 
 							// Try to build a block // TODO inefficient
-							if (step >= BlockHandler.BLOCK_DISTANCE_TARGET) // TODO difficulty stuff
+							if (blockStep >= blockTarget)
 							{
-								Block discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity(), 
+								Block discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity(), 
 																  candidateAtoms.values().stream().map(pa -> pa.getAtom()).collect(Collectors.toList()), candidateCertificates);
 								
-								if (discoveredBlock.getHeader().getStep() != step)
-									throw new IllegalStateException("Step of generated block is "+discoveredBlock.getHeader().getStep()+" expected "+step);
+								if (discoveredBlock.getHeader().getStep() != blockStep)
+									throw new IllegalStateException("Step of generated block is "+discoveredBlock.getHeader().getStep()+" expected "+blockStep);
 								
 								if (strongestBlock == null || strongestBlock.getHeader().getInventory(InventoryType.ATOMS).size() < discoveredBlock.getHeader().getInventory(InventoryType.ATOMS).size())
 									strongestBlock = new PendingBlock(BlockHandler.this.context, discoveredBlock.getHeader(), candidateAtoms.values(), candidateCertificates);

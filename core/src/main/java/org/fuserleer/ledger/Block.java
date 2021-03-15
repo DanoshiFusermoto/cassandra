@@ -66,12 +66,12 @@ public final class Block extends BasicObject implements Primitive
 			this.certificates.put(certificate.getObject(), certificate);
 	}
 
-	public Block(final long height, final Hash previous, final UInt256 stepped, final long index, final ECPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
+	public Block(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final ECPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
 	{
-		this(height, previous, stepped, index, Time.getLedgerTimeMS(), owner, atoms, certificates);
+		this(height, previous, target, stepped, index, Time.getLedgerTimeMS(), owner, atoms, certificates);
 	}
 	
-	public Block(final long height, final Hash previous, final UInt256 stepped, final long index, final long timestamp, final ECPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
+	public Block(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final long timestamp, final ECPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
 	{
 		super();
 
@@ -94,7 +94,7 @@ public final class Block extends BasicObject implements Primitive
 		inventory.put(InventoryType.ATOMS, this.atoms.stream().map(a -> a.getHash()).collect(Collectors.toList()));
 		inventory.put(InventoryType.CERTIFICATES, this.certificates.values().stream().map(c -> c.getHash()).collect(Collectors.toList()));
 		
-		this.header = new BlockHeader(height, previous, stepped, index, inventory, merkle.buildTree(), timestamp, owner);
+		this.header = new BlockHeader(height, previous, target, stepped, index, inventory, merkle.buildTree(), timestamp, owner);
 	}
 
 	protected synchronized Hash computeHash()

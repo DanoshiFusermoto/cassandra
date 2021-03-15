@@ -39,7 +39,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 {
 	public final static int	MAX_ATOMS = 2048;
 	
-	// TODO need index and stepped in here?
+	// TODO need index target and stepped in here?
 	public static long getStep(final long height, final Hash previous, final ECPublicKey owner, final long timestamp, final Collection<Hash> atoms)
 	{
 		Hash stepHash = Hash.from(Hash.from(height), previous, owner.asHash(), Hash.from(timestamp));
@@ -81,6 +81,10 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	@JsonProperty("previous")
 	@DsonOutput(Output.ALL)
 	private Hash previous;
+	
+	@JsonProperty("target")
+	@DsonOutput(Output.ALL)
+	private long target;
 
 	@JsonProperty("stepped")
 	@DsonOutput(Output.ALL)
@@ -120,11 +124,12 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		super();
 	}
 	
-	BlockHeader(final long height, final Hash previous, final UInt256 stepped, final long index, final Map<InventoryType, List<Hash>> inventory, final Hash merkle, final long timestamp, final ECPublicKey owner)
+	BlockHeader(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final Map<InventoryType, List<Hash>> inventory, final Hash merkle, final long timestamp, final ECPublicKey owner)
 	{
 		Numbers.isNegative(height, "Height is negative");
 		Numbers.isNegative(index, "Index is negative");
 		Numbers.isNegative(timestamp, "Timestamp is negative");
+		Numbers.isNegative(target, "Target is negative");
 		
 		Objects.requireNonNull(previous, "Previous block is null");
 		if (height == 0 && previous.equals(Hash.ZERO) == false)
@@ -136,6 +141,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		this.owner = Objects.requireNonNull(owner, "Block owner is null");
 		this.merkle = Objects.requireNonNull(merkle, "Block merkle is null");
 		this.stepped = Objects.requireNonNull(stepped, "Stepped is null");
+		this.target = target;
 		this.previous = previous;
 		this.height = height;
 		this.index = index;
@@ -182,6 +188,11 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	public long getTimestamp() 
 	{
 		return this.timestamp;
+	}
+	
+	public long getTarget()
+	{
+		return this.target;
 	}
 	
 	public UInt256 getStepped()
@@ -288,7 +299,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	@Override
 	public String toString() 
 	{
-		return this.height+" "+getStep()+"/"+getAverageStep()+" "+getHash()+" "+this.previous+" "+this.merkle+" "+this.timestamp;
+		return this.height+" "+getStep()+"/"+getAverageStep()+" "+this.target+" "+getHash()+" "+this.previous+" "+this.merkle+" "+this.timestamp;
 	}
 	
 	@Override
@@ -337,7 +348,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	@Override
 	public BlockHeader clone()
 	{
-		BlockHeader blockHeader = new BlockHeader(this.height, this.previous, this.stepped, this.index, this.inventory, this.merkle, this.timestamp, this.owner);
+		BlockHeader blockHeader = new BlockHeader(this.height, this.previous, this.target, this.stepped, this.index, this.inventory, this.merkle, this.timestamp, this.owner);
 		blockHeader.signature = this.signature;
 		blockHeader.certificate = this.certificate;
 		return blockHeader;

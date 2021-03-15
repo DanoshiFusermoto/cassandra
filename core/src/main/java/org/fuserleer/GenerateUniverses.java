@@ -165,7 +165,7 @@ public final class GenerateUniverses
 		transferParticle.sign(this.universeKey);
 
 		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
-		Block genesisBlock = new Block(0l, Hash.ZERO, UInt256.ZERO, 0, timestamp, this.universeKey.getPublicKey(), atoms, Collections.emptyList());
+		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 1024) * 1023), UInt256.ZERO, 0, timestamp, this.universeKey.getPublicKey(), atoms, Collections.emptyList());
 		genesisBlock.getHeader().sign(this.universeKey);
 		return genesisBlock;
 	}

@@ -42,7 +42,7 @@ public class PendingBranch
 
 	private final ReentrantLock lock = new ReentrantLock();
 	
-	PendingBranch(Context context, Type type, BlockHeader head, StateAccumulator accumulator)
+	PendingBranch(final Context context, final Type type, final BlockHeader head, final StateAccumulator accumulator)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.type = Objects.requireNonNull(type, "Type is null");
@@ -52,14 +52,14 @@ public class PendingBranch
 		this.accumulator = Objects.requireNonNull(accumulator, "Accumulator is null");
 	}
 
-	PendingBranch(Context context, Type type, BlockHeader head, StateAccumulator accumulator, PendingBlock block) throws ValidationException, IOException, StateLockedException
+	PendingBranch(final Context context, final Type type, final BlockHeader head, final StateAccumulator accumulator, final PendingBlock block) throws ValidationException, IOException, StateLockedException
 	{
 		this(context, type, head, accumulator);
 
 		add(block);
 	}
 	
-	PendingBranch(Context context, Type type, BlockHeader head, StateAccumulator accumulator, Collection<PendingBlock> blocks) throws StateLockedException, IOException
+	PendingBranch(final Context context, final Type type, final BlockHeader head, final StateAccumulator accumulator, final Collection<PendingBlock> blocks) throws StateLockedException, IOException
 	{
 		this(context, type, head, accumulator);
 		
@@ -673,6 +673,24 @@ public class PendingBranch
 			this.lock.unlock();
 		}
 	}
+	
+	public PendingBlock get(Hash hash)
+	{
+		this.lock.lock();
+		try
+		{
+			for (PendingBlock vertex : this.blocks)
+				if (vertex.getHash().equals(hash) == true)
+					return vertex;
+			
+			return null;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
 
 	PendingBlock getFirst()
 	{

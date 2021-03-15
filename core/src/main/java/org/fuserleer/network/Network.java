@@ -375,24 +375,13 @@ public final class Network implements Service
 	{
     	try
     	{
-	    	if (this.context.getConfiguration().has("network.address"))
-	    	{
-	    		this.datagramChannel = DatagramChannel.open(StandardProtocolFamily.INET);
-	    		this.datagramChannel.bind(new InetSocketAddress(InetAddress.getByName(this.context.getConfiguration().get("network.address", "0.0.0.0")),
-	    																			  this.context.getConfiguration().get("network.udp", Universe.getDefault().getPort())));
+    		this.datagramChannel = DatagramChannel.open(StandardProtocolFamily.INET);
+    		this.datagramChannel.bind(new InetSocketAddress(InetAddress.getByName(this.context.getConfiguration().get("network.address", "0.0.0.0")),
+    																			  this.context.getConfiguration().get("network.udp", Universe.getDefault().getPort())));
 	    		
-    			this.TCPServerSocket = new ServerSocket(this.context.getConfiguration().get("network.udp", Universe.getDefault().getPort()), 
-				 	   	   								16,
-				 	   	   								InetAddress.getByName(this.context.getConfiguration().get("network.address", "0.0.0.0")));
-    		}
-	    	else
-	    	{
-	    		this.datagramChannel = DatagramChannel.open(StandardProtocolFamily.INET);
-	    		this.datagramChannel.bind(new InetSocketAddress(InetAddress.getByName(this.context.getConfiguration().get("network.address", "0.0.0.0")),
-	    														this.context.getConfiguration().get("network.port", Universe.getDefault().getPort())));
-	    		
-    			this.TCPServerSocket = new ServerSocket(this.context.getConfiguration().get("network.port", Universe.getDefault().getPort()), 16);
-	    	}
+   			this.TCPServerSocket = new ServerSocket(this.context.getConfiguration().get("network.udp", Universe.getDefault().getPort()), 
+			 	   	   								16,
+			 	   	   								InetAddress.getByName(this.context.getConfiguration().get("network.address", "0.0.0.0")));
 
 	    	this.datagramChannel.configureBlocking(true);
 	    	this.datagramChannel.setOption(StandardSocketOptions.SO_RCVBUF, this.context.getConfiguration().get("network.udp.buffer", 1<<18));

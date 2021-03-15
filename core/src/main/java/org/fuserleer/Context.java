@@ -132,13 +132,8 @@ public final class Context implements Service
 				throw new IllegalStateException("Context "+name.toLowerCase()+" already created");
 			
 			Configuration contextConfig = new Configuration(Objects.requireNonNull(configuration));
-			if (configuration.has("network.address") == false)
-				contextConfig.set("network.address", "127.0.0.1");
 			contextConfig.set("network.port", configuration.get("network.port", Universe.getDefault().getPort())+incrementer.get());
 			contextConfig.set("network.udp", configuration.get("network.udp", Universe.getDefault().getPort())+incrementer.get());
-			
-			if (configuration.has("websocket.address") == false)
-				contextConfig.set("websocket.address", contextConfig.get("network.address"));
 			contextConfig.set("websocket.port", configuration.get("websocket.port", WebSocketImpl.DEFAULT_PORT)+incrementer.get());
 			
 			if (incrementer.get() > 0)
@@ -147,7 +142,7 @@ public final class Context implements Service
 				Set<String> seedSet = new HashSet<String>();
 				for (String seed : seeds)
 					seedSet.add(seed);
-				seedSet.add(contextConfig.get("network.address"));
+				seedSet.add(contextConfig.get("network.address", "127.0.0.1"));
 				contextConfig.set("network.seeds", String.join(",", seedSet));
 			}
 

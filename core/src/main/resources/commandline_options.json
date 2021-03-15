@@ -49,5 +49,11 @@
 		"long":"singleton",
 		"desc":"Network is singletons (one node per shard for testing)",
 		"has_arg":false
+	},
+	
+	"godix":{	
+		"long":"godix",
+		"desc":"Whether GODIX mode is enabled",
+		"has_arg":false
 	}
 }		

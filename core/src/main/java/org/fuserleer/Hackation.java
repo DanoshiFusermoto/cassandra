@@ -54,13 +54,18 @@ public class Hackation
 			
 			System.setProperty("user.dir", Configuration.getDefault().getCommandLine().getOptionValue("home", System.getProperty("user.dir")));
 			System.setProperty("console", Boolean.toString(Configuration.getDefault().getCommandLine().hasOption("console")));
+			System.setProperty("godix", Boolean.toString(Configuration.getDefault().getCommandLine().hasOption("godix")));
 			
 			new Hackation();
 			
 			if (Boolean.getBoolean("console") == true)
-				new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Contexts(),
-												   new org.fuserleer.console.Atoms());
-												   //, new org.fuserleer.console.Spam(), new org.fuserleer.console.Twitter());
+			{
+				if (Boolean.getBoolean("godix") == true)
+					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Contexts(),
+												   	   new org.fuserleer.console.Atoms(), new org.fuserleer.console.Spam(), new org.fuserleer.console.Twitter());
+				else
+					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Atoms());
+			}
 
 		}
 		catch (Throwable t)

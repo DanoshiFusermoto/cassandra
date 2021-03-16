@@ -44,10 +44,10 @@ public final class VotePowerBloom extends BasicObject
 		// FOR SERIALIZER 
 	}
 	
-	public VotePowerBloom(final Hash block, final long shardGroup)
+	public VotePowerBloom(final Hash block, final long shardGroup, final int numIdentities)
 	{
 		this.block = Objects.requireNonNull(block, "Block hash is null");
-		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, EXPECTED_VOTE_POWER_ENTRIES);
+		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, numIdentities);
 		this.totalPower = 0l;
 		
 		Numbers.isNegative(shardGroup, "Shard group is negative");

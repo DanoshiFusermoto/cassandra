@@ -192,18 +192,22 @@ public final class VotePowerHandler implements Service
 		if (votePowerBloom != null)
 			return votePowerBloom;
 		
-		votePowerBloom = new VotePowerBloom(block, shardGroup);
-
 		this.lock.readLock().lock();
 		try
 		{
-			for (ECPublicKey identity : getIdentities())
+			final Collection<ECPublicKey> allIdentities = getIdentities();
+			final Collection<ECPublicKey> shardGroupIdentities = new HashSet<ECPublicKey>();
+			for (ECPublicKey identity : allIdentities)
 			{
 				if (shardGroup != ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height)))
 					continue;
 
-				votePowerBloom.add(identity, getVotePower(height-1, identity));
+				shardGroupIdentities.add(identity);
 			}
+			
+			votePowerBloom = new VotePowerBloom(block, shardGroup, shardGroupIdentities.size());
+			for (ECPublicKey identity : shardGroupIdentities)
+				votePowerBloom.add(identity, getVotePower(height-1, identity));
 		}
 		finally
 		{

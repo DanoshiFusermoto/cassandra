@@ -96,7 +96,7 @@ final class BlockRegulator implements Service
 			while(current.getHeight() % BlockRegulator.BLOCKS_PER_PERIOD != (BlockRegulator.BLOCKS_PER_PERIOD-1))
 			{
 				BlockHeader previous;
-				if (branch != null && current.getHeight() > branch.getFirst().getHeight())
+				if (branch != null && current.getHeight() > branch.getLow().getHeight())
 					previous = branch.get(current.getPrevious()).getHeader();
 				else
 					previous = this.context.getLedger().getLedgerStore().get(current.getPrevious(), BlockHeader.class); 
@@ -114,7 +114,7 @@ final class BlockRegulator implements Service
 			while(current.getHeight() > 1 && current.getHeight() % BlockRegulator.BLOCKS_PER_PERIOD != 0)
 			{
 				BlockHeader previous;
-				if (branch != null && current.getHeight() > branch.getFirst().getHeight())
+				if (branch != null && current.getHeight() > branch.getLow().getHeight())
 					previous = branch.get(current.getPrevious()).getHeader();
 				else
 					previous = this.context.getLedger().getLedgerStore().get(current.getPrevious(), BlockHeader.class); 

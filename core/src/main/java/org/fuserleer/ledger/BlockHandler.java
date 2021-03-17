@@ -123,7 +123,7 @@ public class BlockHandler implements Service
 							BlockHandler.this.bestBranch = discoverBestBranch();
 							
 							if (BlockHandler.this.bestBranch != null)
-								buildCandidate = BlockHandler.this.bestBranch.getLast().getHeader();
+								buildCandidate = BlockHandler.this.bestBranch.getHigh().getHeader();
 							else
 								buildCandidate = BlockHandler.this.context.getLedger().getHead();
 
@@ -687,7 +687,7 @@ public class BlockHandler implements Service
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
 	{
 		// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-		long votePower = BlockHandler.this.votePowerHandler.getVotePower(Math.max(0, branch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), BlockHandler.this.context.getNode().getIdentity());
+		long votePower = BlockHandler.this.votePowerHandler.getVotePower(Math.max(0, branch.getHigh().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), BlockHandler.this.context.getNode().getIdentity());
 
 		List<BlockVote> branchVotes = new ArrayList<BlockVote>();
 		synchronized(BlockHandler.this.voteClock)
@@ -734,7 +734,7 @@ public class BlockHandler implements Service
 			for (PendingBlock block : branch.getBlocks())
 				branchCertificateExclusions.addAll(block.getHeader().getInventory(InventoryType.CERTIFICATES));
 			
-			if (branch != null && branch.isEmpty() == false && head.equals(branch.getLast().getHeader()) == false)
+			if (branch != null && branch.isEmpty() == false && head.equals(branch.getHigh().getHeader()) == false)
 				throw new IllegalArgumentException("Head is not top of branch "+head);
 		}
 		
@@ -866,7 +866,7 @@ public class BlockHandler implements Service
 				this.bestBranch = null;
 			
 			// Clear out pending of blocks that may not be in a branch and can't be committed due to this commit
-			long branchHeadHeight = branch.getHead().getHeight();
+			long branchHeadHeight = branch.getRoot().getHeight();
 			Iterator<Entry<Hash, PendingBlock>> pendingBlocksIterator = BlockHandler.this.pendingBlocks.entrySet().iterator();
 			while(pendingBlocksIterator.hasNext() == true)
 			{
@@ -904,7 +904,7 @@ public class BlockHandler implements Service
 				@Override
 				public int compare(PendingBranch arg0, PendingBranch arg1)
 				{
-					return arg0.getLast().getHash().compareTo(arg1.getLast().getHash());
+					return arg0.getHigh().getHash().compareTo(arg1.getHigh().getHash());
 				}
 			});
 			return pendingBranches;
@@ -1185,10 +1185,10 @@ public class BlockHandler implements Service
 			Map<PendingBlock, PendingBranch> committable = new HashMap<PendingBlock, PendingBranch>();
 			for (PendingBranch pendingBranch : this.pendingBranches)
 			{
-				if (pendingBranch.getFirst().getHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == false)
+				if (pendingBranch.getLow().getHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == false)
 				{
 					if (blocksLog.hasLevel(Logging.DEBUG) == true)
-						blocksLog.debug(this.context.getName()+": Branch doesn't attach to ledger "+pendingBranch.getFirst());
+						blocksLog.debug(this.context.getName()+": Branch doesn't attach to ledger "+pendingBranch.getLow());
 					
 					continue;
 				}
@@ -1200,11 +1200,11 @@ public class BlockHandler implements Service
 				
 				// TODO need a lower probability tiebreaker here
 				if (bestBranch == null || 
-					bestBranch.getLast().getHeader().getAverageStep() < pendingBranch.getLast().getHeader().getAverageStep() ||
-					(bestBranch.getLast().getHeader().getAverageStep() == pendingBranch.getLast().getHeader().getAverageStep() && bestBranch.getLast().getHeader().getStep() < pendingBranch.getLast().getHeader().getStep()))
+					bestBranch.getHigh().getHeader().getAverageStep() < pendingBranch.getHigh().getHeader().getAverageStep() ||
+					(bestBranch.getHigh().getHeader().getAverageStep() == pendingBranch.getHigh().getHeader().getAverageStep() && bestBranch.getHigh().getHeader().getStep() < pendingBranch.getHigh().getHeader().getStep()))
 				{
 					bestBranch = pendingBranch;
-					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected branch "+bestBranch.getLast().getHeader());
+					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected branch "+bestBranch.getHigh().getHeader());
 				}
 			}
 
@@ -1231,7 +1231,7 @@ public class BlockHandler implements Service
 			if (bestBranch != null)
 			{
 				if (blocksLog.hasLevel(Logging.DEBUG) == true)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getLast().getHeader().getAverageStep()+":"+bestBranch.getLast().weight()+"/"+this.votePowerHandler.getTotalVotePower(Math.max(0, bestBranch.getLast().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups()))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getHigh().getHeader().getAverageStep()+":"+bestBranch.getHigh().weight()+"/"+this.votePowerHandler.getTotalVotePower(Math.max(0, bestBranch.getHigh().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups()))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
 			}
 			
 			return bestBranch;

@@ -38,30 +38,30 @@ public class PendingBranch
 	private final LinkedList<PendingBlock> blocks;
 	private final StateAccumulator accumulator;
 	
-	private BlockHeader head;
+	private BlockHeader root;
 
 	private final ReentrantLock lock = new ReentrantLock();
 	
-	PendingBranch(final Context context, final Type type, final BlockHeader head, final StateAccumulator accumulator)
+	PendingBranch(final Context context, final Type type, final BlockHeader root, final StateAccumulator accumulator)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.type = Objects.requireNonNull(type, "Type is null");
 		this.id = ThreadLocalRandom.current().nextLong();
 		this.blocks = new LinkedList<PendingBlock>();
-		this.head = Objects.requireNonNull(head, "Head is null");
+		this.root = Objects.requireNonNull(root, "Root is null");
 		this.accumulator = Objects.requireNonNull(accumulator, "Accumulator is null");
 	}
 
-	PendingBranch(final Context context, final Type type, final BlockHeader head, final StateAccumulator accumulator, final PendingBlock block) throws ValidationException, IOException, StateLockedException
+	PendingBranch(final Context context, final Type type, final BlockHeader root, final StateAccumulator accumulator, final PendingBlock block) throws ValidationException, IOException, StateLockedException
 	{
-		this(context, type, head, accumulator);
+		this(context, type, root, accumulator);
 
 		add(block);
 	}
 	
-	PendingBranch(final Context context, final Type type, final BlockHeader head, final StateAccumulator accumulator, final Collection<PendingBlock> blocks) throws StateLockedException, IOException
+	PendingBranch(final Context context, final Type type, final BlockHeader root, final StateAccumulator accumulator, final Collection<PendingBlock> blocks) throws StateLockedException, IOException
 	{
-		this(context, type, head, accumulator);
+		this(context, type, root, accumulator);
 		
 		for (PendingBlock block : blocks)
 			add(block);
@@ -77,7 +77,7 @@ public class PendingBranch
 		return this.type;
 	}
 
-	boolean add(PendingBlock block) throws StateLockedException, IOException
+	boolean add(final PendingBlock block) throws StateLockedException, IOException
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -88,8 +88,8 @@ public class PendingBranch
 			if (this.blocks.contains(block) == true)
 				return false;
 			
-			if (block.getHeight() <= this.head.getHeight())
-				blocksLog.warn(this.context.getName()+": Block is "+block.getHash()+" is before branch head "+this.head.getHash());
+			if (block.getHeight() <= this.root.getHeight())
+				blocksLog.warn(this.context.getName()+": Block is "+block.getHash()+" is before branch root "+this.root.getHash());
 			
 			boolean foundPrev = false;
 			for (PendingBlock vertex : this.blocks)
@@ -101,7 +101,7 @@ public class PendingBranch
 				}
 			}
 			
-			if (foundPrev == false && this.head.getHash().equals(block.getHeader().getPrevious()) == false)
+			if (foundPrev == false && this.root.getHash().equals(block.getHeader().getPrevious()) == false)
 				throw new IllegalStateException("Block "+block.getHash()+" does not attach to branch "+toString());
 			
 			lock(block);
@@ -115,9 +115,10 @@ public class PendingBranch
 		}
 	}
 	
-	boolean contains(Hash block) throws StateLockedException
+	boolean contains(final Hash block) throws StateLockedException
 	{
 		Objects.requireNonNull(block, "Block is null");
+		Hash.notZero(block, "Block hash is ZERO");
 		
 		this.lock.lock();
 		try
@@ -136,7 +137,26 @@ public class PendingBranch
 		}
 	}
 
-	boolean merge(Collection<PendingBlock> blocks) throws StateLockedException, IOException
+	boolean contains(final PendingBlock pendingBlock)
+	{
+		Objects.requireNonNull(pendingBlock, "Pending block is null");
+
+		this.lock.lock();
+		try
+		{
+			for (PendingBlock vertex : this.blocks)
+				if (vertex.equals(pendingBlock) == true)
+					return true;
+			
+			return false;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	boolean merge(final Collection<PendingBlock> blocks) throws StateLockedException, IOException
 	{
 		Objects.requireNonNull(blocks, "Blocks is null");
 
@@ -194,7 +214,7 @@ public class PendingBranch
 			
 			for (PendingBlock sortedBlock : sortedBlocks)
 			{
-				if (sortedBlock.getHeight() <= this.head.getHeight())
+				if (sortedBlock.getHeight() <= this.root.getHeight())
 					continue;
 				
 				if (this.contains(sortedBlock) == false)
@@ -213,7 +233,7 @@ public class PendingBranch
 		}
 	}
 
-	boolean forks(Collection<PendingBlock> blocks)
+	boolean forks(final Collection<PendingBlock> blocks)
 	{
 		Objects.requireNonNull(blocks, "Blocks is null");
 
@@ -261,7 +281,7 @@ public class PendingBranch
 		}
 	}
 
-	boolean forks(PendingBlock block)
+	boolean forks(final PendingBlock block)
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -288,7 +308,7 @@ public class PendingBranch
 		}
 	}
 
-	PendingBranch fork(Collection<PendingBlock> blocks) throws StateLockedException, IOException
+	PendingBranch fork(final Collection<PendingBlock> blocks) throws StateLockedException, IOException
 	{
 		Objects.requireNonNull(blocks, "Blocks is null");
 
@@ -365,7 +385,7 @@ public class PendingBranch
 				}
 			}
 			
-			return new PendingBranch(this.context, Type.FORK, this.head, this.context.getLedger().getStateAccumulator().shadow(), forkBlocks);
+			return new PendingBranch(this.context, Type.FORK, this.root, this.context.getLedger().getStateAccumulator().shadow(), forkBlocks);
 		}
 		finally
 		{
@@ -373,7 +393,7 @@ public class PendingBranch
 		}
 	}
 
-	PendingBranch fork(PendingBlock block) throws StateLockedException, IOException
+	PendingBranch fork(final PendingBlock block) throws StateLockedException, IOException
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -419,7 +439,7 @@ public class PendingBranch
 			if (blocksLog.hasLevel(Logging.DEBUG) == true)
 				blocksLog.debug(this.context.getName()+": Adding fork block "+block);
 			
-			return new PendingBranch(this.context, Type.FORK, this.head, this.context.getLedger().getStateAccumulator().shadow(), forkBlocks);
+			return new PendingBranch(this.context, Type.FORK, this.root, this.context.getLedger().getStateAccumulator().shadow(), forkBlocks);
 		}
 		finally
 		{
@@ -427,7 +447,7 @@ public class PendingBranch
 		}
 	}
 
-	boolean intersects(PendingBlock block)
+	boolean intersects(final PendingBlock block)
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -447,7 +467,7 @@ public class PendingBranch
 		}
 	}
 	
-	boolean intersects(Collection<PendingBlock> blocks)
+	boolean intersects(final Collection<PendingBlock> blocks)
 	{
 		Objects.requireNonNull(blocks, "Blocks is null");
 
@@ -490,7 +510,7 @@ public class PendingBranch
 	 * @throws IOException 
 	 * @throws StateLockedException 
 	 */
-	void trimTo(PendingBlock block) throws IOException, StateLockedException
+	void trimTo(final PendingBlock block) throws IOException, StateLockedException
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -506,7 +526,7 @@ public class PendingBranch
 					vertexIterator.remove();
 			}
 
-			this.head = block.getHeader();
+			this.root = block.getHeader();
 		}
 		finally
 		{
@@ -514,7 +534,7 @@ public class PendingBranch
 		}
 	}
 
-	LinkedList<PendingBlock> commit(PendingBlock block) throws IOException, StateLockedException
+	LinkedList<PendingBlock> commit(final PendingBlock block) throws IOException, StateLockedException
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -536,7 +556,7 @@ public class PendingBranch
 					break;
 			}
 			
-			this.head = block.getHeader();
+			this.root = block.getHeader();
 			return committed;
 		}
 		finally
@@ -620,12 +640,12 @@ public class PendingBranch
 		return this.accumulator;
 	}
 
-	BlockHeader getHead()
+	BlockHeader getRoot()
 	{
 		this.lock.lock();
 		try
 		{
-			return this.head;
+			return this.root;
 		}
 		finally
 		{
@@ -659,30 +679,16 @@ public class PendingBranch
 		}
 	}
 	
-	boolean contains(PendingBlock pendingBlock)
+	public PendingBlock get(final Hash block)
 	{
+		Objects.requireNonNull(block, "Block hash is null");
+		Hash.notZero(block, "Block hash is ZERO");
+		
 		this.lock.lock();
 		try
 		{
 			for (PendingBlock vertex : this.blocks)
-				if (vertex.equals(pendingBlock) == true)
-					return true;
-			
-			return false;
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}
-	
-	public PendingBlock get(Hash hash)
-	{
-		this.lock.lock();
-		try
-		{
-			for (PendingBlock vertex : this.blocks)
-				if (vertex.getHash().equals(hash) == true)
+				if (vertex.getHash().equals(block) == true)
 					return vertex;
 			
 			return null;
@@ -694,7 +700,7 @@ public class PendingBranch
 	}
 
 
-	PendingBlock getFirst()
+	PendingBlock getLow()
 	{
 		this.lock.lock();
 		try
@@ -707,7 +713,7 @@ public class PendingBranch
 		}
 	}
 
-	PendingBlock getLast()
+	PendingBlock getHigh()
 	{
 		this.lock.lock();
 		try

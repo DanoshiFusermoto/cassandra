@@ -169,9 +169,12 @@ public class BlockHandler implements Service
 								if (committable != null)
 								{
 									committedBlocks = commit(committable, BlockHandler.this.bestBranch);
-									this.committedCount += committedBlocks.size();
-									this.committedTimeTotal += (Time.getSystemTime()-commitStart);
-									blocksLog.info(BlockHandler.this.context.getName()+": Committed "+committedBlocks.size()+" blocks in "+(Time.getSystemTime()-commitStart)+"ms / "+(this.committedTimeTotal/this.committedCount)+" ms average");
+									if (committedBlocks.isEmpty() == false)
+									{
+										this.committedCount += committedBlocks.size();
+										this.committedTimeTotal += (Time.getSystemTime()-commitStart);
+										blocksLog.info(BlockHandler.this.context.getName()+": Committed "+committedBlocks.size()+" blocks in "+(Time.getSystemTime()-commitStart)+"ms / "+(this.committedTimeTotal/this.committedCount)+" ms average");
+									}
 								}
 							}
 						}
@@ -846,43 +849,45 @@ public class BlockHandler implements Service
 		try
 		{
 			final LinkedList<PendingBlock> committedBlocks = branch.commit(block);
-			for (PendingBlock committedBlock : committedBlocks)
-				blocksLog.info(BlockHandler.this.context.getName()+": Committed block "+committedBlock.getHeader());
-
-			// Clean or trim pending branches as a result of this commit
-			Iterator<PendingBranch> pendingBranchIterator = BlockHandler.this.pendingBranches.iterator();
-			while(pendingBranchIterator.hasNext() == true)
+			if (committedBlocks.isEmpty() == false)
 			{
-				PendingBranch pendingBranch = pendingBranchIterator.next();
-				
-				if (pendingBranch.equals(branch) == false)
-					pendingBranch.trimTo(block);
-					
-				if (pendingBranch.isEmpty())
-					pendingBranchIterator.remove();
-			}
-			
-			if (this.bestBranch != null && this.bestBranch.isEmpty() == true)
-				this.bestBranch = null;
-			
-			// Clear out pending of blocks that may not be in a branch and can't be committed due to this commit
-			long branchHeadHeight = branch.getRoot().getHeight();
-			Iterator<Entry<Hash, PendingBlock>> pendingBlocksIterator = BlockHandler.this.pendingBlocks.entrySet().iterator();
-			while(pendingBlocksIterator.hasNext() == true)
-			{
-				Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
-				if (pendingBlockEntry.getValue().getHeight() <= branchHeadHeight)
+				for (PendingBlock committedBlock : committedBlocks)
+					blocksLog.info(BlockHandler.this.context.getName()+": Committed block "+committedBlock.getHeader());
+	
+				// Clean or trim pending branches as a result of this commit
+				Iterator<PendingBranch> pendingBranchIterator = BlockHandler.this.pendingBranches.iterator();
+				while(pendingBranchIterator.hasNext() == true)
 				{
-					pendingBlocksIterator.remove();
-					this.blockVoteSyncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes().stream().map(bv -> bv.getHash()).collect(Collectors.toList()));
+					PendingBranch pendingBranch = pendingBranchIterator.next();
+					
+					if (pendingBranch.equals(branch) == false)
+						pendingBranch.trimTo(committedBlocks.getLast());
+						
+					if (pendingBranch.isEmpty())
+						pendingBranchIterator.remove();
 				}
-			}
-
-			// Signal the commit
-			for (PendingBlock committedBlock : committedBlocks)
-			{
-				BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock());
-				BlockHandler.this.context.getEvents().post(blockCommittedEvent); // TODO Might need to catch exceptions on this from synchronous listeners
+				
+				if (this.bestBranch != null && this.bestBranch.isEmpty() == true)
+					this.bestBranch = null;
+				
+				// Clear out pending of blocks that may not be in a branch and can't be committed due to this commit
+				Iterator<Entry<Hash, PendingBlock>> pendingBlocksIterator = BlockHandler.this.pendingBlocks.entrySet().iterator();
+				while(pendingBlocksIterator.hasNext() == true)
+				{
+					Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
+					if (pendingBlockEntry.getValue().getHeight() <= branch.getRoot().getHeight())
+					{
+						pendingBlocksIterator.remove();
+						this.blockVoteSyncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes().stream().map(bv -> bv.getHash()).collect(Collectors.toList()));
+					}
+				}
+	
+				// Signal the commit
+				for (PendingBlock committedBlock : committedBlocks)
+				{
+					BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock());
+					BlockHandler.this.context.getEvents().post(blockCommittedEvent); // TODO Might need to catch exceptions on this from synchronous listeners
+				}
 			}
 			
 			return committedBlocks;
@@ -1069,7 +1074,7 @@ public class BlockHandler implements Service
 		{
 			for (PendingBlock pendingBlock : this.pendingBlocks.values())
 			{
-				if (pendingBlock.getHeader() != null)
+				if (pendingBlock.getHeader() != null && pendingBlock.isUnbranched() == true)
 					updateBranches(pendingBlock);
 			}
 		}
@@ -1086,6 +1091,9 @@ public class BlockHandler implements Service
 		if (pendingBlock.getHeader() == null)
 			throw new IllegalStateException("Pending block "+pendingBlock.getHash()+" does not have a header");
 		
+		if (pendingBlock.isUnbranched() == false)
+			throw new IllegalStateException("Pending block "+pendingBlock.getHash()+" is already in a branch");
+
 		this.lock.writeLock().lock();
 		try
 		{
@@ -1110,7 +1118,7 @@ public class BlockHandler implements Service
 				return;
 			}
 
-			LinkedList<PendingBlock> branchWithBlocks = new LinkedList<PendingBlock>();
+/*			LinkedList<PendingBlock> branchWithBlocks = new LinkedList<PendingBlock>();
 			Iterator<PendingBlock> branchIterator = branch.descendingIterator();
 			while(branchIterator.hasNext() == true)
 			{
@@ -1122,19 +1130,24 @@ public class BlockHandler implements Service
 			}
 			
 			if (branchWithBlocks.isEmpty() == true)
+				return;*/
+			
+			if (branch.isEmpty() == true)
 				return;
+			
+			Collections.reverse(branch);
 			
 			try
 			{
 				for (PendingBranch pendingBranch : this.pendingBranches)
 				{
-					if (pendingBranch.merge(branchWithBlocks) == true)
+					if (pendingBranch.merge(branch) == true)
 						return;
 				}
 
 				for (PendingBranch pendingBranch : this.pendingBranches)
 				{
-					PendingBranch forkedBranch = pendingBranch.fork(branchWithBlocks);
+					PendingBranch forkedBranch = pendingBranch.fork(branch);
 					if (forkedBranch != null)
 					{
 						this.pendingBranches.add(forkedBranch);
@@ -1142,9 +1155,9 @@ public class BlockHandler implements Service
 					}
 				}
 					
-				if (branchWithBlocks.getFirst().getHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == true)
+				if (branch.getFirst().getHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == true)
 				{
-					PendingBranch newBranch = new PendingBranch(this.context, Type.NONE, this.context.getLedger().getHead(), this.context.getLedger().getStateAccumulator().shadow(), branchWithBlocks);
+					PendingBranch newBranch = new PendingBranch(this.context, Type.NONE, this.context.getLedger().getHead(), this.context.getLedger().getStateAccumulator().shadow(), branch);
 					this.pendingBranches.add(newBranch);
 				}
 			}

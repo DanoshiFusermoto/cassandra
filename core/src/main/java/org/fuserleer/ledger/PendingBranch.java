@@ -547,6 +547,9 @@ public class PendingBranch
 			while(vertexIterator.hasNext() == true)
 			{
 				PendingBlock vertex = vertexIterator.next();
+				if (vertex.getBlock() == null)
+					break;
+				
 				vertex.certificate();
 				this.context.getLedger().getLedgerStore().commit(vertex.getBlock());
 				committed.add(vertex);
@@ -556,7 +559,14 @@ public class PendingBranch
 					break;
 			}
 			
-			this.root = block.getHeader();
+			if (committed.isEmpty() == false)
+			{
+				if (committed.getLast().equals(block) == false)
+					blocksLog.warn(this.context.getName()+": Committed partial branch "+this.root+" -> "+committed.getLast().getHeader());
+
+				this.root = committed.getLast().getHeader();
+			}
+			
 			return committed;
 		}
 		finally

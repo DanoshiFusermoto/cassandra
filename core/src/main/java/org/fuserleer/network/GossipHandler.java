@@ -234,19 +234,6 @@ public class GossipHandler implements Service
 							}
 
 							required.addAll(inventoryProcessor.required(broadcastInvMessage.getType(),  broadcastInvMessage.getItems()));
-/*							for (Hash item : broadcastInvMessage.getItems())
-							{
-								
-								if (inventoryProcessor.required(broadcastInvMessage.getType(), item) == false)
-								{
-									if (gossipLog.hasLevel(Logging.DEBUG) == true)
-										gossipLog.debug(GossipHandler.this.context.getName()+": Broadcast inv item "+item+" of type "+broadcastInvMessage.getType()+" is not required from " + peer);
-
-									continue;
-								}
-
-								required.add(item);
-							}*/
 
 							synchronized(GossipHandler.this.itemsRequested)
 							{

@@ -742,7 +742,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 
 	final OperationStatus commit(final Block block) throws IOException
 	{
-	    Objects.requireNonNull(block);
+	    Objects.requireNonNull(block, "Block to commit is null");
 	    
 //    	if (block.getHash().equals(Universe.getDefault().getGenesis().getHash()) == false && block.getHeader().getCertificate() == null)
 //	    	throw new IllegalStateException(this.context.getName()+": Block "+block.getHash()+" does not have a certificate");

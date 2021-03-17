@@ -572,12 +572,14 @@ public class PendingBranch
 		}
 	}
 
-	private void lock(PendingBlock block) throws IOException, StateLockedException
+	private void lock(final PendingBlock block) throws IOException, StateLockedException
 	{
+		Objects.requireNonNull(block, "Pending block is null");
+		
 		this.lock.lock();
 		try
 		{
-			List<AtomCertificate> certificates = block.getCertificates();
+			final List<AtomCertificate> certificates = block.getCertificates();
 			for (AtomCertificate certificate : certificates)
 			{
 				try
@@ -594,7 +596,7 @@ public class PendingBranch
 				}
 			}
 
-			List<PendingAtom> pendingAtoms = block.getAtoms();
+			final List<PendingAtom> pendingAtoms = block.getAtoms();
 			for (PendingAtom pendingAtom : pendingAtoms)
 			{
 				try

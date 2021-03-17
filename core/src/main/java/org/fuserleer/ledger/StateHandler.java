@@ -99,7 +99,7 @@ public final class StateHandler implements Service
 	private final Cache<Hash, Optional<UInt256>> stateInputs = CacheBuilder.newBuilder().maximumSize(1<<18).build();
 	
 	// Sync cache
-	private final Multimap<Long, StateCertificate> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
+	private final Multimap<Long, Hash> stateCertificateSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
 	
 	// TODO clean this up, used to track responses (or lack of) for state provisioning requests to remote validators and trigger peer tasks
 	private final Set<Hash> outboundProvisionRequests = Collections.synchronizedSet(new HashSet<Hash>());
@@ -647,7 +647,7 @@ public final class StateHandler implements Service
 							long height = StateHandler.this.context.getLedger().getHead().getHeight();
 							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								StateHandler.this.syncCache.get(height).forEach(sc -> stateCertificateInventory.add(sc.getHash()));
+								stateCertificateInventory.addAll(StateHandler.this.stateCertificateSyncCache.get(height));
 								height--;
 							}
 							
@@ -772,7 +772,7 @@ public final class StateHandler implements Service
 				long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
 				long provisionShardGroup = ShardMapper.toShardGroup(sk.get(), numShardGroups);
 	        	if (provisionShardGroup != localShardGroup)
-	        		this.syncCache.put(this.context.getLedger().getHead().getHeight(), pendingAtom.getCertificate(sk));
+	        		this.stateCertificateSyncCache.put(this.context.getLedger().getHead().getHeight(), pendingAtom.getCertificate(sk).getHash());
 
 				StateHandler.this.states.remove(sk, pendingAtom);
 				StateHandler.this.outboundProvisionRequests.remove(Hash.from(sk.get(), pendingAtom.getHash()));
@@ -995,11 +995,11 @@ public final class StateHandler implements Service
 				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
 				if (trimTo > 0)
 				{
-					Iterator<Long> syncCacheKeyIterator = StateHandler.this.syncCache.keySet().iterator();
-					while(syncCacheKeyIterator.hasNext() == true)
+					Iterator<Long> stateCertificateSyncCacheKeyIterator = StateHandler.this.stateCertificateSyncCache.keySet().iterator();
+					while(stateCertificateSyncCacheKeyIterator.hasNext() == true)
 					{
-						if (syncCacheKeyIterator.next() < trimTo)
-							syncCacheKeyIterator.remove();
+						if (stateCertificateSyncCacheKeyIterator.next() < trimTo)
+							stateCertificateSyncCacheKeyIterator.remove();
 					}
 				}
 			}

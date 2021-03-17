@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -61,7 +62,8 @@ public class AtomHandler implements Service
 	private final MappedBlockingQueue<Hash, Atom> atomQueue;
 
 	// Sync cache
-	private final Multimap<Long, PendingAtom> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
+	private final Multimap<Long, Hash> atomSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
+	private final Multimap<Long, Hash> atomVoteSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
 	
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
@@ -250,12 +252,8 @@ public class AtomHandler implements Service
 							long height = AtomHandler.this.context.getLedger().getHead().getHeight();
 							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								AtomHandler.this.syncCache.get(height).forEach(pa -> {
-									pendingAtomInventory.add(pa.getHash());
-									
-									for (AtomVote atomVote : pa.votes())
-										atomVoteInventory.add(atomVote.getHash());
-								});
+								pendingAtomInventory.addAll(AtomHandler.this.atomSyncCache.get(height));
+								atomVoteInventory.addAll(AtomHandler.this.atomVoteSyncCache.get(height));
 								height--;
 							}
 							
@@ -381,7 +379,8 @@ public class AtomHandler implements Service
 		AtomHandler.this.lock.writeLock().lock();
 		try
 		{
-    		this.syncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom);
+    		this.atomSyncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.getHash());
+    		this.atomVoteSyncCache.putAll(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.votes().stream().map(av -> av.getHash()).collect(Collectors.toList()));
 			this.pendingAtoms.remove(pendingAtom.getHash());
 		}
 		finally
@@ -418,11 +417,18 @@ public class AtomHandler implements Service
 				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
 				if (trimTo > 0)
 				{
-					Iterator<Long> syncCacheKeyIterator = AtomHandler.this.syncCache.keySet().iterator();
-					while(syncCacheKeyIterator.hasNext() == true)
+					Iterator<Long> atomSyncCacheKeyIterator = AtomHandler.this.atomSyncCache.keySet().iterator();
+					while(atomSyncCacheKeyIterator.hasNext() == true)
 					{
-						if (syncCacheKeyIterator.next() < trimTo)
-							syncCacheKeyIterator.remove();
+						if (atomSyncCacheKeyIterator.next() < trimTo)
+							atomSyncCacheKeyIterator.remove();
+					}
+
+					Iterator<Long> atomVoteSyncCacheKeyIterator = AtomHandler.this.atomVoteSyncCache.keySet().iterator();
+					while(atomVoteSyncCacheKeyIterator.hasNext() == true)
+					{
+						if (atomVoteSyncCacheKeyIterator.next() < trimTo)
+							atomVoteSyncCacheKeyIterator.remove();
 					}
 				}
 			}

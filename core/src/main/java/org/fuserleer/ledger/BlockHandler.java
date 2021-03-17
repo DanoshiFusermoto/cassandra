@@ -119,6 +119,7 @@ public class BlockHandler implements Service
 						try
 						{
 							updateBlocks();
+							updateBranches();
 							BlockHandler.this.bestBranch = discoverBestBranch();
 							
 							if (BlockHandler.this.bestBranch != null)
@@ -157,7 +158,6 @@ public class BlockHandler implements Service
 								this.generatedCount++;
 								this.generatedTimeTotal += (Time.getSystemTime()-generationStart);
 								blocksLog.info(BlockHandler.this.context.getName()+": Generated block "+generatedBlock.getHeader()+" in "+(Time.getSystemTime()-generationStart)+"ms / "+(this.generatedTimeTotal/this.generatedCount)+" ms average");
-								updateBranches(generatedBlock);
 								BlockHandler.this.context.getNetwork().getGossipHandler().broadcast(generatedBlock.getHeader());
 							}
 
@@ -209,7 +209,7 @@ public class BlockHandler implements Service
 	private PendingBranch 						bestBranch;
 
 	// Sync cache
-	private final Multimap<Long, BlockVote> syncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
+	private final Multimap<Long, Hash> blockVoteSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
@@ -628,7 +628,7 @@ public class BlockHandler implements Service
 							height = BlockHandler.this.context.getLedger().getHead().getHeight();
 							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								BlockHandler.this.syncCache.get(height).forEach(bv -> blockVoteInventory.add(bv.getHash()));
+								blockVoteInventory.addAll(BlockHandler.this.blockVoteSyncCache.get(height));
 								height--;
 							}
 							
@@ -837,12 +837,15 @@ public class BlockHandler implements Service
 		return strongestBlock;
 	}
 	
-	private Collection<PendingBlock> commit(PendingBlock block, PendingBranch branch) throws IOException, StateLockedException
+	private Collection<PendingBlock> commit(final PendingBlock block, final PendingBranch branch) throws IOException, StateLockedException
 	{
+		Objects.requireNonNull(block, "Pending block is null");
+		Objects.requireNonNull(branch, "Pending branch is null");
+		
 		BlockHandler.this.lock.writeLock().lock();
 		try
 		{
-			LinkedList<PendingBlock> committedBlocks = branch.commit(block);
+			final LinkedList<PendingBlock> committedBlocks = branch.commit(block);
 			for (PendingBlock committedBlock : committedBlocks)
 				blocksLog.info(BlockHandler.this.context.getName()+": Committed block "+committedBlock.getHeader());
 
@@ -871,7 +874,7 @@ public class BlockHandler implements Service
 				if (pendingBlockEntry.getValue().getHeight() <= branchHeadHeight)
 				{
 					pendingBlocksIterator.remove();
-					this.syncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes());
+					this.blockVoteSyncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes().stream().map(bv -> bv.getHash()).collect(Collectors.toList()));
 				}
 			}
 
@@ -945,10 +948,7 @@ public class BlockHandler implements Service
 	
 						pendingBlock.constructBlock();
 						if (pendingBlock.getBlock() != null)
-						{
 							BlockHandler.this.context.getLedger().getLedgerStore().store(pendingBlock.getBlock());
-							updateBranches(pendingBlock);
-						}
 					}
 					catch (Exception e)
 					{
@@ -956,9 +956,6 @@ public class BlockHandler implements Service
 						pendingBlockIterator.remove();
 					}
 				}
-				// TODO updatebranches is called explicitly at present, maybe better to reenable this and allow the processing thread deal with it
-//				else if (pendingBlock.isUnbranched())
-//					updateBranches(pendingBlock);
 			}
 		}
 		finally
@@ -1065,7 +1062,25 @@ public class BlockHandler implements Service
 	}
 
 	@VisibleForTesting
-	void updateBranches(PendingBlock pendingBlock)
+	void updateBranches()
+	{
+		this.lock.writeLock().lock();
+		try
+		{
+			for (PendingBlock pendingBlock : this.pendingBlocks.values())
+			{
+				if (pendingBlock.getHeader() != null)
+					updateBranches(pendingBlock);
+			}
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+	
+	@VisibleForTesting
+	void updateBranches(final PendingBlock pendingBlock)
 	{
 		Objects.requireNonNull(pendingBlock, "Pending block is null");
 		if (pendingBlock.getHeader() == null)
@@ -1245,11 +1260,11 @@ public class BlockHandler implements Service
 				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
 				if (trimTo > 0)
 				{
-					Iterator<Long> syncCacheKeyIterator = BlockHandler.this.syncCache.keySet().iterator();
-					while(syncCacheKeyIterator.hasNext() == true)
+					Iterator<Long> blockVoteSyncCacheKeyIterator = BlockHandler.this.blockVoteSyncCache.keySet().iterator();
+					while(blockVoteSyncCacheKeyIterator.hasNext() == true)
 					{
-						if (syncCacheKeyIterator.next() < trimTo)
-							syncCacheKeyIterator.remove();
+						if (blockVoteSyncCacheKeyIterator.next() < trimTo)
+							blockVoteSyncCacheKeyIterator.remove();
 					}
 				}
 			}

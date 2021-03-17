@@ -32,6 +32,7 @@ import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.peers.ConnectedPeer;
@@ -493,18 +494,25 @@ public final class Ledger implements Service, LedgerInterface
 	private EventListener peerListener = new EventListener()
 	{
     	@Subscribe
-		public void on(PeerConnectedEvent event)
+		public void on(final PeerConnectedEvent event)
 		{
-/*    		try
+    		try
     		{
+    			long localShardGroup = ShardMapper.toShardGroup(Ledger.this.context.getNode().getIdentity(), Ledger.this.numShardGroups());
+    			long remoteShardGroup = ShardMapper.toShardGroup(event.getPeer().getNode().getIdentity(), Ledger.this.numShardGroups());
+    			if (localShardGroup != remoteShardGroup)
+    				return;
+    			
     			// TODO needs requesting on connect from synced nodes only
-    			if (event.getPeer().getProtocol().equals(Protocol.TCP) == true)
-    				Ledger.this.context.getNetwork().getMessaging().send(new GetAtomPoolInventoryMessage(), event.getPeer());
+    			if (Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
+    				return;
+    			
+   				Ledger.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(Ledger.this.getHead()), event.getPeer());
     		}
     		catch (IOException ioex)
     		{
-    			ledgerLog.error("Failed to request atom pool items from "+event.getPeer(), ioex);
-    		}*/
+    			ledgerLog.error(Ledger.this.context.getName()+": Failed to request sync connected items from "+event.getPeer(), ioex);
+    		}
 		}
 	};
 }

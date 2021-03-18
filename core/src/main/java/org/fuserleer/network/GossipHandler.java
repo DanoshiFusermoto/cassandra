@@ -88,11 +88,9 @@ public class GossipHandler implements Service
 			{
 				try
 				{
+					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.requestedItems.size()+" items of type "+this.requestType+" "+failedItemRequests);
 					if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
-					{
-						gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.requestedItems.size()+" items of type "+this.requestType+" "+failedItemRequests);
 						getPeer().disconnect("Did not respond fully to request of "+this.requestedItems.size()+" items of type "+this.requestType+" "+failedItemRequests);
-					}
 				}
 				catch (Throwable t)
 				{
@@ -108,6 +106,9 @@ public class GossipHandler implements Service
 					{
 						for (ConnectedPeer peer : GossipHandler.this.itemInventories.keySet())
 						{
+							if (peer.getState().equals(PeerState.CONNECTED) == false)
+								continue;
+							
 							if (GossipHandler.this.itemInventories.containsEntry(peer, item) == false)
 								continue;
 							
@@ -120,22 +121,22 @@ public class GossipHandler implements Service
 						gossipLog.fatal(GossipHandler.this.context.getName()+": Unable to re-request "+failedItemRequests.size()+" items of type "+this.requestType);
 						return;
 					}
-					
-					for (ConnectedPeer peer : rerequestItems.keySet())
-					{
-						try
-						{
-							GossipHandler.this.request(peer, rerequestItems.get(peer), this.requestType);
-						}
-						catch (IOException ioex)
-						{
-							gossipLog.fatal(GossipHandler.this.context.getName()+": Failed to re-request "+rerequestItems.get(peer)+" items of type "+this.requestType+" from "+peer, ioex);
-						}
-					}
 				}
 				finally
 				{
 					GossipHandler.this.lock.readLock().unlock();
+				}
+
+				for (ConnectedPeer peer : rerequestItems.keySet())
+				{
+					try
+					{
+						GossipHandler.this.request(peer, rerequestItems.get(peer), this.requestType);
+					}
+					catch (IOException ioex)
+					{
+						gossipLog.fatal(GossipHandler.this.context.getName()+": Failed to re-request "+rerequestItems.get(peer)+" items of type "+this.requestType+" from "+peer, ioex);
+					}
 				}
 			}
 		}
@@ -326,8 +327,6 @@ public class GossipHandler implements Service
 							if (gossipLog.hasLevel(Logging.DEBUG) == true)
 								gossipLog.debug(GossipHandler.this.context.getName()+": Broadcast inv type "+broadcastInvMessage.getType()+" containing "+broadcastInvMessage.getItems().size()+" items from " + peer);
 							
-							GossipHandler.this.itemInventories.putAll(peer, broadcastInvMessage.getItems());
-
 							List<Hash> toRequest = new ArrayList<Hash>();
 							List<Hash> required = new ArrayList<Hash>();
 							GossipInventory inventoryProcessor = GossipHandler.this.inventoryProcessors.get(broadcastInvMessage.getType());
@@ -347,7 +346,10 @@ public class GossipHandler implements Service
 							}
 								
 							if (toRequest.isEmpty() == false)
+							{
+								GossipHandler.this.itemInventories.putAll(peer, required);
 								GossipHandler.this.request(peer, toRequest, broadcastInvMessage.getType());
+							}
 						}
 						catch (Throwable t)
 						{

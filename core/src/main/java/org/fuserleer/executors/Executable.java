@@ -11,6 +11,7 @@ public abstract class Executable implements Runnable
 	private final AtomicReference<Future<?>> future = new AtomicReference<>();
 
 	private boolean terminated = false;
+	private boolean cancelled = false;
 	private boolean finished = false;
 	private CountDownLatch finishLatch;
 
@@ -22,32 +23,47 @@ public abstract class Executable implements Runnable
 			finish();
 	}
 
-	protected final boolean isTerminated()
+	public final boolean isTerminated()
 	{
 		return this.terminated;
 	}
 
-	protected final boolean isFinished()
+	public final boolean isCancelled()
+	{
+		return this.cancelled;
+	}
+
+	public final boolean isFinished()
 	{
 		return this.finished;
 	}
 
 	public abstract void execute();
 
+	public void cancelled()
+	{
+		
+	}
+
 	@Override
-	public final void run()
+	public final synchronized void run()
 	{
 		try
 		{
-			if (this.terminated)
+			if (this.cancelled == true)
+				throw new IllegalStateException("Executable "+this+" is cancelled");
+
+			if (this.terminated == true)
 				throw new IllegalStateException("Executable "+this+" is terminated");
 
 			this.finished = false;
 			this.finishLatch = new CountDownLatch(1);
 			execute();
 		}
+		// TODO check this isnt needed
 		catch (Throwable t)
 		{
+			// FIXME weird exception happens here on startup
 			Future<?> thisFuture = this.future.get();
 			if (thisFuture != null) {
 				thisFuture.cancel(false);
@@ -61,7 +77,34 @@ public abstract class Executable implements Runnable
 			this.finishLatch.countDown();
 		}
 	}
+	
+	public final synchronized boolean cancel()
+	{
+		try
+		{
+			if (this.cancelled == true)
+				throw new IllegalStateException("Executable "+this+" is cancelled");
 
+			if (this.terminated == true)
+				throw new IllegalStateException("Executable "+this+" is terminated");
+			
+			Future<?> thisFuture = this.future.get();
+			if (thisFuture != null)
+			{
+				if (thisFuture.cancel(false) == true)
+				{
+					cancelled();
+					return true;
+				}
+			}
+			
+			return false;
+		}
+		finally
+		{
+			this.cancelled = true;
+		}
+	}
 	public final long getID()
 	{
 		return this.id;

@@ -429,9 +429,9 @@ public class BlockHandler implements Service
 				{
 					if (OperationStatus.KEYEXIST.equals(BlockHandler.this.context.getLedger().getLedgerStore().store(blockVote)) == false)
 					{
-						// Can extract the height from the hash at its prefixed
-						long pendingBlockHeight = Longs.fromByteArray(blockVote.getBlock().toByteArray());
-						if (pendingBlockHeight > BlockHandler.this.context.getLedger().getHead().getHeight())
+						// If the block is already committed as state then just broadcast the vote
+						final StateAddress blockStateAddress = new StateAddress(Block.class, blockVote.getBlock());
+						if (BlockHandler.this.context.getLedger().getLedgerStore().search(blockStateAddress) == null)
 						{
 							BlockHandler.this.upsertBlock(blockVote.getBlock());
 							PendingBlock pendingBlock = BlockHandler.this.getBlock(blockVote.getBlock());
@@ -443,10 +443,10 @@ public class BlockHandler implements Service
 		
 								// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
 								pendingBlock.vote(blockVote, BlockHandler.this.votePowerHandler.getVotePower(Math.max(0, pendingBlock.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), blockVote.getOwner()));
-								
-								BlockHandler.this.context.getNetwork().getGossipHandler().broadcast(blockVote);
 							}
 						}
+
+						BlockHandler.this.context.getNetwork().getGossipHandler().broadcast(blockVote);
 					}
 					else
 						blocksLog.warn(BlockHandler.this.context.getName()+": Received already seen block vote "+blockVote.getBlock()+" for "+blockVote.getOwner());
@@ -1114,24 +1114,12 @@ public class BlockHandler implements Service
 
 			if (branch.getLast().getHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == false)
 			{
-				blocksLog.warn(BlockHandler.this.context.getName()+": Branch for pending block "+pendingBlock.getHeader()+" does not terminate at ledger head "+this.context.getLedger().getHead().getHash()+" but at "+branch.getFirst().getHeader());
+				if (blocksLog.hasLevel(Logging.DEBUG) == true)
+					blocksLog.debug(BlockHandler.this.context.getName()+": Branch for pending block "+pendingBlock.getHeader()+" does not terminate at ledger head "+this.context.getLedger().getHead().getHash()+" but at "+branch.getFirst().getHeader());
+				
 				return;
 			}
 
-/*			LinkedList<PendingBlock> branchWithBlocks = new LinkedList<PendingBlock>();
-			Iterator<PendingBlock> branchIterator = branch.descendingIterator();
-			while(branchIterator.hasNext() == true)
-			{
-				PendingBlock block = branchIterator.next();
-				if (block.getBlock() != null)
-					branchWithBlocks.add(block);
-				else
-					break;
-			}
-			
-			if (branchWithBlocks.isEmpty() == true)
-				return;*/
-			
 			if (branch.isEmpty() == true)
 				return;
 			
@@ -1221,7 +1209,7 @@ public class BlockHandler implements Service
 				}
 			}
 
-			// Have one or more committable branches.  Select the branch with the lowest committable block.
+			// Have one or more committable branches.  Select the branch with the highest committable block.
 			// TODO verify this can not be gamed!
 			if (committable.isEmpty() == false)
 			{
@@ -1232,7 +1220,7 @@ public class BlockHandler implements Service
 				for (Entry<PendingBlock, PendingBranch> c : committable.entrySet())
 				{
 					// TODO need a lower probability tiebreaker here
-					if (bestBlock == null || c.getKey().getHeight() < bestBlock.getHeight() || 
+					if (bestBlock == null || c.getKey().getHeight() > bestBlock.getHeight() || 
 						(c.getKey().getHeight() == bestBlock.getHeight() && c.getKey().getHeader().getAverageStep() < bestBlock.getHeader().getAverageStep()))
 					{
 						bestBlock = c.getKey();

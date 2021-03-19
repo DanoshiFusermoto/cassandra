@@ -4,7 +4,7 @@ import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.SerializerId2;
 
-@SerializerId2("ledger.vote.atom.pool")
+@SerializerId2("ledger.atom.vote")
 public final class AtomVote extends Vote<Hash>
 {
 	@SuppressWarnings("unused")

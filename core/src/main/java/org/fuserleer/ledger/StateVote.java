@@ -13,7 +13,7 @@ import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.vote.state")
+@SerializerId2("ledger.state.vote")
 public final class StateVote extends Vote<StateKey<?, ?>>
 {
 	@JsonProperty("block")

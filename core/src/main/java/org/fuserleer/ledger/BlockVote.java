@@ -10,8 +10,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-// FIXME needs to be a Hash, not block header, then use the inventory mechanism to fetch the block header if missing locally
-@SerializerId2("ledger.vote.block")
+@SerializerId2("ledger.block.vote")
 public final class BlockVote extends Vote<Hash>
 {
 	@JsonProperty("clock")

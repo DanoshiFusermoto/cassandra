@@ -25,7 +25,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
-@SerializerId2("ledger.atoms.certificate")
+@SerializerId2("ledger.atom.certificate")
 public final class AtomCertificate extends Certificate
 {
 	@JsonProperty("atom")

@@ -21,7 +21,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.primitives.Longs;
 
-@SerializerId2("ledger.atoms.state.certificate")
+@SerializerId2("ledger.state.certificate")
 public final class StateCertificate extends Certificate
 {
 	@JsonProperty("block")

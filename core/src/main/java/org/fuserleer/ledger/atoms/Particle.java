@@ -20,7 +20,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 
-@SerializerId2("ledger.atoms.particle")
+@SerializerId2("ledger.particle")
 public abstract class Particle extends BasicObject implements Primitive, StateExecutable
 {
 	public enum Spin

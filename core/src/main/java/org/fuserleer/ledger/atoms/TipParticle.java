@@ -17,7 +17,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.tip")
+@SerializerId2("ledger.particle.tip")
 public final class TipParticle extends SignedParticle
 {
 	@JsonProperty("tipping")

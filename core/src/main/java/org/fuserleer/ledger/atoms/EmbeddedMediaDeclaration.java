@@ -13,7 +13,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.media.embedded")
+@SerializerId2("ledger.particle.media.embedded")
 public final class EmbeddedMediaDeclaration extends MediaDeclaration
 {
 	public static int MAX_DATA_SIZE = 1<<20; // 1MB :-)

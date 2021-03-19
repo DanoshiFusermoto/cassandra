@@ -14,7 +14,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.message")
+@SerializerId2("ledger.particle.message")
 public class MessageParticle extends SignedParticle
 {
 	public static int MAX_SUBJECT_LENGTH = 64;

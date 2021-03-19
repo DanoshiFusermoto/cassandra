@@ -17,7 +17,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.transfer")
+@SerializerId2("ledger.particle.transfer")
 public final class TransferParticle extends SignedParticle 
 {
 	@JsonProperty("quantity")

@@ -12,7 +12,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.media.remote")
+@SerializerId2("ledger.particle.media.remote")
 public final class RemoteMediaDeclaration extends MediaDeclaration 
 {
 	public static int MAX_URL_LENGTH = 256;

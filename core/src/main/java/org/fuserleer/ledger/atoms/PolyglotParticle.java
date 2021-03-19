@@ -30,7 +30,7 @@ import org.fuserleer.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 
-@SerializerId2("ledger.atoms.particle.polyglot")
+@SerializerId2("ledger.particle.polyglot")
 public final class PolyglotParticle extends Particle
 {
 	public final static int MAX_CODE_SIZE = 65535;

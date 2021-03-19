@@ -16,7 +16,7 @@ import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.unique")
+@SerializerId2("ledger.particle.unique")
 public final class UniqueParticle extends SignedParticle
 {
 	@JsonProperty("value")

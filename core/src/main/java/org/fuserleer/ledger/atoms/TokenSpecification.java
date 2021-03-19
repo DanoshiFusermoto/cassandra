@@ -18,7 +18,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.atoms.particles.token")
+@SerializerId2("ledger.particle.token")
 public final class TokenSpecification extends SignedParticle 
 {
 	public static int MAX_ISO_LENGTH = 8;

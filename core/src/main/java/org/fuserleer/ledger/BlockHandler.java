@@ -60,7 +60,6 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
-import com.google.common.primitives.Longs;
 import com.sleepycat.je.OperationStatus;
 
 public class BlockHandler implements Service
@@ -1106,7 +1105,7 @@ public class BlockHandler implements Service
 					break;
 				
 				PendingBlock previous = this.pendingBlocks.get(current.getHeader().getPrevious());
-				if (previous != null && previous.getHeader() != null)
+				if (previous != null && previous.getHeader() != null && previous.getBlock() != null)
 					current = previous;
 				else
 					current = null;

@@ -21,10 +21,12 @@ import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.events.EventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
@@ -34,12 +36,14 @@ import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
+import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.serialization.Serialization;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Multimaps;
+import com.google.common.eventbus.Subscribe;
 
 public class GossipHandler implements Service
 {
@@ -47,15 +51,17 @@ public class GossipHandler implements Service
 
 	private final class GossipPeerTask extends PeerTask 
 	{
-		final Class<? extends Primitive> requestType;
-		final Map<Hash, Long> requestedItems;
+		final Class<? extends Primitive> type;
+		final Map<Hash, Long> items;
+		final boolean rerequest;
 		
-		GossipPeerTask(ConnectedPeer peer, Map<Hash, Long> requestedItems, Class<? extends Primitive> requestType)
+		GossipPeerTask(final ConnectedPeer peer, final Map<Hash, Long> items, final Class<? extends Primitive> type, final boolean rerequest)
 		{
 			super(peer, 10, TimeUnit.SECONDS);
 			
-			this.requestType = requestType;
-			this.requestedItems = new HashMap<Hash, Long>(requestedItems);
+			this.type = type;
+			this.items = new HashMap<Hash, Long>(items);
+			this.rerequest = rerequest;
 		}
 		
 		@Override
@@ -66,15 +72,15 @@ public class GossipHandler implements Service
 			GossipHandler.this.lock.writeLock().lock();
 			try
 			{
-				for (Entry<Hash, Long> requestedItem : this.requestedItems.entrySet())
+				GossipHandler.this.requestTasks.remove(getPeer(), this);
+				
+				for (Entry<Hash, Long> requestedItem : this.items.entrySet())
 				{
-					if (GossipHandler.this.itemsRequested.containsKey(requestedItem.getKey()) == true)
+					if (GossipHandler.this.itemsRequested.containsKey(requestedItem.getKey()) == true && 
+						GossipHandler.this.itemsRequested.get(requestedItem.getKey()) == requestedItem.getValue())
 					{
-						if (GossipHandler.this.itemsRequested.get(requestedItem.getKey()) == requestedItem.getValue())
-						{
-							GossipHandler.this.itemsRequested.remove(requestedItem.getKey());
-							failedItemRequests.add(requestedItem.getKey());
-						}
+						GossipHandler.this.itemsRequested.remove(requestedItem.getKey());
+						failedItemRequests.add(requestedItem.getKey());
 					}
 				}
 			}
@@ -88,57 +94,67 @@ public class GossipHandler implements Service
 			{
 				try
 				{
-					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.requestedItems.size()+" items of type "+this.requestType+" "+failedItemRequests);
-					if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
-						getPeer().disconnect("Did not respond fully to request of "+this.requestedItems.size()+" items of type "+this.requestType+" "+failedItemRequests);
+					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
+					if (this.rerequest == false && (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING)))
+						getPeer().disconnect("Did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
 				}
 				catch (Throwable t)
 				{
 					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer(), t);
 				}
 				
-				// Build the re-requests
-				Multimap<ConnectedPeer, Hash> rerequestItems = HashMultimap.create();
-				GossipHandler.this.lock.readLock().lock();
-				try
+				if (this.rerequest == false)
+					rerequest(failedItemRequests, this.type);
+			}
+		}
+
+		@Override
+		public void cancelled()
+		{
+			GossipHandler.this.lock.writeLock().lock();
+			try
+			{
+				GossipHandler.this.requestTasks.remove(getPeer(), this);
+				
+				List<Hash> failedItemRequests = new ArrayList<Hash>();
+				for (Entry<Hash, Long> item : this.items.entrySet())
 				{
-					for (Hash item : failedItemRequests)
-					{
-						for (ConnectedPeer peer : GossipHandler.this.itemInventories.keySet())
-						{
-							if (peer.getState().equals(PeerState.CONNECTED) == false)
-								continue;
-							
-							if (GossipHandler.this.itemInventories.containsEntry(peer, item) == false)
-								continue;
-							
-							rerequestItems.put(peer, item);
-						}
-					}
-					
-					if (rerequestItems.isEmpty() == true)
-					{
-						gossipLog.fatal(GossipHandler.this.context.getName()+": Unable to re-request "+failedItemRequests.size()+" items of type "+this.requestType);
-						return;
-					}
-				}
-				finally
-				{
-					GossipHandler.this.lock.readLock().unlock();
+					if (GossipHandler.this.itemsRequested.containsKey(item.getKey()) == true && 
+						GossipHandler.this.itemsRequested.get(item.getKey()) == item.getValue())
+						failedItemRequests.add(item.getKey());
 				}
 
-				for (ConnectedPeer peer : rerequestItems.keySet())
+				for (Entry<Hash, Long> requestedItem : this.items.entrySet())
+					GossipHandler.this.itemsRequested.remove(requestedItem.getKey(), requestedItem.getValue());
+				
+				if (failedItemRequests.isEmpty() == false && this.rerequest == false)
+					rerequest(failedItemRequests, this.type);
+			}
+			finally
+			{
+				GossipHandler.this.lock.writeLock().unlock();
+			}
+		}
+		
+		private void rerequest(final Collection<Hash> items, final Class<? extends Primitive> type)
+		{
+			// Build the re-requests
+			long rerequestShardGroup = ShardMapper.toShardGroup(getPeer().getNode().getIdentity(), GossipHandler.this.context.getLedger().numShardGroups());
+			List<ConnectedPeer> rerequestConnectedPeers = GossipHandler.this.context.getNetwork().get(StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(rerequestShardGroup));
+			if (rerequestConnectedPeers.isEmpty() == false)
+			{
+				ConnectedPeer rerequestPeer = rerequestConnectedPeers.get(0);
+				try
 				{
-					try
-					{
-						GossipHandler.this.request(peer, rerequestItems.get(peer), this.requestType);
-					}
-					catch (IOException ioex)
-					{
-						gossipLog.fatal(GossipHandler.this.context.getName()+": Failed to re-request "+rerequestItems.get(peer)+" items of type "+this.requestType+" from "+peer, ioex);
-					}
+					GossipHandler.this.request(rerequestPeer, items, this.type, true);
+				}
+				catch (IOException ioex)
+				{
+					gossipLog.error(GossipHandler.this.context.getName()+": Failed to re-request "+items+" items of type "+this.type+" from "+rerequestPeer, ioex);
 				}
 			}
+			else
+				gossipLog.error(GossipHandler.this.context.getName()+": Unable to re-request "+items.size()+" items of type "+this.type);
 		}
 	}
 		
@@ -180,8 +196,9 @@ public class GossipHandler implements Service
 
 	private final Semaphore queued = new Semaphore(0);
 	private final Map<Hash, Long> itemsRequested = Collections.synchronizedMap(new HashMap<Hash, Long>());
+	private final Multimap<ConnectedPeer, GossipPeerTask> requestTasks = Multimaps.synchronizedMultimap(HashMultimap.create());
 	private final Multimap<ConnectedPeer, Hash> itemInventories = Multimaps.synchronizedMultimap(HashMultimap.create());
-	
+
 	private final Multimap<Class<? extends Primitive>, Broadcast> toBroadcast = Multimaps.synchronizedMultimap(HashMultimap.create());
 	private final Map<Class<? extends Primitive>, GossipFilter> broadcastFilters = Collections.synchronizedMap(new HashMap<>());
 	private final Map<Class<? extends Primitive>, GossipInventory> inventoryProcessors = Collections.synchronizedMap(new HashMap<>());
@@ -296,8 +313,8 @@ public class GossipHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 
-//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
+		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -337,18 +354,20 @@ public class GossipHandler implements Service
 							}
 
 							required.addAll(inventoryProcessor.required(broadcastInvMessage.getType(),  broadcastInvMessage.getItems()));
-							for (Hash item : required)
-							{
-								if (GossipHandler.this.itemsRequested.containsKey(item) == true)
-									continue;
-
-								toRequest.add(item);
-							}
-								
-							if (toRequest.isEmpty() == false)
+							if (required.isEmpty() == false)
 							{
 								GossipHandler.this.itemInventories.putAll(peer, required);
-								GossipHandler.this.request(peer, toRequest, broadcastInvMessage.getType());
+
+								for (Hash item : required)
+								{
+									if (GossipHandler.this.itemsRequested.containsKey(item) == true)
+										continue;
+	
+									toRequest.add(item);
+								}
+								
+								if (toRequest.isEmpty() == false)
+									GossipHandler.this.request(peer, toRequest, broadcastInvMessage.getType(), false);
 							}
 						}
 						catch (Throwable t)
@@ -468,6 +487,8 @@ public class GossipHandler implements Service
 			}
 		});
 
+		this.context.getEvents().register(this.peerListener);
+
 		Thread broadcastProcessorThread = new Thread(this.broadcastProcessor);
 		broadcastProcessorThread.setDaemon(true);
 		broadcastProcessorThread.setName(this.context.getName()+" Broadcast Processor");
@@ -478,6 +499,7 @@ public class GossipHandler implements Service
 	public void stop() throws TerminationException
 	{
 		this.broadcastProcessor.terminate(true);
+		this.context.getEvents().unregister(this.peerListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 	
@@ -568,7 +590,7 @@ public class GossipHandler implements Service
 		this.queued.release();
 	}
 
-	private Collection<Hash> request(final ConnectedPeer peer, final Collection<Hash> items, final Class<? extends Primitive> type) throws IOException
+	private Collection<Hash> request(final ConnectedPeer peer, final Collection<Hash> items, final Class<? extends Primitive> type, final boolean rerequest) throws IOException
 	{
 		final List<Hash> itemsPending = new ArrayList<Hash>();
 		final Map<Hash, Long> itemsToRequest = new HashMap<Hash, Long>();
@@ -597,6 +619,7 @@ public class GossipHandler implements Service
 			
 			if (itemsToRequest.isEmpty() == false)
 			{
+				GossipPeerTask gossipPeerTask = null;
 				try
 				{
 					this.itemsRequested.putAll(itemsToRequest);
@@ -611,13 +634,21 @@ public class GossipHandler implements Service
 					GetInventoryItemsMessage getInventoryItemsMessage = new GetInventoryItemsMessage(itemsToRequest.keySet(), type); 
 					this.context.getNetwork().getMessaging().send(getInventoryItemsMessage, peer);
 					
-					Executor.getInstance().schedule(new GossipPeerTask(peer, itemsToRequest, type));
+					gossipPeerTask = new GossipPeerTask(peer, itemsToRequest, type, rerequest);
+					this.requestTasks.put(peer, gossipPeerTask);
+					Executor.getInstance().schedule(gossipPeerTask);
 					
 					if (gossipLog.hasLevel(Logging.DEBUG))
 						gossipLog.debug(GossipHandler.this.context.getName()+": Requesting "+getInventoryItemsMessage.getItems().size()+" items of type "+getInventoryItemsMessage.getType()+" from "+peer);
 				}
 				catch (Throwable t)
 				{
+					if (gossipPeerTask != null)
+					{
+						if (gossipPeerTask.cancel() == true)
+							this.requestTasks.remove(peer, gossipPeerTask);
+					}
+					
 					for (Hash itemToRequest : itemsToRequest.keySet())
 						this.itemsRequested.remove(itemToRequest);
 					
@@ -649,4 +680,42 @@ public class GossipHandler implements Service
 			GossipHandler.this.lock.writeLock().unlock();
 		}
 	}
+	
+	// PEER LISTENER //
+	private EventListener peerListener = new EventListener()
+	{
+    	@Subscribe
+		public void on(final PeerDisconnectedEvent event)
+		{
+   			GossipHandler.this.lock.writeLock().lock();
+    		try
+    		{
+    			GossipHandler.this.itemInventories.removeAll(event.getPeer());
+    			if (GossipHandler.this.requestTasks.containsKey(event.getPeer()) == false)
+    				return;
+    			
+    			Collection<GossipPeerTask> requestTasks = new ArrayList<GossipPeerTask>(GossipHandler.this.requestTasks.get(event.getPeer()));
+    			for (GossipPeerTask task : requestTasks)
+    			{
+    				try
+    				{
+    					if (task.isFinished() == false && task.isCancelled() == false)
+    						task.cancel();
+
+    					gossipLog.info(GossipHandler.this.context.getName()+": Cancelled gossip task of "+task.items.keySet()+" of type "+task.type+" from "+event.getPeer());
+    				}
+    	    		catch (Throwable t)
+    	    		{
+    	    			gossipLog.error(GossipHandler.this.context.getName()+": Failed to cancel gossip task of "+task.items.keySet()+" of type "+task.type+" from "+event.getPeer());
+    	    		}
+    			}
+    			
+    			GossipHandler.this.requestTasks.removeAll(event.getPeer());
+    		}
+    		finally
+    		{
+    			GossipHandler.this.lock.writeLock().unlock();
+    		}
+		}
+	};
 }

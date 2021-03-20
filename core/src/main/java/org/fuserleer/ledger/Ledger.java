@@ -296,27 +296,15 @@ public final class Ledger implements Service, LedgerInterface
 			// TODO need to deal with forks that don't converge with local chain due to safety break
 			if (this.context.getNode().isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), OOSTrigger)) == true)
 			{
-				this.context.getNode().setSynced(false);
+				this.syncHandler.setSynced(false);
 				ledgerLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+OOSTrigger);
 			}
-			else if (this.context.getNode().isSynced() == false)
+			else if (this.context.getNode().isSynced() == false && this.syncHandler.isSynced() == true)
 			{
-				ConnectedPeer strongestPeer = null;
-				for (ConnectedPeer syncPeer : syncPeers)
-				{
-					if (strongestPeer == null || syncPeer.getNode().getHead().getHeight() > strongestPeer.getNode().getHead().getHeight())
-						strongestPeer = syncPeer;
-				}
-				
-				if (strongestPeer != null && 
-					(strongestPeer.getNode().isInSyncWith(this.context.getNode(), 0) == true || this.context.getNode().isAheadOf(strongestPeer.getNode(), 0) == true))
-				{
-					ledgerLog.info(this.context.getName()+": Synced state reaquired");
-					this.context.getNode().setSynced(true);
-				}
-			}
+				ledgerLog.info(this.context.getName()+": Synced state reaquired");
+			}				
 		}
-
+		
 		return this.context.getNode().isSynced();
 	}
 	
@@ -503,8 +491,7 @@ public final class Ledger implements Service, LedgerInterface
     			if (localShardGroup != remoteShardGroup)
     				return;
     			
-    			// TODO needs requesting on connect from synced nodes only
-    			if (Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
+    			if (Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_RESOLVED_LIMIT) == false)
     				return;
     			
    				Ledger.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(Ledger.this.getHead()), event.getPeer());

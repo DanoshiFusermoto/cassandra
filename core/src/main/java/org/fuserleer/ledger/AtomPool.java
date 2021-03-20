@@ -31,11 +31,10 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
-import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
-import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.GossipFetcher;
@@ -302,6 +301,7 @@ public final class AtomPool implements Service
 		voteProcessorThread.setName(this.context.getName()+" Atom Vote Processor");
 		voteProcessorThread.start();
 		
+		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.atomEventListener);
 	}
 
@@ -309,6 +309,7 @@ public final class AtomPool implements Service
 	public void stop() throws TerminationException
 	{
 		this.voteProcessor.terminate(true);
+		this.context.getEvents().unregister(this.syncChangeListener);
 		this.context.getEvents().unregister(this.atomEventListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
@@ -752,6 +753,33 @@ public final class AtomPool implements Service
 		}
 	};
 
+	// SYNC CHANGE LISTENER //
+	private SynchronousEventListener syncChangeListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final SyncStatusChangeEvent event) 
+		{
+			if (event.isSynced() == true)
+				return;
+			
+			AtomPool.this.lock.writeLock().lock();
+			try
+			{
+				atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to false, flushing atom pool");
+				AtomPool.this.buckets.clear();
+				AtomPool.this.pending.clear();
+				AtomPool.this.states.clear();
+				AtomPool.this.votesToCastQueue.clear();
+				AtomPool.this.votesToCountQueue.clear();
+				AtomPool.this.voteProcessorSemaphore.drainPermits();
+			}
+			finally
+			{
+				AtomPool.this.lock.writeLock().unlock();
+			}
+		}
+	};
+	
 	public Map<Integer, Integer> distribution()
 	{
 		this.lock.readLock().lock();

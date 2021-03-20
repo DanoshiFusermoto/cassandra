@@ -35,6 +35,7 @@ import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
+import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -149,7 +150,7 @@ public class AtomHandler implements Service
 		}
 	};
 	
-	AtomHandler(Context context)
+	AtomHandler(final Context context)
 	{
 		this.context = Objects.requireNonNull(context);
 		this.atomQueue = new MappedBlockingQueue<Hash, Atom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
@@ -171,7 +172,7 @@ public class AtomHandler implements Service
 		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipInventory() 
 		{
 			@Override
-			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
+			public Collection<Hash> required(final Class<? extends Primitive> type, final Collection<Hash> items) throws IOException
 			{
 				Set<Hash> required = new HashSet<Hash>();
 				for (Hash item : items)
@@ -189,7 +190,7 @@ public class AtomHandler implements Service
 		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipReceiver() 
 		{
 			@Override
-			public void receive(Primitive object) throws InterruptedException
+			public void receive(final Primitive object) throws InterruptedException
 			{
 				AtomHandler.this.submit((Atom) object);
 			}
@@ -198,7 +199,7 @@ public class AtomHandler implements Service
 		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipFetcher() 
 		{
 			@Override
-			public Collection<Atom> fetch(Collection<Hash> items) throws IOException
+			public Collection<Atom> fetch(final Collection<Hash> items) throws IOException
 			{
 				Set<Atom> fetched = new HashSet<Atom>();
 				for (Hash item : items)
@@ -258,7 +259,7 @@ public class AtomHandler implements Service
 							}
 							
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+pendingAtomInventory.size()+" pool atoms to "+peer);
+								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting "+pendingAtomInventory.size()+" / "+pendingAtomInventory+" pool atoms to "+peer);
 
 							int offset = 0;
 							while(offset < pendingAtomInventory.size())
@@ -269,7 +270,7 @@ public class AtomHandler implements Service
 							}
 
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting about "+atomVoteInventory.size()+" pool atom votes to "+peer);
+								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting "+atomVoteInventory.size()+" / "+atomVoteInventory+" pool atom votes to "+peer);
 
 							offset = 0;
 							while(offset < atomVoteInventory.size())
@@ -292,7 +293,7 @@ public class AtomHandler implements Service
 			}
 		});
 
-
+		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.syncAtomListener);
 		this.context.getEvents().register(this.asyncBlockListener);
 
@@ -309,6 +310,7 @@ public class AtomHandler implements Service
 
 		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
+		this.context.getEvents().unregister(this.syncChangeListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 	
@@ -473,6 +475,29 @@ public class AtomHandler implements Service
 				return;
 				
 			remove(event.getPendingAtom());
+		}
+	};
+	
+	// SYNC CHANGE LISTENER //
+	private SynchronousEventListener syncChangeListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final SyncStatusChangeEvent event) 
+		{
+			if (event.isSynced() == true)
+				return;
+			
+			AtomHandler.this.lock.writeLock().lock();
+			try
+			{
+				atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to false, flushing atom handler");
+				AtomHandler.this.atomQueue.clear();
+				AtomHandler.this.pendingAtoms.clear();
+			}
+			finally
+			{
+				AtomHandler.this.lock.writeLock().unlock();
+			}
 		}
 	};
 }

@@ -47,6 +47,7 @@ import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
+import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.GetStateMessage;
 import org.fuserleer.ledger.messages.StateMessage;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
@@ -187,6 +188,8 @@ public final class StateHandler implements Service
 													{
 														if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
 															cerbyLog.error(StateHandler.this.context.getName()+": "+getPeer()+" did not respond to request for state "+request.getKey()+" in atom "+request.getAtom());
+														
+														// TODO retrys
 													}
 												}
 											});
@@ -675,6 +678,7 @@ public final class StateHandler implements Service
 			}
 		});
 		
+		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.syncBlockListener);
 		this.context.getEvents().register(this.asyncBlockListener);
 		this.context.getEvents().register(this.syncAtomListener);
@@ -701,6 +705,7 @@ public final class StateHandler implements Service
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
+		this.context.getEvents().unregister(this.syncChangeListener);
 		
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
@@ -1149,6 +1154,33 @@ public final class StateHandler implements Service
 					cerbyLog.error(StateHandler.class.getName()+": Processing of atom timeouts failed", ex);
 					return;
 				}
+			}
+			finally
+			{
+				StateHandler.this.lock.writeLock().unlock();
+			}
+		}
+	};
+	
+	// SYNC CHANGE LISTENER //
+	private SynchronousEventListener syncChangeListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final SyncStatusChangeEvent event) 
+		{
+			if (event.isSynced() == true)
+				return;
+			
+			StateHandler.this.lock.writeLock().lock();
+			try
+			{
+				stateLog.info(StateHandler.this.context.getName()+": Sync status changed to false, flushing state handler");
+				StateHandler.this.atoms.clear();
+				StateHandler.this.executionQueue.clear();
+				StateHandler.this.provisionQueue.clear();
+				StateHandler.this.provisionResponses.clear();
+				StateHandler.this.stateInputs.invalidateAll();
+				StateHandler.this.states.clear();
 			}
 			finally
 			{

@@ -46,6 +46,7 @@ import org.fuserleer.ledger.events.AtomExecutedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
+import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -643,6 +644,7 @@ public final class StatePool implements Service
 			}
 		});
 
+		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.asyncBlockListener);
 		this.context.getEvents().register(this.syncAtomListener);
 		
@@ -658,6 +660,8 @@ public final class StatePool implements Service
 		this.voteProcessor.terminate(true);
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.asyncBlockListener);
+		this.context.getEvents().unregister(this.syncChangeListener);
+		
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 
@@ -893,6 +897,31 @@ public final class StatePool implements Service
 				return;
 				
 			aborted(event.getPendingAtom());
+		}
+	};
+	
+	// SYNC CHANGE LISTENER //
+	private SynchronousEventListener syncChangeListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final SyncStatusChangeEvent event) 
+		{
+			if (event.isSynced() == true)
+				return;
+			
+			StatePool.this.lock.writeLock().lock();
+			try
+			{
+				statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to false, flushing state pool");
+				StatePool.this.voteProcessorSemaphore.drainPermits();
+				StatePool.this.states.clear();
+				StatePool.this.votesToCastQueue.clear();
+				StatePool.this.votesToCountQueue.clear();
+			}
+			finally
+			{
+				StatePool.this.lock.writeLock().unlock();
+			}
 		}
 	};
 }

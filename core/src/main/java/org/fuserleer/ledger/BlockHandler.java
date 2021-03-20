@@ -28,6 +28,7 @@ import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.events.EventListener;
+import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
@@ -38,6 +39,7 @@ import org.fuserleer.ledger.PendingBranch.Type;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
+import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.BlockMessage;
 import org.fuserleer.ledger.messages.GetBlockMessage;
 import org.fuserleer.ledger.messages.GetBlocksMessage;
@@ -663,6 +665,7 @@ public class BlockHandler implements Service
 			}
 		});
 
+		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.asyncBlockListener);
 
 		Thread blockProcessorThread = new Thread(this.blockProcessor);
@@ -676,6 +679,7 @@ public class BlockHandler implements Service
 	{
 		this.blockProcessor.terminate(true);
 		this.context.getEvents().unregister(this.asyncBlockListener);
+		this.context.getEvents().unregister(this.syncChangeListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 		
 		this.blockRegulator.stop();
@@ -1267,6 +1271,30 @@ public class BlockHandler implements Service
 							blockVoteSyncCacheKeyIterator.remove();
 					}
 				}
+			}
+			finally
+			{
+				BlockHandler.this.lock.writeLock().unlock();
+			}
+		}
+	};
+	
+	// SYNC CHANGE LISTENER //
+	private SynchronousEventListener syncChangeListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final SyncStatusChangeEvent event) 
+		{
+			if (event.isSynced() == true)
+				return;
+			
+			BlockHandler.this.lock.writeLock().lock();
+			try
+			{
+				blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to false, flushing block handler");
+				BlockHandler.this.bestBranch = null;
+				BlockHandler.this.pendingBlocks.clear();
+				BlockHandler.this.pendingBranches.clear();
 			}
 			finally
 			{

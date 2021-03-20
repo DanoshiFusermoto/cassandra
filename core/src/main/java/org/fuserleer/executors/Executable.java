@@ -3,39 +3,44 @@ package org.fuserleer.executors;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public abstract class Executable implements Runnable
 {
 	private final long id = System.nanoTime();
 	private final AtomicReference<Future<?>> future = new AtomicReference<>();
+	private final AtomicBoolean terminated = new AtomicBoolean(false);
+	private final AtomicBoolean cancelled =  new AtomicBoolean(false);
+	private final AtomicBoolean finished =  new AtomicBoolean(false);
 
-	private boolean terminated = false;
-	private boolean cancelled = false;
-	private boolean finished = false;
 	private CountDownLatch finishLatch;
 
 	public final void terminate(boolean finish)
 	{
-		this.terminated = true;
-		Future<?> thisFuture = this.future.get();
-		if (thisFuture != null && thisFuture.cancel(false) == false && finish)
-			finish();
+		if (this.terminated.compareAndSet(false, true) == true)
+		{
+			Future<?> thisFuture = this.future.get();
+			if (thisFuture != null && thisFuture.cancel(false) == false && finish)
+				finish();
+		}
+		else
+			throw new IllegalStateException("Executable "+this+" is terminated");
 	}
 
 	public final boolean isTerminated()
 	{
-		return this.terminated;
+		return this.terminated.get();
 	}
 
 	public final boolean isCancelled()
 	{
-		return this.cancelled;
+		return this.cancelled.get();
 	}
 
 	public final boolean isFinished()
 	{
-		return this.finished;
+		return this.finished.get();
 	}
 
 	public abstract void execute();
@@ -46,52 +51,45 @@ public abstract class Executable implements Runnable
 	}
 
 	@Override
-	public final synchronized void run()
+	public final void run()
 	{
 		try
 		{
-			if (this.cancelled == true)
-				throw new IllegalStateException("Executable "+this+" is cancelled");
+			if (this.cancelled.get() == false)
+			{
+				if (this.terminated.get() == true)
+					throw new IllegalStateException("Executable "+this+" is terminated");
 
-			if (this.terminated == true)
-				throw new IllegalStateException("Executable "+this+" is terminated");
-
-			this.finished = false;
-			this.finishLatch = new CountDownLatch(1);
-			execute();
+				this.finished.set(false);
+				this.finishLatch = new CountDownLatch(1);
+				execute();
+			}
 		}
 		// TODO check this isnt needed
 		catch (Throwable t)
 		{
 			// FIXME weird exception happens here on startup
 			Future<?> thisFuture = this.future.get();
-			if (thisFuture != null) {
+			if (thisFuture != null)
 				thisFuture.cancel(false);
-			}
 
-			this.terminated = true;
+			this.terminated.set(true);
 		}
 		finally
 		{
-			this.finished = true;
+			this.finished.set(true);
 			this.finishLatch.countDown();
 		}
 	}
 	
-	public final synchronized boolean cancel()
+	public final boolean cancel()
 	{
-		try
+		if (this.cancelled.compareAndSet(false, true) == true)
 		{
-			if (this.cancelled == true)
-				throw new IllegalStateException("Executable "+this+" is cancelled");
-
-			if (this.terminated == true)
-				throw new IllegalStateException("Executable "+this+" is terminated");
-			
 			Future<?> thisFuture = this.future.get();
 			if (thisFuture != null)
 			{
-				if (thisFuture.cancel(false) == true)
+				if (thisFuture.isDone() == false && thisFuture.cancel(false) == true)
 				{
 					cancelled();
 					return true;
@@ -100,10 +98,8 @@ public abstract class Executable implements Runnable
 			
 			return false;
 		}
-		finally
-		{
-			this.cancelled = true;
-		}
+		else
+			throw new IllegalStateException("Executable "+this+" is cancelled");
 	}
 	public final long getID()
 	{

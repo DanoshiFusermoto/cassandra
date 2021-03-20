@@ -53,15 +53,15 @@ public class GossipHandler implements Service
 	{
 		final Class<? extends Primitive> type;
 		final Map<Hash, Long> items;
-		final boolean rerequest;
+//		final boolean rerequest;
 		
-		GossipPeerTask(final ConnectedPeer peer, final Map<Hash, Long> items, final Class<? extends Primitive> type, final boolean rerequest)
+		GossipPeerTask(final ConnectedPeer peer, final Map<Hash, Long> items, final Class<? extends Primitive> type)
 		{
 			super(peer, 10, TimeUnit.SECONDS);
 			
 			this.type = type;
 			this.items = new HashMap<Hash, Long>(items);
-			this.rerequest = rerequest;
+//			this.rerequest = rerequest;
 		}
 		
 		@Override
@@ -95,7 +95,8 @@ public class GossipHandler implements Service
 				try
 				{
 					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
-					if (this.rerequest == false && (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING)))
+					if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
+//					if (this.rerequest == false && (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING)))
 						getPeer().disconnect("Did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
 				}
 				catch (Throwable t)
@@ -103,8 +104,8 @@ public class GossipHandler implements Service
 					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer(), t);
 				}
 				
-				if (this.rerequest == false)
-					rerequest(failedItemRequests, this.type);
+//				if (this.rerequest == false)
+//					rerequest(failedItemRequests, this.type);
 			}
 		}
 
@@ -127,8 +128,8 @@ public class GossipHandler implements Service
 				for (Entry<Hash, Long> requestedItem : this.items.entrySet())
 					GossipHandler.this.itemsRequested.remove(requestedItem.getKey(), requestedItem.getValue());
 				
-				if (failedItemRequests.isEmpty() == false && this.rerequest == false)
-					rerequest(failedItemRequests, this.type);
+//				if (failedItemRequests.isEmpty() == false && this.rerequest == false)
+//					rerequest(failedItemRequests, this.type);
 			}
 			finally
 			{
@@ -136,7 +137,7 @@ public class GossipHandler implements Service
 			}
 		}
 		
-		private void rerequest(final Collection<Hash> items, final Class<? extends Primitive> type)
+/*		private void rerequest(final Collection<Hash> items, final Class<? extends Primitive> type)
 		{
 			// Build the re-requests
 			long rerequestShardGroup = ShardMapper.toShardGroup(getPeer().getNode().getIdentity(), GossipHandler.this.context.getLedger().numShardGroups());
@@ -155,7 +156,7 @@ public class GossipHandler implements Service
 			}
 			else
 				gossipLog.error(GossipHandler.this.context.getName()+": Unable to re-request "+items.size()+" items of type "+this.type);
-		}
+		}*/
 	}
 		
 	private class Broadcast
@@ -367,7 +368,7 @@ public class GossipHandler implements Service
 								}
 								
 								if (toRequest.isEmpty() == false)
-									GossipHandler.this.request(peer, toRequest, broadcastInvMessage.getType(), false);
+									GossipHandler.this.request(peer, toRequest, broadcastInvMessage.getType());//, false);
 							}
 						}
 						catch (Throwable t)
@@ -590,7 +591,8 @@ public class GossipHandler implements Service
 		this.queued.release();
 	}
 
-	private Collection<Hash> request(final ConnectedPeer peer, final Collection<Hash> items, final Class<? extends Primitive> type, final boolean rerequest) throws IOException
+//	private Collection<Hash> request(final ConnectedPeer peer, final Collection<Hash> items, final Class<? extends Primitive> type, final boolean rerequest) throws IOException
+	private Collection<Hash> request(final ConnectedPeer peer, final Collection<Hash> items, final Class<? extends Primitive> type) throws IOException
 	{
 		final List<Hash> itemsPending = new ArrayList<Hash>();
 		final Map<Hash, Long> itemsToRequest = new HashMap<Hash, Long>();
@@ -634,7 +636,7 @@ public class GossipHandler implements Service
 					GetInventoryItemsMessage getInventoryItemsMessage = new GetInventoryItemsMessage(itemsToRequest.keySet(), type); 
 					this.context.getNetwork().getMessaging().send(getInventoryItemsMessage, peer);
 					
-					gossipPeerTask = new GossipPeerTask(peer, itemsToRequest, type, rerequest);
+					gossipPeerTask = new GossipPeerTask(peer, itemsToRequest, type);//, rerequest);
 					this.requestTasks.put(peer, gossipPeerTask);
 					Executor.getInstance().schedule(gossipPeerTask);
 					
@@ -699,7 +701,7 @@ public class GossipHandler implements Service
     			{
     				try
     				{
-    					if (task.isFinished() == false && task.isCancelled() == false)
+    					if (task.isCancelled() == false)
     						task.cancel();
 
     					gossipLog.info(GossipHandler.this.context.getName()+": Cancelled gossip task of "+task.items.keySet()+" of type "+task.type+" from "+event.getPeer());

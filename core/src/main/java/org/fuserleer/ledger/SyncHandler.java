@@ -216,7 +216,7 @@ public class SyncHandler implements Service
 						if (haveShardGroupCoverage == false)
 							continue;
 						
-						if (SyncHandler.this.isSynced() == true)
+						if (SyncHandler.this.checkSynced() == true)
 							continue;
 
 						SyncHandler.this.lock.lock();
@@ -325,81 +325,21 @@ public class SyncHandler implements Service
 								}
 							}
 							
-							// Can consider in sync? //
-							boolean syncAcquired = true;
+							// Fetch some inventory? //
 							for (ConnectedPeer syncPeer : syncPeers)
 							{
-								if (SyncHandler.this.context.getNode().isAheadOf(syncPeer.getNode(), 0) == true || 
-									SyncHandler.this.context.getNode().isInSyncWith(syncPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true)
-									continue;
-									
-								syncAcquired = false;
-							}
-							
-							// Is block processing completed and local replica considered in sync?
-							if (SyncHandler.this.blocksRequested.isEmpty() == true & 
-								SyncHandler.this.blocks.isEmpty() == true && syncAcquired == true)
-							{
-								synchronized(SyncHandler.this.atoms)
-								{
-									// Inject remaining atoms that may be in a pending consensus phase
-									for (PendingAtom pendingAtom : SyncHandler.this.atoms.values())
-									{
-										SyncHandler.this.context.getLedger().getAtomHandler().inject(pendingAtom);
-										SyncHandler.this.context.getLedger().getStateHandler().queue(pendingAtom);
-									}
-
-									SyncHandler.this.atoms.clear();
-								}
-								
-								SyncHandler.this.setSynced(true);
-								
-								// Tell all sync peers we're synced
-								NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
-								for (ConnectedPeer syncPeer : syncPeers)
+								if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false || 
+									SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == true)
 								{
 									try
 									{
-										SyncHandler.this.context.getNetwork().getMessaging().send(nodeMessage, syncPeer);
-									}
-									catch (IOException ioex)
-									{
-										syncLog.error("Could not send synced declaration to "+syncPeer, ioex);
-									}
-								}
-								
-								// Requests for current block pool, atom pool and state consensus primitives
-								for (ConnectedPeer syncPeer : syncPeers)
-								{
-									try
-									{
-										SyncHandler.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(SyncHandler.this.context.getLedger().getHead()), syncPeer);
+										SyncHandler.this.context.getNetwork().getMessaging().send(new GetSyncBlockInventoryMessage(SyncHandler.this.context.getLedger().getHead().getHash()), syncPeer);
 									}
 									catch (Exception ex)
 									{
-										syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncAcquiredMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
+										syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetSyncBlockInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
 									}
 								}
-							}
-							else
-							{
-								// Fetch some inventory? //
-								for (ConnectedPeer syncPeer : syncPeers)
-								{
-									if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false || 
-										SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == true)
-									{
-										try
-										{
-											SyncHandler.this.context.getNetwork().getMessaging().send(new GetSyncBlockInventoryMessage(SyncHandler.this.context.getLedger().getHead().getHash()), syncPeer);
-										}
-										catch (Exception ex)
-										{
-											syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetSyncBlockInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
-										}
-									}
-								}
-								
 							}
 						}
 						finally
@@ -791,6 +731,100 @@ public class SyncHandler implements Service
 		}
 	}
 	
+	private boolean checkSynced()
+	{
+		if (this.context.getConfiguration().has("singleton") == true)
+		{
+			if (isSynced() == false)
+				setSynced(true);
+
+			return true;
+		}
+
+		long numShardGroups = this.context.getLedger().numShardGroups();
+		List<ConnectedPeer> syncPeers = this.context.getNetwork().get(StandardPeerFilter.build(this.context).setShardGroup(ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups)).setStates(PeerState.CONNECTED)); 
+		if (syncPeers.isEmpty() == true)
+		{
+			if (isSynced() == true)
+				setSynced(false);
+
+			return false;
+		}
+	
+		// Out of sync?
+		PendingBranch bestBranch = this.context.getLedger().getBlockHandler().getBestBranch();
+		int OOSTrigger = bestBranch == null ? Node.OOS_TRIGGER_LIMIT : Node.OOS_TRIGGER_LIMIT + bestBranch.size(); 
+		// TODO need to deal with forks that don't converge with local chain due to safety break
+		if (isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), OOSTrigger)) == true)
+		{
+			setSynced(false);
+			syncLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+OOSTrigger);
+		}
+		else if (isSynced() == false)
+		{
+			// Can consider in sync? //
+			boolean syncAcquired = true;
+			for (ConnectedPeer syncPeer : syncPeers)
+			{
+				if (this.context.getNode().isAheadOf(syncPeer.getNode(), 0) == true || 
+					this.context.getNode().isInSyncWith(syncPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true)
+					continue;
+					
+				syncAcquired = false;
+			}
+			
+			// Is block processing completed and local replica considered in sync?
+			if (this.blocksRequested.isEmpty() == true && 
+				this.blocks.isEmpty() == true && syncAcquired == true)
+			{
+				synchronized(this.atoms)
+				{
+					// Inject remaining atoms that may be in a pending consensus phase
+					for (PendingAtom pendingAtom : this.atoms.values())
+					{
+						this.context.getLedger().getAtomHandler().inject(pendingAtom);
+						this.context.getLedger().getStateHandler().queue(pendingAtom);
+					}
+
+					this.atoms.clear();
+				}
+				
+				setSynced(true);
+				
+				// Tell all sync peers we're synced
+				NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
+				for (ConnectedPeer syncPeer : syncPeers)
+				{
+					try
+					{
+						this.context.getNetwork().getMessaging().send(nodeMessage, syncPeer);
+					}
+					catch (IOException ioex)
+					{
+						syncLog.error("Could not send synced declaration to "+syncPeer, ioex);
+					}
+				}
+				
+				// Requests for current block pool, atom pool and state consensus primitives
+				for (ConnectedPeer syncPeer : syncPeers)
+				{
+					try
+					{
+						this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(SyncHandler.this.context.getLedger().getHead()), syncPeer);
+					}
+					catch (Exception ex)
+					{
+						syncLog.error(this.context.getName()+": Unable to send SyncAcquiredMessage from "+this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
+					}
+				}
+			}
+			
+			syncLog.info(this.context.getName()+": Synced state reaquired");
+		}				
+		
+		return isSynced();
+	}
+	
     boolean isSynced()
 	{
 		return this.synced;
@@ -826,7 +860,7 @@ public class SyncHandler implements Service
     			{
     				try
     				{
-    					if (task.isFinished() == false && task.isCancelled() == false)
+    					if (task.isCancelled() == false)
     						task.cancel();
 
     					syncLog.info(SyncHandler.this.context.getName()+": Cancelled sync task of "+task.blocks.keySet()+" of blocks from "+event.getPeer());

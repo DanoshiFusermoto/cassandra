@@ -2,7 +2,6 @@ package org.fuserleer.ledger;
 
 import java.io.IOException;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Future;
@@ -35,12 +34,8 @@ import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.network.peers.ConnectedPeer;
-import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
-import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
-import org.fuserleer.time.Time;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
 import com.google.common.eventbus.Subscribe;
@@ -267,44 +262,8 @@ public final class Ledger implements Service, LedgerInterface
 		return this.ledgerSearch.get(query);
 	}
 	
-	private long nextSyncStatusCheck = 0;
 	public boolean isSynced()
 	{
-		return isSynced(false);
-	}
-	
-	synchronized boolean isSynced(boolean check)
-	{
-		if (this.context.getConfiguration().has("singleton") == true)
-		{
-			this.context.getNode().setSynced(true);
-			return true;
-		}
-		
-		// No point doing this multiple times per second as is quite expensive
-		if (Time.getSystemTime() > this.nextSyncStatusCheck || check == true)
-		{
-			this.nextSyncStatusCheck = Time.getSystemTime()+TimeUnit.SECONDS.toMillis(1);
-			
-			List<ConnectedPeer> syncPeers = this.context.getNetwork().get(StandardPeerFilter.build(this.context).setShardGroup(ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups())).setStates(PeerState.CONNECTED)); 
-			if (syncPeers.isEmpty() == true)
-				return false;
-	
-			// Out of sync?
-			PendingBranch bestBranch = this.getBlockHandler().getBestBranch();
-			int OOSTrigger = bestBranch == null ? Node.OOS_TRIGGER_LIMIT : Node.OOS_TRIGGER_LIMIT + bestBranch.size(); 
-			// TODO need to deal with forks that don't converge with local chain due to safety break
-			if (this.context.getNode().isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), OOSTrigger)) == true)
-			{
-				this.syncHandler.setSynced(false);
-				ledgerLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+OOSTrigger);
-			}
-			else if (this.context.getNode().isSynced() == false && this.syncHandler.isSynced() == true)
-			{
-				ledgerLog.info(this.context.getName()+": Synced state reaquired");
-			}				
-		}
-		
 		return this.context.getNode().isSynced();
 	}
 	
@@ -491,7 +450,7 @@ public final class Ledger implements Service, LedgerInterface
     			if (localShardGroup != remoteShardGroup)
     				return;
     			
-    			if (Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_RESOLVED_LIMIT) == false)
+    			if (Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
     				return;
     			
    				Ledger.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(Ledger.this.getHead()), event.getPeer());

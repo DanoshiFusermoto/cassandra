@@ -507,13 +507,10 @@ public class PendingBranch
 	 * Trims the branch to the block header (inclusive)
 	 * 
 	 * @param header
-	 * @throws IOException 
-	 * @throws StateLockedException 
 	 */
-	void trimTo(final PendingBlock block) throws IOException, StateLockedException
+	void trimTo(final BlockHeader header)
 	{
-		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
-			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
+		Objects.requireNonNull(header, "Block is null");
 
 		this.lock.lock();
 		try
@@ -522,11 +519,11 @@ public class PendingBranch
 			while(vertexIterator.hasNext() == true)
 			{
 				PendingBlock vertex = vertexIterator.next();
-				if (vertex.getHeader().getHeight() <= block.getHeight())
+				if (vertex.getHeader().getHeight() <= header.getHeight())
 					vertexIterator.remove();
 			}
 
-			this.root = block.getHeader();
+			this.root = header;
 		}
 		finally
 		{

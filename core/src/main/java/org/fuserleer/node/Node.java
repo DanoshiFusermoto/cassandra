@@ -20,6 +20,7 @@ import com.google.common.collect.ImmutableMap;
 public class Node extends BasicObject
 {
 	public static final int OOS_TRIGGER_LIMIT = 60; // TODO ~5 minutes of latency if block target is ~5 seconds.  Sufficient for alpha testing, but need smarter sync trigger.
+	public static final int OOS_RESOLVED_LIMIT = 6; // TODO ~1 minutes of latency if block target is ~5 seconds.  Sufficient for alpha testing, but need smarter sync trigger.
 
 	private String 	agent;
 

@@ -857,34 +857,9 @@ public class BlockHandler implements Service
 				for (PendingBlock committedBlock : committedBlocks)
 					blocksLog.info(BlockHandler.this.context.getName()+": Committed block "+committedBlock.getHeader());
 	
-				// Clean or trim pending branches as a result of this commit
-				Iterator<PendingBranch> pendingBranchIterator = BlockHandler.this.pendingBranches.iterator();
-				while(pendingBranchIterator.hasNext() == true)
-				{
-					PendingBranch pendingBranch = pendingBranchIterator.next();
-					
-					if (pendingBranch.equals(branch) == false)
-						pendingBranch.trimTo(committedBlocks.getLast());
-						
-					if (pendingBranch.isEmpty())
-						pendingBranchIterator.remove();
-				}
-				
 				if (this.bestBranch != null && this.bestBranch.isEmpty() == true)
 					this.bestBranch = null;
 				
-				// Clear out pending of blocks that may not be in a branch and can't be committed due to this commit
-				Iterator<Entry<Hash, PendingBlock>> pendingBlocksIterator = BlockHandler.this.pendingBlocks.entrySet().iterator();
-				while(pendingBlocksIterator.hasNext() == true)
-				{
-					Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
-					if (pendingBlockEntry.getValue().getHeight() <= branch.getRoot().getHeight())
-					{
-						pendingBlocksIterator.remove();
-						this.blockVoteSyncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes().stream().map(bv -> bv.getHash()).collect(Collectors.toList()));
-					}
-				}
-	
 				// Signal the commit
 				for (PendingBlock committedBlock : committedBlocks)
 				{
@@ -1075,6 +1050,41 @@ public class BlockHandler implements Service
 		this.lock.writeLock().lock();
 		try
 		{
+			// FIXME Next section WAS in the commit function, but suspect that upsertBlock() is waiting on the lock and inserting old blocks AFTER the commit happened.
+			//		 This causes a "Branch doesn't attach to ledger" issue which breaks liveness ... moving here to test the case is true.  
+			//		 Constantly checking and maintaining the old branch segments is crude, would like a proper fix
+			final BlockHeader head = this.context.getLedger().getHead();
+			// Clean or trim pending branches as a result of this commit
+			Iterator<PendingBranch> pendingBranchIterator = BlockHandler.this.pendingBranches.iterator();
+			while(pendingBranchIterator.hasNext() == true)
+			{
+				PendingBranch pendingBranch = pendingBranchIterator.next();
+				
+//				if (pendingBranch.equals(branch) == false)
+//					pendingBranch.trimTo(committedBlocks.getLast());
+
+				if (pendingBranch.isEmpty() == false && pendingBranch.getLow().getHeight() <= head.getHeight())
+					pendingBranch.trimTo(head);
+				
+				if (pendingBranch.isEmpty() == true)
+					pendingBranchIterator.remove();
+			}
+			
+			if (this.bestBranch != null && this.bestBranch.isEmpty() == true)
+				this.bestBranch = null;
+			
+			// Clear out pending of blocks that may not be in a branch and can't be committed due to this commit
+			Iterator<Entry<Hash, PendingBlock>> pendingBlocksIterator = BlockHandler.this.pendingBlocks.entrySet().iterator();
+			while(pendingBlocksIterator.hasNext() == true)
+			{
+				Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
+				if (pendingBlockEntry.getValue().getHeight() <= head.getHeight())
+				{
+					pendingBlocksIterator.remove();
+					this.blockVoteSyncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes().stream().map(bv -> bv.getHash()).collect(Collectors.toList()));
+				}
+			}
+
 			for (PendingBlock pendingBlock : this.pendingBlocks.values())
 			{
 				if (pendingBlock.getHeader() != null && pendingBlock.isUnbranched() == true)

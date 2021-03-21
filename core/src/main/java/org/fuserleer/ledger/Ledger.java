@@ -397,9 +397,15 @@ public final class Ledger implements Service, LedgerInterface
 				this.lastThroughputShardsTouched += shardGroupsTouched.size();
 				
 				if (atomCertificate.getDecision().equals(StateDecision.POSITIVE) == true)
+				{
 					this.lastThroughputCommittedAtoms++;
+					Ledger.this.context.getMetaData().increment("ledger.commits.certificates.accept");
+				}
 				else if (atomCertificate.getDecision().equals(StateDecision.NEGATIVE) == true)
+				{
 					this.lastThroughputRejectedAtoms++;
+					Ledger.this.context.getMetaData().increment("ledger.commits.certificates.reject");
+				}
 				
 				Ledger.this.context.getMetaData().increment("ledger.commits.certificates");
 			}

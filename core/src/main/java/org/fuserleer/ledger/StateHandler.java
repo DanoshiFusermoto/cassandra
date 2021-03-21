@@ -1096,7 +1096,6 @@ public final class StateHandler implements Service
 						CommitOperation commitOperation = pendingAtom.getCommitOperation();
 						if (commitOperation.getType().equals(CommitOperation.Type.ACCEPT) == true)
 						{
-							StateHandler.this.context.getMetaData().increment("ledger.commits.certificates.accept");
 							StateHandler.this.context.getEvents().post(new AtomCommitEvent(pendingAtom));
 						}
 						else if (commitOperation.getType().equals(CommitOperation.Type.REJECT) == true)
@@ -1108,7 +1107,6 @@ public final class StateHandler implements Service
 									cerbyLog.error("Rejection certificate for state "+voteCertificate.getState());
 							}
 
-							StateHandler.this.context.getMetaData().increment("ledger.commits.certificates.reject");
 							StateHandler.this.context.getEvents().post(new AtomCommitEvent(pendingAtom));
 						}
 						else

@@ -27,6 +27,7 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
@@ -43,7 +44,8 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.messages.BroadcastInventoryMessage;
+import org.fuserleer.network.SyncInventory;
+import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
@@ -221,6 +223,39 @@ public class AtomHandler implements Service
 			}
 		});
 		
+		this.context.getNetwork().getGossipHandler().register(Atom.class, new SyncInventory() 
+		{
+			@Override
+			public Collection<Hash> process(final Class<? extends Primitive> type, final Collection<Hash> items) throws IOException, InterruptedException
+			{
+				AtomHandler.this.lock.writeLock().lock();
+				try
+				{
+					Set<Hash> required = new HashSet<Hash>();
+					for (Hash item : items)
+					{
+						if (AtomHandler.this.atomQueue.contains(item) == true)
+							continue;
+						
+						Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
+						if (atom != null)
+						{
+							Commit commit = AtomHandler.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom.getHash()));
+							if (commit == null || commit.getPath().get(Elements.BLOCK) == null)
+								AtomHandler.this.submit(atom);
+						}
+						else
+							required.add(item);
+					}
+					return required;
+				}
+				finally
+				{
+					AtomHandler.this.lock.writeLock().unlock();
+				}
+			}
+		});
+
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
@@ -264,9 +299,9 @@ public class AtomHandler implements Service
 							int offset = 0;
 							while(offset < pendingAtomInventory.size())
 							{
-								BroadcastInventoryMessage pendingAtomInventoryMessage = new BroadcastInventoryMessage(pendingAtomInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, pendingAtomInventory.size())), Atom.class);
+								SyncInventoryMessage pendingAtomInventoryMessage = new SyncInventoryMessage(pendingAtomInventory.subList(offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, pendingAtomInventory.size())), Atom.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(pendingAtomInventoryMessage, peer);
-								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+								offset += SyncInventoryMessage.MAX_ITEMS; 
 							}
 
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
@@ -275,9 +310,9 @@ public class AtomHandler implements Service
 							offset = 0;
 							while(offset < atomVoteInventory.size())
 							{
-								BroadcastInventoryMessage atomVoteInventoryMessage = new BroadcastInventoryMessage(atomVoteInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, atomVoteInventory.size())), AtomVote.class);
+								SyncInventoryMessage atomVoteInventoryMessage = new SyncInventoryMessage(atomVoteInventory.subList(offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, atomVoteInventory.size())), AtomVote.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(atomVoteInventoryMessage, peer);
-								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+								offset += SyncInventoryMessage.MAX_ITEMS; 
 							}
 						}
 						catch (Exception ex)

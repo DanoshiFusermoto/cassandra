@@ -66,6 +66,7 @@ public class MappedBlockingQueue<K, V>
         try 
         {
         	this.map.clear();
+        	this.count = 0;
             this.notFull.signalAll();
         } 
         finally 
@@ -495,6 +496,10 @@ public class MappedBlockingQueue<K, V>
 			this.count--;
 			this.notFull.signal();
 			return entry;
+		}
+		catch (Exception ex)
+		{
+			throw ex;
 		}
 		finally
 		{

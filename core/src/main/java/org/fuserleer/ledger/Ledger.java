@@ -31,6 +31,7 @@ import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
+import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -95,6 +96,7 @@ public final class Ledger implements Service, LedgerInterface
 			
 			integrity();
 			
+			this.context.getEvents().register(this.syncChangeListener);
 			this.context.getEvents().register(this.syncBlockListener);
 			this.context.getEvents().register(this.asyncAtomListener);
 			this.context.getEvents().register(this.syncAtomListener);
@@ -123,6 +125,7 @@ public final class Ledger implements Service, LedgerInterface
 		this.context.getEvents().unregister(this.asyncAtomListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
+		this.context.getEvents().unregister(this.syncChangeListener);
 
 		this.ledgerSearch.stop();
 		
@@ -433,6 +436,22 @@ public final class Ledger implements Service, LedgerInterface
 					this.lastThroughputPersistedAtoms = this.lastThroughputPersistedParticles = 0; 
 					this.lastThroughputCommittedAtoms = this.lastThroughputRejectedAtoms = this.lastThroughputShardsTouched = 0;
 				}
+			}
+		}
+	};
+	
+	// SYNC CHANGE LISTENER //
+	private SynchronousEventListener syncChangeListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final SyncStatusChangeEvent event) 
+		{
+			// Only flush state accumulator on sync > false ... on sync > true it will contain the remnants of the sync process
+			// TODO can push directly to accumulator from the SyncHandler in the same was as the Atom/StateHandler injections?
+			if (event.isSynced() == false)
+			{
+				ledgerLog.info(Ledger.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state accumulator");
+				Ledger.this.stateAccumulator.reset();
 			}
 		}
 	};

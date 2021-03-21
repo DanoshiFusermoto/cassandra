@@ -353,7 +353,7 @@ public class AtomHandler implements Service
 		}
 	}
 	
-	void inject(final PendingAtom pendingAtom)
+	void push(final PendingAtom pendingAtom)
 	{
 		Objects.requireNonNull(pendingAtom, "Pending atom for injection is null");
 		
@@ -484,13 +484,10 @@ public class AtomHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-			
 			AtomHandler.this.lock.writeLock().lock();
 			try
 			{
-				atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to false, flushing atom handler");
+				atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom handler");
 				AtomHandler.this.atomQueue.clear();
 				AtomHandler.this.pendingAtoms.clear();
 			}

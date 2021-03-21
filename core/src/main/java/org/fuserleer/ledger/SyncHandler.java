@@ -28,6 +28,7 @@ import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.SyncBlockEvent;
+import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockMessage;
@@ -328,12 +329,16 @@ public class SyncHandler implements Service
 							// Fetch some inventory? //
 							for (ConnectedPeer syncPeer : syncPeers)
 							{
+								if (SyncHandler.this.context.getNode().isAheadOf(syncPeer.getNode(), 1) == true)
+									continue;
+								
 								if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false || 
 									SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == true)
 								{
 									try
 									{
 										SyncHandler.this.context.getNetwork().getMessaging().send(new GetSyncBlockInventoryMessage(SyncHandler.this.context.getLedger().getHead().getHash()), syncPeer);
+										syncLog.info(SyncHandler.this.context.getName()+": Requested block inventory @ "+SyncHandler.this.context.getLedger().getHead().getHash()+" from "+syncPeer);
 									}
 									catch (Exception ex)
 									{
@@ -667,6 +672,7 @@ public class SyncHandler implements Service
 	void commit(LinkedList<Block> branch) throws IOException, ValidationException, StateLockedException
 	{
 		// TODO pretty much everything, limited validation here currently, just accepts blocks and atoms almost on faith
+		// TODO remove reference to ledger StateAccumulator and use a local instance with a push on sync
 		List<Block> committedBlocks = new ArrayList<Block>();
 		Iterator<Block> blockIterator = branch.descendingIterator();
 		while(blockIterator.hasNext() == true)
@@ -777,19 +783,19 @@ public class SyncHandler implements Service
 			if (this.blocksRequested.isEmpty() == true && 
 				this.blocks.isEmpty() == true && syncAcquired == true)
 			{
+				setSynced(true);
+
 				synchronized(this.atoms)
 				{
 					// Inject remaining atoms that may be in a pending consensus phase
 					for (PendingAtom pendingAtom : this.atoms.values())
 					{
-						this.context.getLedger().getAtomHandler().inject(pendingAtom);
-						this.context.getLedger().getStateHandler().queue(pendingAtom);
+						this.context.getLedger().getAtomHandler().push(pendingAtom);
+						this.context.getLedger().getStateHandler().push(pendingAtom);
 					}
 
 					this.atoms.clear();
 				}
-				
-				setSynced(true);
 				
 				// Tell all sync peers we're synced
 				NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
@@ -817,9 +823,9 @@ public class SyncHandler implements Service
 						syncLog.error(this.context.getName()+": Unable to send SyncAcquiredMessage from "+this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
 					}
 				}
+
+				syncLog.info(this.context.getName()+": Synced state reaquired");
 			}
-			
-			syncLog.info(this.context.getName()+": Synced state reaquired");
 		}				
 		
 		return isSynced();
@@ -834,6 +840,7 @@ public class SyncHandler implements Service
 	{
 		this.synced = synced;
 		this.context.getNode().setSynced(synced);
+		this.context.getEvents().post(new SyncStatusChangeEvent(synced));
 		reset();
 	}
 

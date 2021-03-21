@@ -314,15 +314,17 @@ public final class AtomPool implements Service
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 	
-	public void clear()
+	private void reset()
 	{
 		this.lock.writeLock().lock();
 		try
 		{
+			this.buckets.forEach((b, s) -> s.clear());
 			this.pending.clear();
 			this.states.clear();
-			for (Set<PendingAtom> pendingAtom : this.buckets.values())
-				pendingAtom.clear();
+			this.votesToCastQueue.clear();
+			this.votesToCountQueue.clear();
+			this.voteProcessorSemaphore.drainPermits();
 		}
 		finally
 		{
@@ -759,19 +761,11 @@ public final class AtomPool implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-			
 			AtomPool.this.lock.writeLock().lock();
 			try
 			{
-				atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to false, flushing atom pool");
-				AtomPool.this.buckets.clear();
-				AtomPool.this.pending.clear();
-				AtomPool.this.states.clear();
-				AtomPool.this.votesToCastQueue.clear();
-				AtomPool.this.votesToCountQueue.clear();
-				AtomPool.this.voteProcessorSemaphore.drainPermits();
+				atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom pool");
+				reset();
 			}
 			finally
 			{

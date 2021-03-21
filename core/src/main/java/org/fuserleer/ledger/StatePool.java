@@ -906,13 +906,10 @@ public final class StatePool implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-			
 			StatePool.this.lock.writeLock().lock();
 			try
 			{
-				statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to false, flushing state pool");
+				statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state pool");
 				StatePool.this.voteProcessorSemaphore.drainPermits();
 				StatePool.this.states.clear();
 				StatePool.this.votesToCastQueue.clear();

@@ -1295,13 +1295,10 @@ public class BlockHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-			
 			BlockHandler.this.lock.writeLock().lock();
 			try
 			{
-				blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to false, flushing block handler");
+				blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing block handler");
 				BlockHandler.this.bestBranch = null;
 				BlockHandler.this.pendingBlocks.clear();
 				BlockHandler.this.pendingBranches.clear();

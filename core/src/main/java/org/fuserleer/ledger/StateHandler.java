@@ -667,7 +667,7 @@ public final class StateHandler implements Service
 						}
 						catch (Exception ex)
 						{
-							cerbyLog.error(StateHandler.this.context.getName()+": ledger.messages.state.get.pool " + peer, ex);
+							cerbyLog.error(StateHandler.this.context.getName()+": ledger.messages.sync.acquired " + peer, ex);
 						}
 						finally
 						{
@@ -889,8 +889,10 @@ public final class StateHandler implements Service
 		}
 	}
 	
-	void queue(PendingAtom pendingAtom)
+	void push(final PendingAtom pendingAtom)
 	{
+		Objects.requireNonNull(pendingAtom, "Pending atom for push is null");
+		
 		for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
 		{
 			if (StateHandler.this.states.putIfAbsent(stateKey, pendingAtom) != null)
@@ -1066,7 +1068,7 @@ public final class StateHandler implements Service
 
                 		// TODO provisioning queue should only have ONE entry for a state address due to locking.  Verify!
 						Set<StateKey<?, ?>> stateKeys = StateHandler.this.context.getLedger().getStateAccumulator().provision(event.getBlock().getHeader(), pendingAtom);
-						queue(pendingAtom);
+						push(pendingAtom);
 					}
 				}
 				catch (Exception ex)
@@ -1168,13 +1170,10 @@ public final class StateHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-			
 			StateHandler.this.lock.writeLock().lock();
 			try
 			{
-				stateLog.info(StateHandler.this.context.getName()+": Sync status changed to false, flushing state handler");
+				stateLog.info(StateHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state handler");
 				StateHandler.this.atoms.clear();
 				StateHandler.this.executionQueue.clear();
 				StateHandler.this.provisionQueue.clear();

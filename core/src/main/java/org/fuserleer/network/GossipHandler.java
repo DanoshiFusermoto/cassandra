@@ -26,12 +26,12 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
-import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
 import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messages.InventoryItemsMessage;
+import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
@@ -205,6 +205,7 @@ public class GossipHandler implements Service
 	private final Map<Class<? extends Primitive>, GossipInventory> inventoryProcessors = Collections.synchronizedMap(new HashMap<>());
 	private final Map<Class<? extends Primitive>, GossipFetcher> fetcherProcessors = Collections.synchronizedMap(new HashMap<>());
 	private final Map<Class<? extends Primitive>, GossipReceiver> receiverProcessors = Collections.synchronizedMap(new HashMap<>());
+	private final Map<Class<? extends Primitive>, SyncInventory> syncProcessors = Collections.synchronizedMap(new HashMap<>());
 	
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 	
@@ -321,6 +322,70 @@ public class GossipHandler implements Service
 	@Override
 	public void start() throws StartupException
 	{
+		this.context.getNetwork().getMessaging().register(SyncInventoryMessage.class, this.getClass(), new MessageProcessor<SyncInventoryMessage>()
+		{
+			@Override
+			public void process(final SyncInventoryMessage syncInvMessage, final ConnectedPeer peer)
+			{
+				Executor.getInstance().submit(new Executable() 
+				{
+					@Override
+					public void execute()
+					{
+						GossipHandler.this.lock.writeLock().lock();
+						try
+						{
+							// TODO dont think this is needed / matters here
+/*							if (GossipHandler.this.context.getLedger().isSynced() == false)
+							{
+								if (gossipLog.hasLevel(Logging.DEBUG) == true)
+									gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) processing of broadcast inv type "+broadcastInvMessage.getType()+" containing "+broadcastInvMessage.getItems().size()+" items from " + peer);
+
+								return;
+							}*/
+
+							if (gossipLog.hasLevel(Logging.DEBUG) == true)
+								gossipLog.debug(GossipHandler.this.context.getName()+": Sync inv type "+syncInvMessage.getType()+" containing "+syncInvMessage.getItems().size()+" items from " + peer);
+							
+							List<Hash> toRequest = new ArrayList<Hash>();
+							List<Hash> required = new ArrayList<Hash>();
+							SyncInventory inventoryProcessor = GossipHandler.this.syncProcessors.get(syncInvMessage.getType());
+							if (inventoryProcessor == null)
+							{
+								gossipLog.error(GossipHandler.this.context.getName()+": Sync processor for "+syncInvMessage.getType()+" is not found");
+								return;
+							}
+
+							required.addAll(inventoryProcessor.process(syncInvMessage.getType(), syncInvMessage.getItems()));
+							if (required.isEmpty() == false)
+							{
+								GossipHandler.this.itemInventories.putAll(peer, required);
+
+								for (Hash item : required)
+								{
+									if (GossipHandler.this.itemsRequested.containsKey(item) == true)
+										continue;
+	
+									toRequest.add(item);
+								}
+								
+								if (toRequest.isEmpty() == false)
+									GossipHandler.this.request(peer, toRequest, syncInvMessage.getType());//, false);
+							}
+						}
+						catch (Throwable t)
+						{
+							gossipLog.error(GossipHandler.this.context.getName()+": ledger.messages.gossip.inventory.sync "+peer, t);
+						}
+						finally
+						{
+							GossipHandler.this.lock.writeLock().unlock();
+						}
+					}
+				});
+			}
+		});
+		
 		this.context.getNetwork().getMessaging().register(BroadcastInventoryMessage.class, this.getClass(), new MessageProcessor<BroadcastInventoryMessage>()
 		{
 			@Override
@@ -521,7 +586,7 @@ public class GossipHandler implements Service
 	{
 		Objects.requireNonNull(type, "Type is null");
 		Objects.requireNonNull(inventory, "Inventory is null");
-		synchronized(this.broadcastFilters)
+		synchronized(this.inventoryProcessors)
 		{
 			if (this.inventoryProcessors.containsKey(type) == true)
 				throw new IllegalStateException("Already exists a inventory processors for type "+type);
@@ -553,6 +618,19 @@ public class GossipHandler implements Service
 				throw new IllegalStateException("Already exists a receiver processor for type "+type);
 			
 			this.receiverProcessors.put(type, receiver);
+		}
+	}
+	
+	public void register(final Class<? extends Primitive> type, final SyncInventory inventory)
+	{
+		Objects.requireNonNull(type, "Type is null");
+		Objects.requireNonNull(inventory, "Inventory is null");
+		synchronized(this.syncProcessors)
+		{
+			if (this.syncProcessors.containsKey(type) == true)
+				throw new IllegalStateException("Already exists a sync processors for type "+type);
+			
+			this.syncProcessors.put(type, inventory);
 		}
 	}
 

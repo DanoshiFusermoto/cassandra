@@ -761,6 +761,9 @@ public final class AtomPool implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
+			if (event.isSynced() == true)
+				return;
+
 			AtomPool.this.lock.writeLock().lock();
 			try
 			{

@@ -519,6 +519,9 @@ public class AtomHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
+			if (event.isSynced() == true)
+				return;
+			
 			AtomHandler.this.lock.writeLock().lock();
 			try
 			{

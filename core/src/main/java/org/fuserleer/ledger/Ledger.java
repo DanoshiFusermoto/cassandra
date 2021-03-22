@@ -102,13 +102,13 @@ public final class Ledger implements Service, LedgerInterface
 			this.context.getEvents().register(this.syncAtomListener);
 			this.context.getEvents().register(this.peerListener);
 
-			this.syncHandler.start();
 			this.blockHandler.start();
 			this.atomPool.start();
 			this.atomHandler.start();
 			this.stateAccumulator.reset();
 			this.statePool.start();
 			this.stateHandler.start();
+			this.syncHandler.start();
 			
 			this.ledgerSearch.start();
 		}
@@ -129,12 +129,12 @@ public final class Ledger implements Service, LedgerInterface
 
 		this.ledgerSearch.stop();
 		
+		this.syncHandler.stop();
 		this.statePool.stop();
 		this.stateHandler.stop();
 		this.atomHandler.stop();
 		this.atomPool.stop();
 		this.blockHandler.stop();
-		this.syncHandler.stop();
 		this.votePowerHandler.stop();
 		this.ledgerStore.stop();
 	}
@@ -475,7 +475,7 @@ public final class Ledger implements Service, LedgerInterface
     			if (localShardGroup != remoteShardGroup)
     				return;
     			
-    			if (Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
+    			if (Ledger.this.isSynced() == false || Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
     				return;
     			
    				Ledger.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(Ledger.this.getHead()), event.getPeer());

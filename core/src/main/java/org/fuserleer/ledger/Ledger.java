@@ -189,7 +189,7 @@ public final class Ledger implements Service, LedgerInterface
 		}
 	}
 	
-	AtomHandler getAtomHandler()
+	public AtomHandler getAtomHandler()
 	{
 		return this.atomHandler;
 	}
@@ -475,7 +475,10 @@ public final class Ledger implements Service, LedgerInterface
     			if (localShardGroup != remoteShardGroup)
     				return;
     			
-    			if (Ledger.this.isSynced() == false || Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
+    			// Reasons NOT to ask for all the pool inventories
+    			if (Ledger.this.isSynced() == false || 
+    				event.getPeer().getNode().isSynced() == false || 
+    				Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
     				return;
     			
    				Ledger.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(Ledger.this.getHead()), event.getPeer());

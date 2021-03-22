@@ -1168,6 +1168,9 @@ public final class StateHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
+			if (event.isSynced() == true)
+				return;
+
 			StateHandler.this.lock.writeLock().lock();
 			try
 			{

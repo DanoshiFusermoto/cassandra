@@ -348,19 +348,18 @@ public final class StatePool implements Service
 																  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
 										stateVote.sign(StatePool.this.context.getNode().getKey());
 										
-										if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == false)
+										if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == true)
 										{
-											statePoolLog.error(StatePool.this.context.getName()+": Persistance of local state vote of "+stateVote.getState()+" for "+stateVote.getOwner()+" failed");
-											continue;
-										}
-
-										if (pendingState.vote(stateVote, localVotePower) == true)
-										{
-											if (statePoolLog.hasLevel(Logging.DEBUG))
-												statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
+											if (pendingState.vote(stateVote, localVotePower) == true)
+											{
+												if (statePoolLog.hasLevel(Logging.DEBUG))
+													statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
 										
-											stateVotesToBroadcast.add(stateVote);
+												stateVotesToBroadcast.add(stateVote);
+											}
 										}
+										else // FIXME happens usually on sync after state reconstruction as local validator doesn't know its voted already
+											statePoolLog.error(StatePool.this.context.getName()+": Persistance of local state vote of "+stateVote.getState()+" for "+stateVote.getOwner()+" failed");
 									}
 									
 									// Don't build certificates from cast votes received until executed locally

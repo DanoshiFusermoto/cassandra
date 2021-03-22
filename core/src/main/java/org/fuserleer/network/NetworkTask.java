@@ -6,7 +6,7 @@ import org.fuserleer.executors.ScheduledExecutable;
 
 public abstract class NetworkTask extends ScheduledExecutable
 {
-	public NetworkTask(long delay, TimeUnit unit)
+	public NetworkTask(final long delay, final TimeUnit unit)
 	{
 		super(delay, 0, unit);
 	}

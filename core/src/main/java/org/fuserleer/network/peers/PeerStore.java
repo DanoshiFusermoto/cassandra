@@ -17,6 +17,7 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.peers.filters.PeerFilter;
 import org.fuserleer.serialization.Serialization;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.sleepycat.je.Cursor;
@@ -88,30 +89,39 @@ public class PeerStore extends DatabaseStore
 
 			DatabaseConfig config = new DatabaseConfig();
 			config.setAllowCreate(true);
+			config.setTransactional(true);
 			this.peersDB = getEnvironment().openDatabase(null, "peers", config);
 
 			SecondaryConfig identityConfig = new SecondaryConfig();
 			identityConfig.setAllowCreate(true);
 			identityConfig.setKeyCreator(new PeerSecondaryKeyCreator());
 			identityConfig.setSortedDuplicates(false);
+			identityConfig.setTransactional(true);
 			this.peerIdentityDB = getEnvironment().openSecondaryDatabase(null, "peer_identity", this.peersDB, identityConfig);
 
-			try (Cursor cursor = this.peersDB.openCursor(null, null)) 
+			Transaction transaction = this.getEnvironment().beginTransaction(null, null);
+			try
 			{
-				DatabaseEntry key = new DatabaseEntry();
-				DatabaseEntry value = new DatabaseEntry();
-
-				while (cursor.getNext(key, value, LockMode.DEFAULT) == OperationStatus.SUCCESS)
+				try (Cursor cursor = this.peersDB.openCursor(transaction, null)) 
 				{
-					Peer peer = Serialization.getInstance().fromDson(value.getData(), Peer.class);
-					peer.setActiveAt(0l);
-					peer.setConnectedAt(0l);
-					byte[] bytes = Serialization.getInstance().toDson(peer, Output.PERSIST);
-					this.peersDB.put(null, key, new DatabaseEntry(bytes));
+					DatabaseEntry key = new DatabaseEntry();
+					DatabaseEntry value = new DatabaseEntry();
+	
+					while (cursor.getNext(key, value, LockMode.DEFAULT) == OperationStatus.SUCCESS)
+					{
+						Peer peer = Serialization.getInstance().fromDson(value.getData(), Peer.class);
+						peer.setActiveAt(0l);
+						peer.setConnectedAt(0l);
+						byte[] bytes = Serialization.getInstance().toDson(peer, Output.PERSIST);
+						this.peersDB.put(transaction, key, new DatabaseEntry(bytes));
+					}
 				}
+
+				transaction.commit();
 			}
 			catch (Exception ex)
 			{
+				transaction.abort();
 				throw ex;
 			}
 		}
@@ -174,98 +184,123 @@ public class PeerStore extends DatabaseStore
 	@Override
 	public void flush() throws DatabaseException  { /* Not used */ }
 
-	public boolean delete(URI host) throws IOException
+	public boolean delete(final URI host) throws IOException
 	{
 		Objects.requireNonNull(host, "Host URI is null");
 		
+		Transaction transaction = this.getEnvironment().beginTransaction(null, null);
 		try
         {
 			DatabaseEntry key = new DatabaseEntry(host.toString().toLowerCase().getBytes(StandardCharsets.UTF_8));
-			OperationStatus status = this.peersDB.delete(null, key);
+			OperationStatus status = this.peersDB.delete(transaction, key);
 			if (status == OperationStatus.SUCCESS)
 			{
-				networklog.debug(this.context.getName()+": Deleted peer "+host);
+				if (networklog.hasLevel(Logging.DEBUG) == true)
+					networklog.debug(this.context.getName()+": Deleted peer "+host);
+				
+				transaction.commit();
 				return true;
 			}
 
+			transaction.abort();
 			return false;
 		}
 		catch (Exception e)
 		{
+			transaction.abort();
 			throw new DatabaseException(e);
 		}
 	}
 
-	public boolean delete(ECPublicKey identity) throws IOException
+	public boolean delete(final ECPublicKey identity) throws IOException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 
+		Transaction transaction = this.getEnvironment().beginTransaction(null, null);
 		try
         {
 			DatabaseEntry key = new DatabaseEntry(identity.asHash().toByteArray());
-			OperationStatus status = this.peerIdentityDB.delete(null, key);
+			OperationStatus status = this.peerIdentityDB.delete(transaction, key);
 			if (status == OperationStatus.SUCCESS)
 			{
-				networklog.debug(this.context.getName()+": Deleted peer "+identity);
+				if (networklog.hasLevel(Logging.DEBUG) == true)
+					networklog.debug(this.context.getName()+": Deleted peer "+identity);
+				
+				transaction.commit();
 				return true;
 			}
 			
+			transaction.abort();
 			return false;
 		}
 		catch (Exception e)
 		{
+			transaction.abort();
 			throw new DatabaseException(e);
 		}
 	}
 
-	public boolean store(Peer peer) throws IOException
+	public boolean store(final Peer peer) throws IOException
 	{
 		Objects.requireNonNull(peer, "Peer is null");
 		Objects.requireNonNull(peer.getNode(), "Peer node is null");
 		
+		Transaction transaction = this.getEnvironment().beginTransaction(null, null);
 		try
         {
 			// Ensure we only allow ONE instance of an identity //
-			Peer existingPeer = get(peer.getNode().getIdentity());
+			Peer existingPeer = get(transaction, peer.getNode().getIdentity());
 			if (existingPeer != null && existingPeer.getURI().equals(peer.getURI()) == false)
 			{
 				DatabaseEntry key = new DatabaseEntry(peer.getNode().getIdentity().asHash().toByteArray());
-				if (this.peerIdentityDB.delete(null, key) == OperationStatus.SUCCESS)
-					networklog.debug("Removed "+existingPeer+" associated with "+peer.getNode().getIdentity());
+				if (this.peerIdentityDB.delete(transaction, key) == OperationStatus.SUCCESS)
+				{
+					 if(networklog.hasLevel(Logging.DEBUG) == true)
+						 networklog.debug(this.context.getName()+": Removed "+existingPeer+" associated with "+peer.getNode().getIdentity());
+				}
 				else
 					throw new DatabaseException("Peer "+peer+" storage failed");
 			}
 
 			// merge argument peer with existing
+			Peer peerToStore;
 			if (existingPeer != null)
-				peer = peer.merge(existingPeer);
+				peerToStore = peer.merge(existingPeer);
+			else
+				peerToStore = peer;
 
-			DatabaseEntry key = new DatabaseEntry(peer.getURI().toString().toLowerCase().getBytes(StandardCharsets.UTF_8));
-			byte[] bytes = Serialization.getInstance().toDson(peer, Output.PERSIST);
+			DatabaseEntry key = new DatabaseEntry(peerToStore.getURI().toString().toLowerCase().getBytes(StandardCharsets.UTF_8));
+			byte[] bytes = Serialization.getInstance().toDson(peerToStore, Output.PERSIST);
 			DatabaseEntry value = new DatabaseEntry(bytes);
 
-			if (this.peersDB.put(null, key, value) == OperationStatus.SUCCESS)
+			if (this.peersDB.put(transaction, key, value) == OperationStatus.SUCCESS)
 			{
-				networklog.debug(this.context+": Updated "+peer);
+				if (networklog.hasLevel(Logging.DEBUG) == true)
+					networklog.debug(this.context+": Updated "+peer);
+				
+				transaction.commit();
 				return true;
 			}
 			else
 			{
-				networklog.debug(this.context.getName()+": Failed to store "+peer);
+				networklog.error(this.context.getName()+": Failed to store "+peer);
+				transaction.abort();
 				return false;
 			}
 		}
 		catch (DatabaseException dbex)
 		{
+			transaction.abort();
 			throw dbex;
 		}
 		catch (Exception e)
 		{
+			transaction.abort();
 			throw new DatabaseException(e);
 		}
 	}
 
-	public boolean has(URI host) throws IOException
+	public boolean has(final URI host) throws IOException
 	{
 		Objects.requireNonNull(host, "Host URI is null");
 
@@ -284,7 +319,7 @@ public class PeerStore extends DatabaseStore
 		return false;
 	}
 
-	public Peer get(URI host) throws IOException
+	public Peer get(final URI host) throws IOException
 	{
 		Objects.requireNonNull(host, "Host URI is null");
 
@@ -310,13 +345,10 @@ public class PeerStore extends DatabaseStore
 		return null;
 	}
 
-	public List<Peer> get(int index, int limit, PeerFilter filter) throws IOException
+	public List<Peer> get(final int index, final int limit, final PeerFilter<Peer> filter) throws IOException
 	{
-		if (limit < 1)
-			throw new IllegalArgumentException("Limit can not be less than 1");
-
-		if (index < 0)
-			throw new IllegalArgumentException("Index can not be less than 0");
+		Numbers.lessThan(limit, 1, "Limit can not be less than 1");
+		Numbers.isNegative(index, "Index can not be less than 0");
 		
 		Objects.requireNonNull(filter, "PeerFilter is null");
 
@@ -341,7 +373,7 @@ public class PeerStore extends DatabaseStore
 		    {
 		    	Peer peer = Serialization.getInstance().fromDson(data.getData(), Peer.class);
 
-		    	if (filter.filter(peer) == false)
+		    	if (filter.filter(peer) == true)
 		    		peers.add(peer);
 
 		    	if (peers.size() == limit)
@@ -358,7 +390,7 @@ public class PeerStore extends DatabaseStore
 		return peers;
 	}
 
-	public List<Peer> get(PeerFilter filter) throws IOException
+	public List<Peer> get(final PeerFilter<Peer> filter) throws IOException
 	{
 		Objects.requireNonNull(filter, "PeerFilter is null");
 		
@@ -371,7 +403,7 @@ public class PeerStore extends DatabaseStore
 		    while (cursor.getNext(key, value, LockMode.DEFAULT) == OperationStatus.SUCCESS)
 		    {
 		    	Peer peer = Serialization.getInstance().fromDson(value.getData(), Peer.class);
-		    	if (filter.filter(peer) == false)
+		    	if (filter.filter(peer) == true)
 		    		peers.add(peer);
 		    }
 		}
@@ -383,7 +415,7 @@ public class PeerStore extends DatabaseStore
 		return peers;
 	}
 
-	public boolean has(ECPublicKey identity) throws IOException
+	public boolean has(final ECPublicKey identity) throws IOException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 
@@ -403,7 +435,12 @@ public class PeerStore extends DatabaseStore
 		return false;
 	}
 
-	public Peer get(ECPublicKey identity) throws IOException
+	public Peer get(final ECPublicKey identity) throws IOException
+	{
+		return get(null, identity);
+	}
+	
+	private Peer get(final Transaction transaction, final ECPublicKey identity) throws IOException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		
@@ -413,7 +450,7 @@ public class PeerStore extends DatabaseStore
 			DatabaseEntry key = new DatabaseEntry();
 			DatabaseEntry value = new DatabaseEntry();
 
-			if (this.peerIdentityDB.get(null, search, key, value, LockMode.DEFAULT) == OperationStatus.SUCCESS)
+			if (this.peerIdentityDB.get(transaction, search, key, value, transaction == null ? LockMode.DEFAULT : LockMode.RMW) == OperationStatus.SUCCESS)
 				return Serialization.getInstance().fromDson(value.getData(), Peer.class);
 		}
 		catch (Exception e)

@@ -179,6 +179,10 @@ public class AtomHandler implements Service
 				Set<Hash> required = new HashSet<Hash>();
 				for (Hash item : items)
 				{
+					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(item);
+					if (pendingAtom != null && pendingAtom.getAtom() != null)
+						continue;
+					
 					if (AtomHandler.this.atomQueue.contains(item) == true ||
 						AtomHandler.this.context.getLedger().getLedgerStore().has(item) == true)
 						continue;
@@ -234,6 +238,10 @@ public class AtomHandler implements Service
 					Set<Hash> required = new HashSet<Hash>();
 					for (Hash item : items)
 					{
+						PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(item);
+						if (pendingAtom != null && pendingAtom.getAtom() != null)
+							continue;
+
 						if (AtomHandler.this.atomQueue.contains(item) == true)
 							continue;
 						

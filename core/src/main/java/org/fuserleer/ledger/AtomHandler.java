@@ -349,11 +349,16 @@ public class AtomHandler implements Service
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 	
-	public int getQueueSize()
+	public int numQueued()
 	{
 		return this.atomQueue.size();
 	}
 	
+	public int numPending()
+	{
+		return this.pendingAtoms.size();
+	}
+
 	/**
 	 * Returns an existing pending atom or creates it providing that the atom is not already present in the store.
 	 * <br><br>

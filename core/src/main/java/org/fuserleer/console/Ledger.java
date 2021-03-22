@@ -36,7 +36,7 @@ public class Ledger extends Function
 			printStream.println("Identity: "+context.getNode().getIdentity());
 			printStream.println("Current head: "+context.getLedger().getHead());
 			printStream.println("Ledger timestamp: "+Time.getLedgerTimeSeconds()+" / "+new Date(Time.getLedgerTimeMS())); // TODO only accurate for simulated time
-			printStream.println("Processed atoms: "+context.getMetaData().get("ledger.processed.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.processed.atoms.total", 0l));
+			printStream.println("Atoms (P/L/T): "+context.getLedger().getAtomHandler().numPending()+"/"+context.getMetaData().get("ledger.processed.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.processed.atoms.total", 0l));
 			printStream.println("Certificates (A/R/T): "+context.getMetaData().get("ledger.commits.certificates.accept", 0l)+"/"+context.getMetaData().get("ledger.commits.certificates.reject", 0l)+"/"+context.getMetaData().get("ledger.commits.certificates", 0l));
 			printStream.println("Accumulation (I/A/T): "+context.getMetaData().get("ledger.accumulator.iterations", 0l)+"/"+(context.getMetaData().get("ledger.accumulator.duration", 0l) / Math.max(1, context.getMetaData().get("ledger.accumulator.iterations", 0l)))+"/"+context.getMetaData().get("ledger.accumulator.duration", 0l));
 			printStream.println("Block throughput: "+context.getMetaData().get("ledger.throughput.blocks", 0l));

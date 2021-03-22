@@ -17,6 +17,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
+import org.fuserleer.Universe;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.exceptions.StartupException;
@@ -380,196 +381,206 @@ public class SyncHandler implements Service
 	@Override
 	public void start() throws StartupException
 	{
-		this.synced = false;
-		
-		this.context.getNetwork().getMessaging().register(SyncBlockMessage.class, this.getClass(), new MessageProcessor<SyncBlockMessage>()
+		try
 		{
-			@Override
-			public void process(final SyncBlockMessage syncBlockMessage, final ConnectedPeer peer)
+			this.synced = false;
+			
+			this.context.getNetwork().getMessaging().register(SyncBlockMessage.class, this.getClass(), new MessageProcessor<SyncBlockMessage>()
 			{
-				SyncHandler.this.lock.lock();
-				try
+				@Override
+				public void process(final SyncBlockMessage syncBlockMessage, final ConnectedPeer peer)
 				{
-					if (syncBlockMessage.getBlock().getHeader().getHeight() <= SyncHandler.this.context.getLedger().getHead().getHeight())
+					SyncHandler.this.lock.lock();
+					try
 					{
-						syncLog.warn(SyncHandler.this.context.getName()+": Block is old "+syncBlockMessage.getBlock().getHeader()+" from "+peer);
-						return;
-					}
-
-					if (SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, syncBlockMessage.getBlock().getHeader().getHash())) == CommitStatus.COMMITTED)
-					{
-						syncLog.warn(SyncHandler.this.context.getName()+": Block is committed "+syncBlockMessage.getBlock().getHeader()+" from "+peer);
-						return;
-					}
-
-					if (syncLog.hasLevel(Logging.DEBUG) == true)
-						syncLog.debug(SyncHandler.this.context.getName()+": Block "+syncBlockMessage.getBlock().getHeader().getHash()+" from "+peer);
-
-					// TODO need a block validation / verification processor
-
-					SyncHandler.this.context.getLedger().getLedgerStore().store(syncBlockMessage.getBlock());
-					SyncHandler.this.blocks.put(syncBlockMessage.getBlock().getHash(), syncBlockMessage.getBlock());
-					SyncHandler.this.blocksRequested.remove(syncBlockMessage.getBlock().getHash());
-				}
-				catch (Exception ex)
-				{
-					syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.sync "+peer, ex);
-				}
-				finally
-				{
-					SyncHandler.this.lock.unlock();
-				}
-			}
-		});
-		
-		this.context.getNetwork().getMessaging().register(GetSyncBlockMessage.class, this.getClass(), new MessageProcessor<GetSyncBlockMessage>()
-		{
-			@Override
-			public void process(final GetSyncBlockMessage getSyncBlockMessage, final ConnectedPeer peer)
-			{
-				Executor.getInstance().submit(new Executable() 
-				{
-					@Override
-					public void execute()
-					{
-						SyncHandler.this.lock.lock();
-						try
+						if (syncBlockMessage.getBlock().getHeader().getHeight() <= SyncHandler.this.context.getLedger().getHead().getHeight())
 						{
-							if (syncLog.hasLevel(Logging.DEBUG) == true)
-								syncLog.debug(SyncHandler.this.context.getName()+": Block request for "+getSyncBlockMessage.getInventory().size()+" from "+peer);
-							
-							for (Hash blockHash : getSyncBlockMessage.getInventory())
+							syncLog.warn(SyncHandler.this.context.getName()+": Block is old "+syncBlockMessage.getBlock().getHeader()+" from "+peer);
+							return;
+						}
+	
+						if (SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, syncBlockMessage.getBlock().getHeader().getHash())) == CommitStatus.COMMITTED)
+						{
+							syncLog.warn(SyncHandler.this.context.getName()+": Block is committed "+syncBlockMessage.getBlock().getHeader()+" from "+peer);
+							return;
+						}
+	
+						if (syncLog.hasLevel(Logging.DEBUG) == true)
+							syncLog.debug(SyncHandler.this.context.getName()+": Block "+syncBlockMessage.getBlock().getHeader().getHash()+" from "+peer);
+	
+						// TODO need a block validation / verification processor
+	
+						SyncHandler.this.context.getLedger().getLedgerStore().store(syncBlockMessage.getBlock());
+						SyncHandler.this.blocks.put(syncBlockMessage.getBlock().getHash(), syncBlockMessage.getBlock());
+						SyncHandler.this.blocksRequested.remove(syncBlockMessage.getBlock().getHash());
+					}
+					catch (Exception ex)
+					{
+						syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.sync "+peer, ex);
+					}
+					finally
+					{
+						SyncHandler.this.lock.unlock();
+					}
+				}
+			});
+			
+			this.context.getNetwork().getMessaging().register(GetSyncBlockMessage.class, this.getClass(), new MessageProcessor<GetSyncBlockMessage>()
+			{
+				@Override
+				public void process(final GetSyncBlockMessage getSyncBlockMessage, final ConnectedPeer peer)
+				{
+					Executor.getInstance().submit(new Executable() 
+					{
+						@Override
+						public void execute()
+						{
+							SyncHandler.this.lock.lock();
+							try
 							{
-								Block block = SyncHandler.this.context.getLedger().getLedgerStore().get(blockHash, Block.class);
-								if (block == null)
+								if (syncLog.hasLevel(Logging.DEBUG) == true)
+									syncLog.debug(SyncHandler.this.context.getName()+": Block request for "+getSyncBlockMessage.getInventory().size()+" from "+peer);
+								
+								for (Hash blockHash : getSyncBlockMessage.getInventory())
 								{
-									if (syncLog.hasLevel(Logging.DEBUG) == true)
-										syncLog.error(SyncHandler.this.context.getName()+": Requested block "+blockHash+" not found for "+peer);
+									Block block = SyncHandler.this.context.getLedger().getLedgerStore().get(blockHash, Block.class);
+									if (block == null)
+									{
+										if (syncLog.hasLevel(Logging.DEBUG) == true)
+											syncLog.error(SyncHandler.this.context.getName()+": Requested block "+blockHash+" not found for "+peer);
+										
+										// TODO disconnect and ban?  Asking for blocks we don't have
+										return;
+									}
+								
+									try
+									{
+										SyncHandler.this.context.getNetwork().getMessaging().send(new SyncBlockMessage(block), peer);
+									}
+									catch (IOException ex)
+									{
+										syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockMessage for "+blockHash+" to "+peer, ex);
+										break;
+									}
+								}
+							}
+							catch (Exception ex)
+							{
+								syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.sync.get " + peer, ex);
+							}
+							finally
+							{
+								SyncHandler.this.lock.unlock();
+							}
+						}
+					});
+				}
+			});
+			
+			this.context.getNetwork().getMessaging().register(GetSyncBlockInventoryMessage.class, this.getClass(), new MessageProcessor<GetSyncBlockInventoryMessage>()
+			{
+				@Override
+				public void process(final GetSyncBlockInventoryMessage getSyncBlockInventoryMessage, final ConnectedPeer peer)
+				{
+					Executor.getInstance().submit(new Executable() 
+					{
+						@Override
+						public void execute()
+						{
+							SyncHandler.this.lock.lock();
+							try
+							{
+								if (syncLog.hasLevel(Logging.DEBUG) == true)
+									syncLog.debug(SyncHandler.this.context.getName()+": Block inventory request from "+getSyncBlockInventoryMessage.getHead()+" from "+peer);
+	
+								List<Hash> inventory = new ArrayList<Hash>();
+								Hash current = getSyncBlockInventoryMessage.getHead();
+								do
+								{
+									Hash next = SyncHandler.this.context.getLedger().getLedgerStore().get(Longs.fromByteArray(current.toByteArray())+1);
+									if (next != null)
+										inventory.add(next);
 									
-									// TODO disconnect and ban?  Asking for blocks we don't have
+									current = next;
+								}
+								while(current != null && inventory.size() < InventoryMessage.MAX_INVENTORY);
+	
+								if (inventory.isEmpty() == false)
+								{
+									try
+									{
+										SyncHandler.this.context.getNetwork().getMessaging().send(new SyncBlockInventoryMessage(inventory), peer);
+									}
+									catch (IOException ex)
+									{
+										syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockInventoryMessage from "+getSyncBlockInventoryMessage.getHead()+" for "+inventory.size()+" blocks to "+peer, ex);
+									}
+								}
+							}
+							catch (Exception ex)
+							{
+								syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.sync.inv.get " + peer, ex);
+							}
+							finally
+							{
+								SyncHandler.this.lock.unlock();
+							}
+						}
+					});
+				}
+			});
+			
+			this.context.getNetwork().getMessaging().register(SyncBlockInventoryMessage.class, this.getClass(), new MessageProcessor<SyncBlockInventoryMessage>()
+			{
+				@Override
+				public void process(final SyncBlockInventoryMessage syncBlockInventoryMessage, final ConnectedPeer peer)
+				{
+					Executor.getInstance().submit(new Executable() 
+					{
+						@Override
+						public void execute()
+						{
+							SyncHandler.this.lock.lock();
+							try
+							{
+								if (syncLog.hasLevel(Logging.DEBUG) == true)
+									syncLog.debug(SyncHandler.this.context.getName()+": Block inventory for "+syncBlockInventoryMessage.getInventory().size()+" headers from " + peer);
+	
+								if (syncBlockInventoryMessage.getInventory().size() == 0)
+								{
+									syncLog.error(SyncHandler.this.context.getName()+": Received empty block inventory from " + peer);
 									return;
 								}
-							
-								try
-								{
-									SyncHandler.this.context.getNetwork().getMessaging().send(new SyncBlockMessage(block), peer);
-								}
-								catch (IOException ex)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockMessage for "+blockHash+" to "+peer, ex);
-									break;
-								}
-							}
-						}
-						catch (Exception ex)
-						{
-							syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.sync.get " + peer, ex);
-						}
-						finally
-						{
-							SyncHandler.this.lock.unlock();
-						}
-					}
-				});
-			}
-		});
-		
-		this.context.getNetwork().getMessaging().register(GetSyncBlockInventoryMessage.class, this.getClass(), new MessageProcessor<GetSyncBlockInventoryMessage>()
-		{
-			@Override
-			public void process(final GetSyncBlockInventoryMessage getSyncBlockInventoryMessage, final ConnectedPeer peer)
-			{
-				Executor.getInstance().submit(new Executable() 
-				{
-					@Override
-					public void execute()
-					{
-						SyncHandler.this.lock.lock();
-						try
-						{
-							if (syncLog.hasLevel(Logging.DEBUG) == true)
-								syncLog.debug(SyncHandler.this.context.getName()+": Block inventory request from "+getSyncBlockInventoryMessage.getHead()+" from "+peer);
-
-							List<Hash> inventory = new ArrayList<Hash>();
-							Hash current = getSyncBlockInventoryMessage.getHead();
-							do
-							{
-								Hash next = SyncHandler.this.context.getLedger().getLedgerStore().get(Longs.fromByteArray(current.toByteArray())+1);
-								if (next != null)
-									inventory.add(next);
 								
-								current = next;
+								SyncHandler.this.blockInventories.putAll(peer, syncBlockInventoryMessage.getInventory());
 							}
-							while(current != null && inventory.size() < InventoryMessage.MAX_INVENTORY);
-
-							if (inventory.isEmpty() == false)
+							catch (Exception ex)
 							{
-								try
-								{
-									SyncHandler.this.context.getNetwork().getMessaging().send(new SyncBlockInventoryMessage(inventory), peer);
-								}
-								catch (IOException ex)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockInventoryMessage from "+getSyncBlockInventoryMessage.getHead()+" for "+inventory.size()+" blocks to "+peer, ex);
-								}
+								syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.header.inv "+peer, ex);
+							}
+							finally
+							{
+								SyncHandler.this.lock.unlock();
 							}
 						}
-						catch (Exception ex)
-						{
-							syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.sync.inv.get " + peer, ex);
-						}
-						finally
-						{
-							SyncHandler.this.lock.unlock();
-						}
-					}
-				});
-			}
-		});
-		
-		this.context.getNetwork().getMessaging().register(SyncBlockInventoryMessage.class, this.getClass(), new MessageProcessor<SyncBlockInventoryMessage>()
+					});
+				}
+			});
+			
+			this.context.getEvents().register(this.peerListener);
+			
+			Thread syncProcessorThread = new Thread(this.syncProcessor);
+			syncProcessorThread.setDaemon(true);
+			syncProcessorThread.setName(this.context.getName()+" Sync Processor");
+			syncProcessorThread.start();
+			
+			// SyncHandler starts as OOS, prepare the last known good state
+			prepare();
+		}
+		catch (Throwable t)
 		{
-			@Override
-			public void process(final SyncBlockInventoryMessage syncBlockInventoryMessage, final ConnectedPeer peer)
-			{
-				Executor.getInstance().submit(new Executable() 
-				{
-					@Override
-					public void execute()
-					{
-						SyncHandler.this.lock.lock();
-						try
-						{
-							if (syncLog.hasLevel(Logging.DEBUG) == true)
-								syncLog.debug(SyncHandler.this.context.getName()+": Block inventory for "+syncBlockInventoryMessage.getInventory().size()+" headers from " + peer);
-
-							if (syncBlockInventoryMessage.getInventory().size() == 0)
-							{
-								syncLog.error(SyncHandler.this.context.getName()+": Received empty block inventory from " + peer);
-								return;
-							}
-							
-							SyncHandler.this.blockInventories.putAll(peer, syncBlockInventoryMessage.getInventory());
-						}
-						catch (Exception ex)
-						{
-							syncLog.error(SyncHandler.this.context.getName()+": ledger.messages.block.header.inv "+peer, ex);
-						}
-						finally
-						{
-							SyncHandler.this.lock.unlock();
-						}
-					}
-				});
-			}
-		});
-		
-		this.context.getEvents().register(this.peerListener);
-		
-		Thread syncProcessorThread = new Thread(this.syncProcessor);
-		syncProcessorThread.setDaemon(true);
-		syncProcessorThread.setName(this.context.getName()+" Sync Processor");
-		syncProcessorThread.start();
+			throw new StartupException(t);
+		}
 	}
 
 	@Override
@@ -582,6 +593,7 @@ public class SyncHandler implements Service
 	
 	private void reset()
 	{
+		SyncHandler.this.atoms.clear();
 		SyncHandler.this.blockInventories.clear();
 		SyncHandler.this.blocks.clear();
 		SyncHandler.this.blocksRequested.clear();
@@ -737,7 +749,7 @@ public class SyncHandler implements Service
 		}
 	}
 	
-	private boolean checkSynced()
+	private boolean checkSynced() throws IOException, ValidationException, StateLockedException
 	{
 		if (this.context.getConfiguration().has("singleton") == true)
 		{
@@ -765,6 +777,8 @@ public class SyncHandler implements Service
 		{
 			setSynced(false);
 			syncLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+OOSTrigger);
+			
+			prepare();
 		}
 		else if (isSynced() == false)
 		{
@@ -783,8 +797,6 @@ public class SyncHandler implements Service
 			if (this.blocksRequested.isEmpty() == true && 
 				this.blocks.isEmpty() == true && syncAcquired == true)
 			{
-				setSynced(true);
-
 				synchronized(this.atoms)
 				{
 					// Inject remaining atoms that may be in a pending consensus phase
@@ -793,10 +805,10 @@ public class SyncHandler implements Service
 						this.context.getLedger().getAtomHandler().push(pendingAtom);
 						this.context.getLedger().getStateHandler().push(pendingAtom);
 					}
-
-					this.atoms.clear();
 				}
 				
+				setSynced(true);
+
 				// Tell all sync peers we're synced
 				NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
 				for (ConnectedPeer syncPeer : syncPeers)
@@ -829,6 +841,63 @@ public class SyncHandler implements Service
 		}				
 		
 		return isSynced();
+	}
+	
+	/**
+	 * Prepares the SyncHandler for a sync attempt, loading the latest known snapshot of state
+	 * 
+	 * @throws IOException 
+	 * @throws ValidationException 
+	 * @throws StateLockedException 
+	 */
+	private void prepare() throws IOException, ValidationException, StateLockedException
+	{
+		// Nothing to prepare if at genesis head
+		if (this.context.getLedger().getHead().getHash().equals(Universe.getDefault().getGenesis().getHash()) == true)
+			return;
+		
+		// Collect the recent blocks within the commit timeout window from the head 
+		final LinkedList<Block> recentBlocks = new LinkedList<Block>();
+		Block current = this.context.getLedger().getLedgerStore().get(this.context.getLedger().getHead().getHash(), Block.class);
+		do
+		{
+			recentBlocks.add(current);
+			current = this.context.getLedger().getLedgerStore().get(current.getHeader().getPrevious(), Block.class);
+		}
+		while (current.getHash().equals(Universe.getDefault().getGenesis().getHash()) == false && 
+			   current.getHeader().getHeight() > this.context.getLedger().getHead().getHeight() - PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS);
+		
+		Collections.reverse(recentBlocks);
+		
+		for (Block block : recentBlocks)
+		{
+			//  Process certificates contained in block
+			for (AtomCertificate certificate : block.getCertificates())
+			{
+				PendingAtom pendingAtom = this.atoms.get(certificate.getAtom());
+				if (pendingAtom == null)
+				{
+					if (this.context.getLedger().getLedgerStore().has(certificate.getAtom()) == true)
+						continue;
+					
+					throw new ValidationException(this.context.getName()+": Pending atom "+certificate.getAtom()+" not found for certificate "+certificate.getHash()+" in block "+block.getHash());
+				}
+				
+				pendingAtom.setCertificate(certificate);
+				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
+				this.atoms.remove(pendingAtom.getHash());
+			}
+
+			// Process the atoms contained in block
+			for (Atom atom : block.getAtoms())
+			{
+				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
+				this.atoms.put(pendingAtom.getHash(), pendingAtom);
+				pendingAtom.prepare();
+				this.context.getLedger().getStateAccumulator().lock(pendingAtom);
+				pendingAtom.provision(block.getHeader());
+			}
+		}
 	}
 	
     boolean isSynced()

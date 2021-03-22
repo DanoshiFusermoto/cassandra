@@ -54,7 +54,9 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
+import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
@@ -306,68 +308,8 @@ public final class StatePool implements Service
 										continue;
 									}
 									
-									if (stateVote.verify(stateVote.getOwner()) == false)
-									{
-										statePoolLog.error(StatePool.this.context.getName()+": State vote failed verification for "+stateVote.getOwner());
-										// TODO penalty
-										continue;
-									}
-							
-									StatePool.this.lock.writeLock().lock();
-									PendingAtom pendingAtom;
-									PendingState pendingState;
-									try
-									{
-										Hash stateAtomBlockHash = Hash.from(stateVote.getState().get(), stateVote.getAtom(), stateVote.getBlock());
-										pendingState = StatePool.this.states.get(stateAtomBlockHash);
-										// Creating pending state objects from vote if particle not seen or committed
-										if (pendingState == null)
-										{
-											pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
-											if (pendingAtom == null)
-											{
-												statePoolLog.warn(StatePool.this.context.getName()+": Pending atom not found or completed for received state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
-												continue;
-											}
-
-											pendingState = new PendingState(stateVote.getState(), stateVote.getAtom(), stateVote.getBlock());
-											add(pendingState);
-										}
-										else
-										{
-											pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(pendingState.getAtom());
-											if (pendingAtom == null)
-											{
-												statePoolLog.error(StatePool.this.context.getName()+": Pending atom "+pendingState.getAtom()+" for pending state "+pendingState.getKey()+" not found");
-												continue;
-											}
-										}
-
-										if (pendingState.getBlock().equals(stateVote.getBlock()) == false || 
-											pendingState.getAtom().equals(stateVote.getAtom()) == false)
-										{
-											statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
-											// Disconnect and ban?
-											continue;
-										}
-												
-										long votePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), stateVote.getOwner());
-										if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
-										{
-											stateVotesToBroadcast.add(stateVote);
-											
-											if (pendingState.getCertificate() == null && pendingAtom.getStatus().greaterThan(CommitStatus.PROVISIONED) == true)
-											{
-												StateCertificate stateCertificate = pendingState.buildCertificate();
-												if (stateCertificate != null)
-													StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
-											}
-										}
-									}
-									finally
-									{
-										StatePool.this.lock.writeLock().unlock();
-									}
+									if (process(stateVote) == true)
+										stateVotesToBroadcast.add(stateVote);
 								}
 								catch (Exception ex)
 								{
@@ -589,6 +531,50 @@ public final class StatePool implements Service
 		});
 		
 		// SYNC //
+		this.context.getNetwork().getGossipHandler().register(StateVote.class, new SyncInventory() 
+		{
+			@Override
+			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
+			{
+				if (type.equals(StateVote.class) == false)
+				{
+					gossipLog.error(StatePool.this.context.getName()+": State vote type expected but got "+type);
+					return Collections.emptyList();
+				}
+				
+				StatePool.this.lock.writeLock().lock();
+				try
+				{
+					Set<Hash> required = new HashSet<Hash>();
+					for (Hash item : items)
+					{
+						if (StatePool.this.votesToCountQueue.contains(item) == true)
+							continue;
+						
+						final StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
+						if (stateVote != null)
+						{
+							try
+							{
+								StatePool.this.process(stateVote);
+							}
+							catch(Exception ex)
+							{
+								statePoolLog.error(StatePool.this.context.getName()+": Failed to process state vote on sync "+stateVote, ex);
+							}
+						}
+						else
+							required.add(item);
+					}
+					return required;
+				}
+				finally
+				{
+					StatePool.this.lock.writeLock().unlock();
+				}
+			}
+		});
+
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
@@ -626,9 +612,9 @@ public final class StatePool implements Service
 							int offset = 0;
 							while(offset < stateVoteInventory.size())
 							{
-								BroadcastInventoryMessage stateVoteInventoryMessage = new BroadcastInventoryMessage(stateVoteInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, stateVoteInventory.size())), StateVote.class);
+								SyncInventoryMessage stateVoteInventoryMessage = new SyncInventoryMessage(stateVoteInventory.subList(offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, stateVoteInventory.size())), StateVote.class);
 								StatePool.this.context.getNetwork().getMessaging().send(stateVoteInventoryMessage, peer);
-								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+								offset += SyncInventoryMessage.MAX_ITEMS; 
 							}
 						}
 						catch (Exception ex)
@@ -816,6 +802,68 @@ public final class StatePool implements Service
 		}
 	}
 	
+	private boolean process(final StateVote stateVote) throws IOException, CryptoException, ValidationException
+	{
+		Objects.requireNonNull(stateVote, "State vote is null");
+		
+		if (stateVote.verify(stateVote.getOwner()) == false)
+		{
+			statePoolLog.error(StatePool.this.context.getName()+": State vote failed verification for "+stateVote.getOwner());
+			return false;
+		}
+
+		StatePool.this.lock.writeLock().lock();
+		PendingAtom pendingAtom;
+		PendingState pendingState;
+		try
+		{
+			Hash stateAtomBlockHash = Hash.from(stateVote.getState().get(), stateVote.getAtom(), stateVote.getBlock());
+			pendingState = StatePool.this.states.get(stateAtomBlockHash);
+			// Creating pending state objects from vote if particle not seen or committed
+			if (pendingState == null)
+			{
+				pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
+				if (pendingAtom == null)
+				{
+					statePoolLog.warn(StatePool.this.context.getName()+": Pending atom not found or completed for received state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
+					return false;
+				}
+
+				pendingState = new PendingState(stateVote.getState(), stateVote.getAtom(), stateVote.getBlock());
+				add(pendingState);
+			}
+			else
+			{
+				pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(pendingState.getAtom());
+				if (pendingAtom == null)
+					throw new IllegalStateException("Pending atom "+pendingState.getAtom()+" for pending state "+pendingState.getKey()+" not found");
+			}
+
+			if (pendingState.getBlock().equals(stateVote.getBlock()) == false || 
+				pendingState.getAtom().equals(stateVote.getAtom()) == false)
+				throw new IllegalStateException("State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
+					
+			long votePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), stateVote.getOwner());
+			if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
+			{
+				if (pendingState.getCertificate() == null && pendingAtom.getStatus().greaterThan(CommitStatus.PROVISIONED) == true)
+				{
+					StateCertificate stateCertificate = pendingState.buildCertificate();
+					if (stateCertificate != null)
+						StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+				}
+				
+				return true;
+			}
+			
+			return false;
+		}
+		finally
+		{
+			StatePool.this.lock.writeLock().unlock();
+		}
+	}
+	
 	public int size()
 	{
 		this.lock.writeLock().lock();
@@ -906,6 +954,9 @@ public final class StatePool implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
+			if (event.isSynced() == true)
+				return;
+
 			StatePool.this.lock.writeLock().lock();
 			try
 			{

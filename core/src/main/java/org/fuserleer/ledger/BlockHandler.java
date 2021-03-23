@@ -45,7 +45,6 @@ import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.BlockMessage;
 import org.fuserleer.ledger.messages.GetBlockMessage;
-import org.fuserleer.ledger.messages.GetBlocksMessage;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -55,6 +54,7 @@ import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
 import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
+import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
@@ -146,20 +146,16 @@ public class BlockHandler implements Service
 						
 						PendingBlock generatedBlock = null;
 						long generationStart = Time.getSystemTime();
-						// Safe to attempt to build a block outside of a lock 
-						// TODO crude throttling if blocks are happening too fast as difficulty adjustment isn't implemented yet
-//						if (BlockHandler.this.bestBranch == null || 
-//							BlockHandler.this.bestBranch.getLast().getHeader().getTimestamp() < Time.getSystemTime() - TimeUnit.SECONDS.toMillis((long) Math.log(Math.abs(Shorts.fromByteArray(BlockHandler.this.bestBranch.getLast().getHash().toByteArray(), Hash.BYTES-Short.BYTES) * BlockHandler.this.bestBranch.size()))))
-						{
+						// Safe to attempt to build a block outside of a lock
+						if (buildCandidate.getHeight() >= BlockHandler.this.buildClock.get())
 							generatedBlock = BlockHandler.this.build(buildCandidate, BlockHandler.this.bestBranch);
-						}
 						
 						BlockHandler.this.lock.writeLock().lock();
 						try
 						{
 							if (generatedBlock != null && BlockHandler.this.upsertBlock(generatedBlock) == true)
 							{
-								BlockHandler.this.lastGenerated.set(generatedBlock.getHeader());
+								BlockHandler.this.buildClock.set(generatedBlock.getHeader().getHeight());
 								this.generatedCount++;
 								this.generatedTimeTotal += (Time.getSystemTime()-generationStart);
 								blocksLog.info(BlockHandler.this.context.getName()+": Generated block "+generatedBlock.getHeader()+" in "+(Time.getSystemTime()-generationStart)+"ms / "+(this.generatedTimeTotal/this.generatedCount)+" ms average");
@@ -279,8 +275,8 @@ public class BlockHandler implements Service
 	private final Set<PendingBranch>			pendingBranches;
 	
 	private final AtomicLong					voteClock;
+	private final AtomicLong					buildClock;
 	private final AtomicReference<BlockHeader> 	currentVote;
-	private final AtomicReference<BlockHeader> 	lastGenerated;
 	private PendingBranch 						bestBranch;
 
 	// Sync cache
@@ -297,8 +293,8 @@ public class BlockHandler implements Service
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, BlockVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.blockRegulator = new BlockRegulator(context);
 		this.voteClock = new AtomicLong(0);
+		this.buildClock = new AtomicLong(0);
 		this.currentVote = new AtomicReference<BlockHeader>();
-		this.lastGenerated = new AtomicReference<BlockHeader>();
 		this.bestBranch = null;
 	}
 
@@ -329,6 +325,12 @@ public class BlockHandler implements Service
 
 		this.context.getNetwork().getGossipHandler().register(BlockHeader.class, new GossipInventory() 
 		{
+			@Override
+			public int requestLimit()
+			{
+				return 8;
+			}
+
 			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws Throwable
 			{
@@ -438,6 +440,12 @@ public class BlockHandler implements Service
 
 		this.context.getNetwork().getGossipHandler().register(BlockVote.class, new GossipInventory() 
 		{
+			@Override
+			public int requestLimit()
+			{
+				return GetInventoryItemsMessage.MAX_ITEMS;
+			}
+
 			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
 			{
@@ -570,60 +578,6 @@ public class BlockHandler implements Service
 			}
 		});
 
-		this.context.getNetwork().getMessaging().register(GetBlocksMessage.class, this.getClass(), new MessageProcessor<GetBlocksMessage>()
-		{
-			@Override
-			public void process(final GetBlocksMessage getBlocksMessage, final ConnectedPeer peer)
-			{
-				Executor.getInstance().submit(new Executable() 
-				{
-					@Override
-					public void execute()
-					{
-						BlockHandler.this.lock.readLock().lock();
-						try
-						{
-							if (blocksLog.hasLevel(Logging.DEBUG) == true)
-								blocksLog.debug(BlockHandler.this.context.getName()+": Blocks request "+getBlocksMessage.getHead()+" to "+getBlocksMessage.getBlock()+" from "+peer);
-							
-							Hash current = getBlocksMessage.getHead();
-							while(current != null)
-							{
-								Block block = BlockHandler.this.context.getLedger().getLedgerStore().get(current, Block.class);
-								if (block == null)
-								{
-									blocksLog.error(BlockHandler.this.context.getName()+": Requested block "+current+" not found for "+peer);
-									return;
-								}
-							
-								try
-								{
-									BlockHandler.this.context.getNetwork().getMessaging().send(new BlockMessage(block), peer);
-								}
-								catch (IOException ex)
-								{
-									blocksLog.error(BlockHandler.this.context.getName()+": Unable to send BlockMessage for "+current+" to "+peer, ex);
-								}
-
-								if (block.getHash().equals(Universe.getDefault().getGenesis().getHash()) == false)
-									current = block.getHeader().getPrevious();
-								else
-									current = null;
-							}
-						}
-						catch (Exception ex)
-						{
-							blocksLog.error(BlockHandler.this.context.getName()+": ledger.messages.blocks.get " + peer, ex);
-						}
-						finally
-						{
-							BlockHandler.this.lock.readLock().unlock();
-						}
-					}
-				});
-			}
-		});
-		
 		// SYNC //
 		this.context.getNetwork().getGossipHandler().register(BlockHeader.class, new SyncInventory() 
 		{
@@ -1457,6 +1411,7 @@ public class BlockHandler implements Service
 		{
 			if (BlockHandler.this.voteClock.get() < blockCommittedEvent.getBlock().getHeader().getHeight())
 			{
+				BlockHandler.this.buildClock.set(blockCommittedEvent.getBlock().getHeader().getHeight());
 				BlockHandler.this.voteClock.set(blockCommittedEvent.getBlock().getHeader().getHeight());
 				BlockHandler.this.currentVote.set(null);
 			}

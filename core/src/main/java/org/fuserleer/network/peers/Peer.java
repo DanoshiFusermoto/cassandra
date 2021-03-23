@@ -144,12 +144,7 @@ public class Peer extends BasicObject
 	@Override
 	public final int hashCode()
 	{
-		int result = 17;
-
-		result = 31 * result + getURI().getHost().toLowerCase().hashCode();
-		result = 31 * result + getNode().getIdentity().hashCode();
-
-		return result;
+		return Objects.hash(getURI().toString().toLowerCase(), getNode().getIdentity());
 	}
 
 	@Override

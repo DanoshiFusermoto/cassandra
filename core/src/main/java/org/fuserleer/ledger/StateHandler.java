@@ -382,6 +382,12 @@ public final class StateHandler implements Service
 		this.context.getNetwork().getGossipHandler().register(StateCertificate.class, new GossipInventory() 
 		{
 			@Override
+			public int requestLimit()
+			{
+				return 8;
+			}
+
+			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
 			{
 				if (type.equals(StateCertificate.class) == false)

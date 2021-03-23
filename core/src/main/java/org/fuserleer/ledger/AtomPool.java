@@ -41,6 +41,7 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.CustomInteger;
 import org.fuserleer.utils.Longs;
@@ -225,6 +226,12 @@ public final class AtomPool implements Service
 		
 		this.context.getNetwork().getGossipHandler().register(AtomVote.class, new GossipInventory() 
 		{
+			@Override
+			public int requestLimit()
+			{
+				return GetInventoryItemsMessage.MAX_ITEMS;
+			}
+
 			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws Throwable
 			{

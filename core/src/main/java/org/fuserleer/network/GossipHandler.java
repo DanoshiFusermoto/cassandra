@@ -57,7 +57,7 @@ public class GossipHandler implements Service
 		
 		GossipPeerTask(final ConnectedPeer peer, final Map<Hash, Long> items, final Class<? extends Primitive> type)
 		{
-			super(peer, 10, TimeUnit.SECONDS);
+			super(peer, 30, TimeUnit.SECONDS);
 			
 			this.type = type;
 			this.items = new HashMap<Hash, Long>(items);
@@ -302,7 +302,7 @@ public class GossipHandler implements Service
 											try
 											{
 												if (gossipLog.hasLevel(Logging.DEBUG) == true)
-													gossipLog.debug(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
+													gossipLog.debug(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems()+" to " + connectedPeer);
 
 												GossipHandler.this.context.getNetwork().getMessaging().send(broadcastInventoryMessage, connectedPeer);
 											}
@@ -326,6 +326,13 @@ public class GossipHandler implements Service
 						Collections.shuffle(requestTypes);
 						for (Class<? extends Primitive> type : requestTypes)
 						{
+							GossipInventory inventoryProcessor = GossipHandler.this.inventoryProcessors.get(type);
+							if (inventoryProcessor == null)
+							{
+								gossipLog.error(GossipHandler.this.context.getName()+": Inventory processor for "+type+" is not found");
+								continue;
+							}
+
 							final List<Hash> requestQueue = new ArrayList<>(GossipHandler.this.toRequest.get(type));
 							if (requestQueue.isEmpty() == true)
 								continue;
@@ -348,7 +355,7 @@ public class GossipHandler implements Service
 									
 									toRequest.add(item);
 									
-									if (toRequest.size() == GetInventoryItemsMessage.MAX_ITEMS)
+									if (toRequest.size() == inventoryProcessor.requestLimit())
 										break;
 								}
 								
@@ -427,8 +434,8 @@ public class GossipHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 
-		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
+//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override

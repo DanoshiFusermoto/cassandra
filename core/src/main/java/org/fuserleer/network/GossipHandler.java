@@ -238,8 +238,17 @@ public class GossipHandler implements Service
 						Thread.sleep(100);
 
 						// TODO convert to a wait / notify
-						if (toBroadcast.isEmpty() && toRequest.isEmpty() && GossipHandler.this.broadcastRequestSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
+						if (GossipHandler.this.toBroadcast.isEmpty() == true && 
+							GossipHandler.this.toRequest.isEmpty() == true && 
+							GossipHandler.this.broadcastRequestSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
 							continue;
+						
+						if (GossipHandler.this.context.getNode().isSynced() == false)
+						{
+							GossipHandler.this.toBroadcast.clear();
+							GossipHandler.this.toRequest.clear();
+							continue;
+						}
 						
 						// Broadcast
 						final List<Class<? extends Primitive>> broadcastTypes = new ArrayList<>(GossipHandler.this.toBroadcast.keySet());
@@ -249,61 +258,58 @@ public class GossipHandler implements Service
 							if (broadcastQueue.isEmpty() == true)
 								continue;
 							
-							if (GossipHandler.this.context.getNode().isSynced() == true)
+							GossipFilter filter = GossipHandler.this.broadcastFilters.get(type);
+							if (filter != null)
 							{
-								GossipFilter filter = GossipHandler.this.broadcastFilters.get(type);
-								if (filter != null)
+								Multimap<Long, Hash> toBroadcast = HashMultimap.create();
+								for (Broadcast broadcast : broadcastQueue)
 								{
-									Multimap<Long, Hash> toBroadcast = HashMultimap.create();
-									for (Broadcast broadcast : broadcastQueue)
+									try
 									{
-										try
-										{
-											if (broadcast.getShardGroups().isEmpty() == true)
-												broadcast.setShardGroups(filter.filter(broadcast.getPrimitive()));
-										}
-										catch (Exception ex)
-										{
-											gossipLog.error(GossipHandler.this.context.getName()+": Filter for "+type+" failed on "+broadcast.getPrimitive(), ex);
-											continue;
-										}
-											
-										for(long shardGroup : broadcast.getShardGroups())
-											toBroadcast.put(shardGroup, broadcast.getPrimitive().getHash());
+										if (broadcast.getShardGroups().isEmpty() == true)
+											broadcast.setShardGroups(filter.filter(broadcast.getPrimitive()));
 									}
-									
-									for (long shardGroup : toBroadcast.keySet())
+									catch (Exception ex)
 									{
-										int offset = 0;
-										List<Hash> toBroadcastList = new ArrayList<Hash>(toBroadcast.get(shardGroup));
-										while(offset < toBroadcastList.size())
+										gossipLog.error(GossipHandler.this.context.getName()+": Filter for "+type+" failed on "+broadcast.getPrimitive(), ex);
+										continue;
+									}
+										
+									for(long shardGroup : broadcast.getShardGroups())
+										toBroadcast.put(shardGroup, broadcast.getPrimitive().getHash());
+								}
+								
+								for (long shardGroup : toBroadcast.keySet())
+								{
+									int offset = 0;
+									List<Hash> toBroadcastList = new ArrayList<Hash>(toBroadcast.get(shardGroup));
+									while(offset < toBroadcastList.size())
+									{
+										BroadcastInventoryMessage broadcastInventoryMessage = new BroadcastInventoryMessage(toBroadcastList.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, toBroadcastList.size())), type);
+										for (ConnectedPeer connectedPeer : GossipHandler.this.context.getNetwork().get(StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(shardGroup)))
 										{
-											BroadcastInventoryMessage broadcastInventoryMessage = new BroadcastInventoryMessage(toBroadcastList.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, toBroadcastList.size())), type);
-											for (ConnectedPeer connectedPeer : GossipHandler.this.context.getNetwork().get(StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(shardGroup)))
+											if (connectedPeer.getNode().isSynced() == false)
 											{
-												if (connectedPeer.getNode().isSynced() == false)
-												{
-													if (gossipLog.hasLevel(Logging.DEBUG) == true)
-														gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) broadcast of inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
+												if (gossipLog.hasLevel(Logging.DEBUG) == true)
+													gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) broadcast of inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
 
-													continue;
-												}
-												
-												try
-												{
-													if (gossipLog.hasLevel(Logging.DEBUG) == true)
-														gossipLog.debug(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
-
-													GossipHandler.this.context.getNetwork().getMessaging().send(broadcastInventoryMessage, connectedPeer);
-												}
-												catch (IOException ex)
-												{
-													gossipLog.error(GossipHandler.this.context.getName()+": Unable to send BroadcastInventoryMessage of "+toBroadcastList+" items in shard group "+shardGroup+" to "+connectedPeer, ex);
-												}
+												continue;
 											}
 											
-											offset += BroadcastInventoryMessage.MAX_ITEMS;
+											try
+											{
+												if (gossipLog.hasLevel(Logging.DEBUG) == true)
+													gossipLog.debug(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
+
+												GossipHandler.this.context.getNetwork().getMessaging().send(broadcastInventoryMessage, connectedPeer);
+											}
+											catch (IOException ex)
+											{
+												gossipLog.error(GossipHandler.this.context.getName()+": Unable to send BroadcastInventoryMessage of "+toBroadcastList+" items in shard group "+shardGroup+" to "+connectedPeer, ex);
+											}
 										}
+										
+										offset += BroadcastInventoryMessage.MAX_ITEMS;
 									}
 								}
 							}
@@ -588,7 +594,17 @@ public class GossipHandler implements Service
 									continue;
 								}
 								else
+								{
+									if (GossipHandler.this.context.getLedger().isSynced() == false)
+									{
+										if (gossipLog.hasLevel(Logging.DEBUG) == true)
+											gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) processing of inventory item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from " + peer);
+
+										continue;
+									}
+									
 									GossipHandler.this.receiverProcessors.get(inventoryItemsMessage.getType()).receive(item);
+								}
 							}
 							
 							if (unrequested.isEmpty() == false)

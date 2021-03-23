@@ -293,6 +293,23 @@ public final class StatePool implements Service
 						if (StatePool.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
 							continue;
 
+						List<StateVote> stateVotesToSync = new ArrayList<StateVote>();
+						StatePool.this.votesToSyncQueue.drainTo(stateVotesToSync, 64);
+						if (stateVotesToSync.isEmpty() == false)
+						{
+							for (StateVote stateVote : stateVotesToSync)
+							{
+								try
+								{
+									process(stateVote);
+								}
+								catch (Exception ex)
+								{
+									statePoolLog.error(StatePool.this.context.getName()+": Error syncing vote for " + stateVote, ex);
+								}
+							}
+						}
+
 						List<StateVote> stateVotesToBroadcast = new ArrayList<StateVote>();
 						List<StateVote> stateVotesToCount = new ArrayList<StateVote>();
 						StatePool.this.votesToCountQueue.drainTo(stateVotesToCount, 64);
@@ -411,6 +428,7 @@ public final class StatePool implements Service
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 	private final BlockingQueue<PendingState> votesToCastQueue;
+	private final MappedBlockingQueue<Hash, StateVote> votesToSyncQueue;
 	private final MappedBlockingQueue<Hash, StateVote> votesToCountQueue;
 	private final Map<Hash, PendingState> states = new HashMap<Hash, PendingState>();
 	
@@ -422,6 +440,7 @@ public final class StatePool implements Service
 		this.context = Objects.requireNonNull(context, "Context is null");
 		
 		this.votesToCastQueue = new LinkedBlockingQueue<PendingState>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.votesToSyncQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		
 //		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
@@ -553,14 +572,8 @@ public final class StatePool implements Service
 						final StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
 						if (stateVote != null)
 						{
-							try
-							{
-								StatePool.this.process(stateVote);
-							}
-							catch(Exception ex)
-							{
-								statePoolLog.error(StatePool.this.context.getName()+": Failed to process state vote on sync "+stateVote, ex);
-							}
+							StatePool.this.votesToSyncQueue.put(stateVote.getHash(), stateVote);
+							StatePool.this.voteProcessorSemaphore.release();
 						}
 						else
 							required.add(item);
@@ -963,6 +976,7 @@ public final class StatePool implements Service
 				StatePool.this.voteProcessorSemaphore.drainPermits();
 				StatePool.this.states.clear();
 				StatePool.this.votesToCastQueue.clear();
+				StatePool.this.votesToSyncQueue.clear();
 				StatePool.this.votesToCountQueue.clear();
 			}
 			finally

@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -226,6 +227,8 @@ public class GossipHandler implements Service
 	
 	private Executable broadcastProcessor = new Executable()
 	{
+		private long lastHousekeeping = System.currentTimeMillis(); 
+		
 		@Override
 		public void execute()
 		{
@@ -362,7 +365,48 @@ public class GossipHandler implements Service
 						}
 						
 						// Housekeeping
-						// TODO clean up toRequest queue which may have stale requests due to failures that none of the current connected validators are sources for
+						if (System.currentTimeMillis() - this.lastHousekeeping > TimeUnit.MINUTES.toMillis(1))
+						{
+							GossipHandler.this.lock.writeLock().lock();
+							try
+							{
+								List<Class<? extends Primitive>> types = new ArrayList<Class<? extends Primitive>>(GossipHandler.this.toRequest.keySet());
+								for (Class<? extends Primitive> type : types)
+								{
+									Iterator<Hash> itemIterator = GossipHandler.this.toRequest.get(type).iterator();
+									while(itemIterator.hasNext() == true)
+									{
+										Hash item = itemIterator.next();
+
+										boolean hasSource = false;
+										for (ConnectedPeer peer : GossipHandler.this.requestSources.keySet())
+										{
+											if (peer.getState().equals(PeerState.CONNECTED) == false)
+												continue;
+											
+											if (GossipHandler.this.requestSources.containsEntry(peer, item) == false)
+												continue;
+											
+											hasSource = true;
+											break;
+										}
+										
+										if (hasSource == false)
+										{
+											itemIterator.remove();
+											gossipLog.warn(GossipHandler.this.context.getName()+": No sources available for "+item+" of type "+type);
+										}
+									}
+								}
+							}
+							finally
+							{
+								GossipHandler.this.lock.writeLock().unlock();
+							}
+							
+							this.lastHousekeeping = System.currentTimeMillis();
+						}
+						
 					} 
 					catch (InterruptedException e) 
 					{
@@ -400,18 +444,8 @@ public class GossipHandler implements Service
 					@Override
 					public void execute()
 					{
-						GossipHandler.this.lock.writeLock().lock();
 						try
 						{
-							// TODO dont think this is needed / matters here
-/*							if (GossipHandler.this.context.getLedger().isSynced() == false)
-							{
-								if (gossipLog.hasLevel(Logging.DEBUG) == true)
-									gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) processing of broadcast inv type "+broadcastInvMessage.getType()+" containing "+broadcastInvMessage.getItems().size()+" items from " + peer);
-
-								return;
-							}*/
-
 							if (gossipLog.hasLevel(Logging.DEBUG) == true)
 								gossipLog.debug(GossipHandler.this.context.getName()+": Sync inv type "+syncInvMessage.getType()+" containing "+syncInvMessage.getItems().size()+" items from " + peer);
 							
@@ -426,24 +460,28 @@ public class GossipHandler implements Service
 							required.addAll(inventoryProcessor.process(syncInvMessage.getType(), syncInvMessage.getItems()));
 							if (required.isEmpty() == false)
 							{
-								GossipHandler.this.requestSources.putAll(peer, required);
-
-								for (Hash item : required)
+								GossipHandler.this.lock.writeLock().lock();
+								try
 								{
-									if (GossipHandler.this.itemsRequested.containsKey(item) == true)
-										continue;
+									GossipHandler.this.requestSources.putAll(peer, required);
 	
-									GossipHandler.this.toRequest.put(syncInvMessage.getType(), item);
+									for (Hash item : required)
+									{
+										if (GossipHandler.this.itemsRequested.containsKey(item) == true)
+											continue;
+		
+										GossipHandler.this.toRequest.put(syncInvMessage.getType(), item);
+									}
+								}
+								finally
+								{
+									GossipHandler.this.lock.writeLock().unlock();
 								}
 							}
 						}
 						catch (Throwable t)
 						{
 							gossipLog.error(GossipHandler.this.context.getName()+": ledger.messages.gossip.inventory.sync "+peer, t);
-						}
-						finally
-						{
-							GossipHandler.this.lock.writeLock().unlock();
 						}
 					}
 				});
@@ -460,7 +498,6 @@ public class GossipHandler implements Service
 					@Override
 					public void execute()
 					{
-						GossipHandler.this.lock.writeLock().lock();
 						try
 						{
 							if (GossipHandler.this.context.getLedger().isSynced() == false)
@@ -485,24 +522,28 @@ public class GossipHandler implements Service
 							required.addAll(inventoryProcessor.required(broadcastInvMessage.getType(),  broadcastInvMessage.getItems()));
 							if (required.isEmpty() == false)
 							{
-								GossipHandler.this.requestSources.putAll(peer, required);
-
-								for (Hash item : required)
+								GossipHandler.this.lock.writeLock().lock();
+								try
 								{
-									if (GossipHandler.this.itemsRequested.containsKey(item) == true)
-										continue;
+									GossipHandler.this.requestSources.putAll(peer, required);
 	
-									GossipHandler.this.toRequest.put(broadcastInvMessage.getType(), item);
+									for (Hash item : required)
+									{
+										if (GossipHandler.this.itemsRequested.containsKey(item) == true)
+											continue;
+		
+										GossipHandler.this.toRequest.put(broadcastInvMessage.getType(), item);
+									}
+								}
+								finally
+								{
+									GossipHandler.this.lock.writeLock().unlock();
 								}
 							}
 						}
 						catch (Throwable t)
 						{
 							gossipLog.error(GossipHandler.this.context.getName()+": ledger.messages.gossip.inventory.broadcast "+peer, t);
-						}
-						finally
-						{
-							GossipHandler.this.lock.writeLock().unlock();
 						}
 					}
 				});
@@ -577,35 +618,46 @@ public class GossipHandler implements Service
 					@Override
 					public void execute()
 					{
-						GossipHandler.this.lock.writeLock().lock();
 						try
 						{
+							List<Primitive> requested = new ArrayList<Primitive>();
 							List<Primitive> unrequested = new ArrayList<Primitive>();
-							for (Primitive item : inventoryItemsMessage.getItems())
+							GossipHandler.this.lock.writeLock().lock();
+							try
 							{
-								if (gossipLog.hasLevel(Logging.DEBUG) == true)
-									gossipLog.debug(GossipHandler.this.context.getName()+": Received item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from " + peer);
-	
-								GossipHandler.this.received(item);
-								if (GossipHandler.this.itemsRequested.remove(item.getHash()) == null)
+								for (Primitive item : inventoryItemsMessage.getItems())
 								{
-									gossipLog.error(GossipHandler.this.context.getName()+": Received unrequested item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from "+peer);
-									unrequested.add(item);
-									continue;
-								}
-								else
-								{
-									if (GossipHandler.this.context.getLedger().isSynced() == false)
+									if (gossipLog.hasLevel(Logging.DEBUG) == true)
+										gossipLog.debug(GossipHandler.this.context.getName()+": Received item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from " + peer);
+		
+									GossipHandler.this.received(item);
+									if (GossipHandler.this.itemsRequested.remove(item.getHash()) == null)
 									{
-										if (gossipLog.hasLevel(Logging.DEBUG) == true)
-											gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) processing of inventory item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from " + peer);
-
+										gossipLog.error(GossipHandler.this.context.getName()+": Received unrequested item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from "+peer);
+										unrequested.add(item);
 										continue;
 									}
-									
-									GossipHandler.this.receiverProcessors.get(inventoryItemsMessage.getType()).receive(item);
+									else
+									{
+										if (GossipHandler.this.context.getLedger().isSynced() == false)
+										{
+											if (gossipLog.hasLevel(Logging.DEBUG) == true)
+												gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) processing of inventory item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from " + peer);
+	
+											continue;
+										}
+										
+										requested.add(item);
+									}
 								}
 							}
+							finally
+							{
+								GossipHandler.this.lock.writeLock().unlock();
+							}
+							
+							for (Primitive item : requested)
+								GossipHandler.this.receiverProcessors.get(inventoryItemsMessage.getType()).receive(item);
 							
 							if (unrequested.isEmpty() == false)
 								peer.disconnect("Received unrequested items "+unrequested+" of type "+inventoryItemsMessage.getType());
@@ -613,10 +665,6 @@ public class GossipHandler implements Service
 						catch (Throwable t)
 						{
 							gossipLog.error(GossipHandler.this.context.getName()+": ledger.messages.gossip.inventory.items " + peer, t);
-						}
-						finally
-						{
-							GossipHandler.this.lock.writeLock().unlock();
 						}
 					}
 				});

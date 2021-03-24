@@ -354,6 +354,8 @@ public final class StateHandler implements Service
 			@Override
 			public Set<Long> filter(Primitive stateCertificate) throws IOException
 			{
+				// TODO this may be redundant as presenting the broadcast with the shard groups included.
+				//		reason being that if the broadcast is latent, the pending atom is gone from all sources due to a commit accept/reject
 				StateHandler.this.lock.readLock().lock();
 				try
 				{
@@ -881,8 +883,14 @@ public final class StateHandler implements Service
 				if (pendingAtom.addCertificate(certificate) == false)
 					return;
 				
-				this.context.getNetwork().getGossipHandler().broadcast(certificate);
-				cerbyLog.info(StateHandler.this.context.getName()+": Broadcasted state certificate "+certificate);
+				long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(certificate.getHeight());
+				Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
+				shardGroups.remove(ShardMapper.toShardGroup(certificate.getState().get(), numShardGroups));
+				if (shardGroups.isEmpty() == false)
+				{
+					this.context.getNetwork().getGossipHandler().broadcast(certificate, shardGroups);
+					cerbyLog.info(StateHandler.this.context.getName()+": Broadcasted state certificate "+certificate);
+				}
 				
 				pendingAtom.buildCertificate();
 			}

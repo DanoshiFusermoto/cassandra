@@ -666,8 +666,15 @@ public final class Network implements Service
 
 			for (ConnectedPeer peer : this.peers)
 			{
-				if (filter.filter(peer) == true)
-					peers.add(peer);
+				try
+				{
+					if (filter.filter(peer) == true)
+						peers.add(peer);
+				}
+				catch (IOException ex)
+				{
+					networkLog.error(Network.this.context.getName()+": Filter "+filter.getClass()+" for "+peer+" failed", ex);
+				}
 			}
 
 			Collections.shuffle(peers);

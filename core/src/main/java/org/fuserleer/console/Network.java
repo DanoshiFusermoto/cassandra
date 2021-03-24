@@ -15,7 +15,7 @@ import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
-import org.fuserleer.network.peers.filters.AllPeersFilter;
+import org.fuserleer.network.peers.filters.NotLocalPeersFilter;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 
 public class Network extends Function
@@ -52,7 +52,7 @@ public class Network extends Function
 		}
 		else if (commandLine.hasOption("best") == true)
 		{
-			Collection<Peer> bestPeers = context.getNetwork().getPeerStore().get(new AllPeersFilter());
+			Collection<Peer> bestPeers = context.getNetwork().getPeerStore().get(new NotLocalPeersFilter(context.getNode()));
 			for (Peer bestPeer : bestPeers)
 				printStream.println((bestPeer.getNode().getIdentity().asHash().asLong() ^ context.getNode().getIdentity().asHash().asLong())+" "+bestPeer.toString());
 
@@ -79,7 +79,7 @@ public class Network extends Function
 		else if (commandLine.hasOption("known") == true)
 		{
 			// TODO paginate this
-			Collection<Peer> knownPeers = context.getNetwork().getPeerStore().get(0, Short.MAX_VALUE, new AllPeersFilter());
+			Collection<Peer> knownPeers = context.getNetwork().getPeerStore().get(0, Short.MAX_VALUE, new NotLocalPeersFilter(context.getNode()));
 			for (Peer knownPeer : knownPeers)
 				printStream.println(knownPeer.toString());
 		}

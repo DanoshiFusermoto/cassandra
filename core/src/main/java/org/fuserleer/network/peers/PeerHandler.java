@@ -36,6 +36,7 @@ import org.fuserleer.network.peers.events.PeerAvailableEvent;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
 import org.fuserleer.network.peers.filters.AllPeersFilter;
+import org.fuserleer.network.peers.filters.NotLocalPeersFilter;
 import org.fuserleer.network.peers.filters.PeerFilter;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.time.Time;
@@ -115,21 +116,21 @@ public class PeerHandler implements Service
 				@Override
 				public void process (PeersMessage peersMessage, ConnectedPeer peer)
 				{
+					NotLocalPeersFilter filter = new NotLocalPeersFilter(PeerHandler.this.context.getNode());
 					for ( Peer p : peersMessage.getPeers())
 					{
 						if (p.getNode() == null)
 							continue;
-	
-						if (p.getNode().getIdentity().equals(PeerHandler.this.context.getNode().getIdentity()) == true)
-							continue;
-	
 						try
 						{
+							if (filter.filter(p) == false)
+								continue;
+
 							PeerHandler.this.context.getNetwork().getPeerStore().store(p);
 						}
 						catch(IOException ioex)
 						{
-							networklog.error("Failed to store '"+p+"'", ioex);
+							networklog.error(PeerHandler.this.context.getName()+": Failed to store peer "+p, ioex);
 						}
 					}
 				}
@@ -146,12 +147,9 @@ public class PeerHandler implements Service
 						// Chunk the sending of Peers so that UDP can handle it
 						// TODO make this better!
 						PeersMessage peersMessage = new PeersMessage();
-						List<Peer> peers = PeerHandler.this.context.getNetwork().getPeerStore().get(new AllPeersFilter());
+						List<Peer> peers = PeerHandler.this.context.getNetwork().getPeerStore().get(new NotLocalPeersFilter(peer.getNode()));
 						for (Peer p : peers)
 						{
-							if (p.getNode().getIdentity().equals(peer.getNode().getIdentity()))
-								continue;
-	
 							peersMessage.getPeers().add(p);
 	
 							if (peersMessage.getPeers().size() == 64)
@@ -166,7 +164,7 @@ public class PeerHandler implements Service
 					}
 					catch (Exception ex)
 					{
-						networklog.error("peers.get "+peer, ex);
+						networklog.error(PeerHandler.this.context.getName()+": peers.get "+peer, ex);
 					}
 				}
 			});
@@ -184,7 +182,7 @@ public class PeerHandler implements Service
 					}
 					catch (Exception ex)
 					{
-						networklog.error("peer.ping "+peer, ex);
+						networklog.error(PeerHandler.this.context.getName()+": peer.ping "+peer, ex);
 					}
 				}
 			});
@@ -209,7 +207,7 @@ public class PeerHandler implements Service
 					}
 					catch (Exception ex)
 					{
-						networklog.error("peer.pong "+peer, ex);
+						networklog.error(PeerHandler.this.context.getName()+": peer.pong "+peer, ex);
 					}
 				}
 			});

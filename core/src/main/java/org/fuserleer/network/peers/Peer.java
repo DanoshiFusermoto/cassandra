@@ -72,6 +72,7 @@ public class Peer extends BasicObject
 	private transient long 	trafficIn = 0;
 	private transient long 	trafficOut = 0;
 	private transient int 	latency = 0;
+	private transient Integer hashcode = 0;
 	
 	private Peer()
 	{
@@ -144,7 +145,10 @@ public class Peer extends BasicObject
 	@Override
 	public final int hashCode()
 	{
-		return Objects.hash(getURI().toString().toLowerCase(), getNode().getIdentity());
+		if (this.hashcode == null)
+			this.hashcode = Objects.hash(getURI().toString().toLowerCase(), getNode().getIdentity());
+		
+		return this.hashcode;
 	}
 
 	@Override

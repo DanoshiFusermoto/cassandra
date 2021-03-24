@@ -487,7 +487,7 @@ public class GossipHandler implements Service
 
 		this.broadcastQueue = new LinkedBlockingQueue<Broadcast>(this.context.getConfiguration().get("ledger.gossip.queue", 1<<16));
 
-		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
 //		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -682,7 +682,7 @@ public class GossipHandler implements Service
 						{
 							List<Primitive> requested = new ArrayList<Primitive>();
 							List<Primitive> unrequested = new ArrayList<Primitive>();
-							GossipHandler.this.lock.writeLock().lock();
+							GossipHandler.this.lock.readLock().lock();
 							try
 							{
 								for (Primitive item : inventoryItemsMessage.getItems())
@@ -690,9 +690,7 @@ public class GossipHandler implements Service
 									if (gossipLog.hasLevel(Logging.DEBUG) == true)
 										gossipLog.debug(GossipHandler.this.context.getName()+": Received item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from " + peer);
 		
-									Long nonce = GossipHandler.this.itemsRequested.remove(item.getHash());  
-									GossipHandler.this.received(item, nonce);
-									if (nonce == null)
+									if (GossipHandler.this.itemsRequested.containsKey(item.getHash()) == false)
 									{
 										gossipLog.error(GossipHandler.this.context.getName()+": Received unrequested item "+item.getHash()+" of type "+inventoryItemsMessage.getType()+" from "+peer);
 										unrequested.add(item);
@@ -714,17 +712,33 @@ public class GossipHandler implements Service
 							}
 							finally
 							{
-								GossipHandler.this.lock.writeLock().unlock();
+								GossipHandler.this.lock.readLock().unlock();
 							}
 							
 							for (Primitive item : requested)
 								GossipHandler.this.receiverProcessors.get(inventoryItemsMessage.getType()).receive(item);
+							
+							// Cleanup here AFTER processor to prevent multiple requests 
+							GossipHandler.this.lock.writeLock().lock();
+							try
+							{
+								for (Primitive item : inventoryItemsMessage.getItems())
+								{
+									Long nonce = GossipHandler.this.itemsRequested.remove(item.getHash());  
+									GossipHandler.this.received(item, nonce);
+								}
+							}
+							finally
+							{
+								GossipHandler.this.lock.writeLock().unlock();
+							}
 							
 							if (unrequested.isEmpty() == false)
 								peer.disconnect("Received unrequested items "+unrequested+" of type "+inventoryItemsMessage.getType());
 						}
 						catch (Throwable t)
 						{
+							// TODO need some clean up here
 							gossipLog.error(GossipHandler.this.context.getName()+": ledger.messages.gossip.inventory.items " + peer, t);
 						}
 					}

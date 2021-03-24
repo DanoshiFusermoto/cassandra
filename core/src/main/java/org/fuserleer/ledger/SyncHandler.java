@@ -1,8 +1,8 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
+import java.util.AbstractMap;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Map.Entry;
+import java.util.NavigableSet;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -48,9 +49,6 @@ import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
 
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Multimaps;
 import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
 import com.google.common.eventbus.Subscribe;
@@ -62,14 +60,14 @@ public class SyncHandler implements Service
 	
 	private final class SyncPeerTask extends PeerTask 
 	{
-		final Map<Hash, Long> blocks;
+		final Entry<Hash, Long> requestedBlock;
 		final boolean rerequest;
 		
-		SyncPeerTask(final ConnectedPeer peer, final Map<Hash, Long> blocks, final boolean rerequest)
+		SyncPeerTask(final ConnectedPeer peer, final Entry<Hash, Long> block, final boolean rerequest)
 		{
 			super(peer, 10, TimeUnit.SECONDS);
 			
-			this.blocks = new HashMap<Hash, Long>(blocks);
+			this.requestedBlock = block;
 			this.rerequest = rerequest;
 		}
 		
@@ -77,22 +75,14 @@ public class SyncHandler implements Service
 		public void execute()
 		{
 			boolean doReRequest = true;
-			List<Hash> failedBlockRequests = new ArrayList<Hash>();
+			boolean failedRequest = false;
 			
 			SyncHandler.this.lock.lock();
 			try
 			{
 				doReRequest = SyncHandler.this.requestTasks.remove(getPeer(), this);
-				
-				for (Entry<Hash, Long> requestedBlock : this.blocks.entrySet())
-				{
-					if (SyncHandler.this.blocksRequested.containsKey(requestedBlock.getKey()) == true && 
-						SyncHandler.this.blocksRequested.get(requestedBlock.getKey()) == requestedBlock.getValue())
-					{
-						SyncHandler.this.blocksRequested.remove(requestedBlock.getKey());
-						failedBlockRequests.add(requestedBlock.getKey());
-					}
-				}
+				if (SyncHandler.this.blocksRequested.remove(this.requestedBlock.getKey(), this.requestedBlock.getValue()) == true)
+					failedRequest = true;
 			}
 			finally
 			{
@@ -100,13 +90,13 @@ public class SyncHandler implements Service
 			}
 			
 			// Can do the disconnect and re-request outside of the lock
-			if (failedBlockRequests.isEmpty() == false)
+			if (failedRequest == true)
 			{
 				try
 				{
-					syncLog.error(SyncHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.blocks.size()+" blocks "+failedBlockRequests);
+					syncLog.error(SyncHandler.this.context.getName()+": "+getPeer()+" did not respond to block request of "+this.requestedBlock.getKey());
 					if (this.rerequest == false && (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING)))
-						getPeer().disconnect("Did not respond fully to request of "+this.blocks.size()+" blocks "+failedBlockRequests);
+						getPeer().disconnect("Did not respond to block request of "+this.requestedBlock.getKey());
 				}
 				catch (Throwable t)
 				{
@@ -114,7 +104,24 @@ public class SyncHandler implements Service
 				}
 				
 				if (this.rerequest == false && doReRequest == true)
-					rerequest(failedBlockRequests);
+					rerequest(this.requestedBlock.getKey());
+			}
+		}
+
+		public int remaining()
+		{
+			SyncHandler.this.lock.lock();
+			try
+			{
+				if (SyncHandler.this.blocksRequested.containsKey(this.requestedBlock.getKey()) == true && 
+					SyncHandler.this.blocksRequested.get(this.requestedBlock.getKey()) == this.requestedBlock.getValue())
+					return 1;
+
+				return 0;
+			}
+			finally
+			{
+				SyncHandler.this.lock.unlock();
 			}
 		}
 
@@ -122,24 +129,18 @@ public class SyncHandler implements Service
 		public void cancelled()
 		{
 			boolean doReRequest = true;
+			boolean failedRequest = false;
+
 			SyncHandler.this.lock.lock();
 			try
 			{
 				doReRequest = SyncHandler.this.requestTasks.remove(getPeer(), this);
 				
-				List<Hash> failedBlockRequests = new ArrayList<Hash>();
-				for (Entry<Hash, Long> item : this.blocks.entrySet())
-				{
-					if (SyncHandler.this.blocksRequested.containsKey(item.getKey()) == true && 
-						SyncHandler.this.blocksRequested.get(item.getKey()) == item.getValue())
-						failedBlockRequests.add(item.getKey());
-				}
-
-				for (Entry<Hash, Long> requestedBlock : this.blocks.entrySet())
-					SyncHandler.this.blocksRequested.remove(requestedBlock.getKey(), requestedBlock.getValue());
+				if (SyncHandler.this.blocksRequested.remove(this.requestedBlock.getKey(), this.requestedBlock.getValue()) == true)
+					failedRequest = true;
 				
-				if (failedBlockRequests.isEmpty() == false && this.rerequest == false && doReRequest == true)
-					rerequest(failedBlockRequests);
+				if (failedRequest == true && this.rerequest == false && doReRequest == true)
+					rerequest(this.requestedBlock.getKey());
 			}
 			finally
 			{
@@ -147,7 +148,7 @@ public class SyncHandler implements Service
 			}
 		}
 		
-		private void rerequest(final Collection<Hash> blocks)
+		private void rerequest(final Hash block)
 		{
 			// Build the re-requests
 			long rerequestShardGroup = ShardMapper.toShardGroup(getPeer().getNode().getIdentity(), SyncHandler.this.context.getLedger().numShardGroups());
@@ -157,7 +158,7 @@ public class SyncHandler implements Service
 				ConnectedPeer rerequestPeer = rerequestConnectedPeers.get(0);
 				try
 				{
-					SyncHandler.this.request(rerequestPeer, blocks, true);
+					SyncHandler.this.request(rerequestPeer, block, true);
 				}
 				catch (IOException ioex)
 				{
@@ -173,7 +174,7 @@ public class SyncHandler implements Service
 	private final Map<Hash, PendingAtom> atoms;
 	private final Map<Hash, Block> blocks;
 	private final Map<Hash, Long> blocksRequested;
-	private final Multimap<ConnectedPeer, SyncPeerTask> requestTasks;
+	private final Map<ConnectedPeer, SyncPeerTask> requestTasks;
 	private final TreeMultimap<ConnectedPeer, Hash> blockInventories;
 	private boolean synced;
 	
@@ -190,7 +191,7 @@ public class SyncHandler implements Service
 				{
 					try
 					{
-						Thread.sleep(TimeUnit.SECONDS.toMillis(1));
+						Thread.sleep(500);//TimeUnit.SECONDS.toMillis(1));
 						
 						long localShardGroup = ShardMapper.toShardGroup(SyncHandler.this.context.getNode().getIdentity(), SyncHandler.this.context.getLedger().numShardGroups());
 						List<ConnectedPeer> syncPeers = SyncHandler.this.context.getNetwork().get(StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).
@@ -301,6 +302,10 @@ public class SyncHandler implements Service
 									if (SyncHandler.this.blockInventories.containsKey(syncPeer) == false)
 										continue;
 									
+									SyncPeerTask task = SyncHandler.this.requestTasks.get(syncPeer);
+									if (task != null && task.remaining() > 0)
+										continue;
+
 									Iterator<Hash> inventoryIterator = SyncHandler.this.blockInventories.get(syncPeer).iterator();
 									while(inventoryIterator.hasNext() == true)
 									{
@@ -318,8 +323,15 @@ public class SyncHandler implements Service
 
 								try
 								{
-									if (SyncHandler.this.blockInventories.containsKey(syncPeer) == true)
-										SyncHandler.this.request(syncPeer, SyncHandler.this.blockInventories.get(syncPeer), false);
+									NavigableSet<Hash> syncPeerInventory = SyncHandler.this.blockInventories.get(syncPeer);
+									if (syncPeerInventory != null && syncPeerInventory.isEmpty() == false)
+									{
+										for (Hash block : syncPeerInventory)
+										{
+											if (SyncHandler.this.request(syncPeer, block, false) == true)
+												break;
+										}
+									}
 								}
 								catch (Exception ex)
 								{
@@ -372,8 +384,8 @@ public class SyncHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context);
 		this.blocksRequested = Collections.synchronizedMap(new HashMap<Hash, Long>());
-		this.requestTasks = Multimaps.synchronizedMultimap(HashMultimap.create());
-		this.blockInventories = TreeMultimap.create(Ordering.natural(), Collections.reverseOrder());
+		this.requestTasks = Collections.synchronizedMap(new HashMap<ConnectedPeer, SyncPeerTask>());
+		this.blockInventories = TreeMultimap.create(Ordering.natural(), Ordering.natural());
 		this.blocks = Collections.synchronizedMap(new HashMap<Hash, Block>());
 		this.atoms = Collections.synchronizedMap(new HashMap<Hash, PendingAtom>());
 	}
@@ -439,29 +451,25 @@ public class SyncHandler implements Service
 							try
 							{
 								if (syncLog.hasLevel(Logging.DEBUG) == true)
-									syncLog.debug(SyncHandler.this.context.getName()+": Block request for "+getSyncBlockMessage.getInventory().size()+" from "+peer);
+									syncLog.debug(SyncHandler.this.context.getName()+": Block request for "+getSyncBlockMessage.getBlock()+" from "+peer);
 								
-								for (Hash blockHash : getSyncBlockMessage.getInventory())
+								Block block = SyncHandler.this.context.getLedger().getLedgerStore().get(getSyncBlockMessage.getBlock(), Block.class);
+								if (block == null)
 								{
-									Block block = SyncHandler.this.context.getLedger().getLedgerStore().get(blockHash, Block.class);
-									if (block == null)
-									{
-										if (syncLog.hasLevel(Logging.DEBUG) == true)
-											syncLog.error(SyncHandler.this.context.getName()+": Requested block "+blockHash+" not found for "+peer);
+									if (syncLog.hasLevel(Logging.DEBUG) == true)
+										syncLog.error(SyncHandler.this.context.getName()+": Requested block "+getSyncBlockMessage.getBlock()+" not found for "+peer);
 										
-										// TODO disconnect and ban?  Asking for blocks we don't have
-										return;
-									}
+									// TODO disconnect and ban?  Asking for blocks we don't have
+									return;
+								}
 								
-									try
-									{
-										SyncHandler.this.context.getNetwork().getMessaging().send(new SyncBlockMessage(block), peer);
-									}
-									catch (IOException ex)
-									{
-										syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockMessage for "+blockHash+" to "+peer, ex);
-										break;
-									}
+								try
+								{
+									SyncHandler.this.context.getNetwork().getMessaging().send(new SyncBlockMessage(block), peer);
+								}
+								catch (IOException ex)
+								{
+									syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockMessage for "+getSyncBlockMessage.getBlock()+" to "+peer, ex);
 								}
 							}
 							catch (Exception ex)
@@ -544,7 +552,7 @@ public class SyncHandler implements Service
 							try
 							{
 								if (syncLog.hasLevel(Logging.DEBUG) == true)
-									syncLog.debug(SyncHandler.this.context.getName()+": Block inventory for "+syncBlockInventoryMessage.getInventory().size()+" headers from " + peer);
+									syncLog.debug(SyncHandler.this.context.getName()+": Received block header inventory "+syncBlockInventoryMessage.getInventory()+" from " + peer);
 	
 								if (syncBlockInventoryMessage.getInventory().size() == 0)
 								{
@@ -607,70 +615,43 @@ public class SyncHandler implements Service
 		}
 	}
 	
-	private Collection<Hash> request(final ConnectedPeer peer, final Collection<Hash> blocks, final boolean rerequest) throws IOException
+	private boolean request(final ConnectedPeer peer, final Hash block, final boolean rerequest) throws IOException
 	{
-		final List<Hash> blocksPending = new ArrayList<Hash>();
-		final Map<Hash, Long> blocksToRequest = new HashMap<Hash, Long>();
-			
+		final Entry<Hash, Long> blockRequest = new AbstractMap.SimpleEntry<>(block, ThreadLocalRandom.current().nextLong());
 		SyncHandler.this.lock.lock();
 		try
 		{
-			for (Hash block : blocks)
-			{
-				if (this.blocksRequested.containsKey(block) == true)
-				{
-					blocksPending.add(block);
-				}
-				else // if (this.context.getLedger().getLedgerStore().has(atom) == false)
-				{
-					blocksToRequest.put(block, ThreadLocalRandom.current().nextLong());
-					blocksPending.add(block);
-				}
-			}
-
-			if (blocksPending.isEmpty() == true)
+			if (this.blocksRequested.containsKey(block) == true)
 			{
 				syncLog.warn(SyncHandler.this.context.getName()+": No blocks required from "+peer);
-				return Collections.emptyList();
+				return false;
 			}
 			
-			if (blocksToRequest.isEmpty() == false)
+			SyncPeerTask syncPeerTask = null;
+			try
 			{
-				SyncPeerTask syncPeerTask = null;
-				try
-				{
-					this.blocksRequested.putAll(blocksToRequest);
+				this.blocksRequested.put(blockRequest.getKey(), blockRequest.getValue());
 					
-					if (syncLog.hasLevel(Logging.DEBUG))
-					{	
-						blocksToRequest.forEach((i, n) -> {
-							syncLog.debug(SyncHandler.this.context.getName()+": Requesting block "+i+" of from "+peer);
-						});
-					}
+				if (syncLog.hasLevel(Logging.DEBUG))
+					syncLog.debug(SyncHandler.this.context.getName()+": Requesting block "+blockRequest.getKey()+" from "+peer);
 	
-					GetSyncBlockMessage getBlockMessage = new GetSyncBlockMessage(blocksToRequest.keySet()); 
-					this.context.getNetwork().getMessaging().send(getBlockMessage, peer);
+				GetSyncBlockMessage getBlockMessage = new GetSyncBlockMessage(blockRequest.getKey()); 
+				this.context.getNetwork().getMessaging().send(getBlockMessage, peer);
 					
-					syncPeerTask = new SyncPeerTask(peer, blocksToRequest, rerequest);
-					this.requestTasks.put(peer, syncPeerTask);
-					Executor.getInstance().schedule(syncPeerTask);
-					
-					if (syncLog.hasLevel(Logging.DEBUG))
-						syncLog.debug(SyncHandler.this.context.getName()+": Requesting "+getBlockMessage.getInventory().size()+" blocks from "+peer);
-				}
-				catch (Throwable t)
+				syncPeerTask = new SyncPeerTask(peer, blockRequest, rerequest);
+				this.requestTasks.put(peer, syncPeerTask);
+				Executor.getInstance().schedule(syncPeerTask);
+			}
+			catch (Throwable t)
+			{
+				if (syncPeerTask != null)
 				{
-					if (syncPeerTask != null)
-					{
-						if (syncPeerTask.cancel() == true)
-							this.requestTasks.remove(peer, syncPeerTask);
-					}
-					
-					for (Hash block : blocksToRequest.keySet())
-						this.blocksRequested.remove(block);
-					
-					throw t;
+					if (syncPeerTask.cancel() == true)
+						this.requestTasks.remove(peer, syncPeerTask);
 				}
+				
+				this.blocksRequested.remove(blockRequest.getKey());
+				throw t;
 			}
 		}
 		finally
@@ -678,7 +659,7 @@ public class SyncHandler implements Service
 			SyncHandler.this.lock.unlock();
 		}
 		
-		return blocksPending;
+		return true;
 	}
 
 	void commit(LinkedList<Block> branch) throws IOException, ValidationException, StateLockedException
@@ -931,23 +912,21 @@ public class SyncHandler implements Service
     			if (SyncHandler.this.requestTasks.containsKey(event.getPeer()) == false)
     				return;
     			
-    			Collection<SyncPeerTask> requestTasks = new ArrayList<SyncPeerTask>(SyncHandler.this.requestTasks.get(event.getPeer()));
-    			for (SyncPeerTask task : requestTasks)
+    			SyncPeerTask requestTask = SyncHandler.this.requestTasks.remove(event.getPeer());
+    			if (requestTask != null)
     			{
     				try
     				{
-    					if (task.isCancelled() == false)
-    						task.cancel();
+    					if (requestTask.isCancelled() == false)
+    						requestTask.cancel();
 
-    					syncLog.info(SyncHandler.this.context.getName()+": Cancelled sync task of "+task.blocks.keySet()+" of blocks from "+event.getPeer());
+    					syncLog.info(SyncHandler.this.context.getName()+": Cancelled block sync task of "+requestTask.requestedBlock.getKey()+" of blocks from "+event.getPeer());
     				}
     	    		catch (Throwable t)
     	    		{
-    	    			syncLog.error(SyncHandler.this.context.getName()+": Failed to cancel gossip task of "+task.blocks.keySet()+" of blocks from "+event.getPeer());
+    	    			syncLog.error(SyncHandler.this.context.getName()+": Failed to cancel block sync task of "+requestTask.requestedBlock.getKey()+" of blocks from "+event.getPeer());
     	    		}
     			}
-    			
-    			SyncHandler.this.requestTasks.removeAll(event.getPeer());
     		}
     		finally
     		{

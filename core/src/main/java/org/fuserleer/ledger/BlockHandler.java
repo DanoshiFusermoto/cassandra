@@ -1064,16 +1064,22 @@ public class BlockHandler implements Service
 					{
 						for (Hash atomHash : pendingBlock.getHeader().getInventory(InventoryType.ATOMS))
 						{
-							PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomPool().get(atomHash);
-							if (pendingAtom != null)
-								pendingBlock.putAtom(pendingAtom);
+							if (pendingBlock.containsAtom(atomHash) == false)
+							{
+								PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomPool().get(atomHash);
+								if (pendingAtom != null)
+									pendingBlock.putAtom(pendingAtom);
+							}
 						}
 		
 						for (Hash certificateHash : pendingBlock.getHeader().getInventory(InventoryType.CERTIFICATES))
 						{
-							AtomCertificate certificate = BlockHandler.this.context.getLedger().getStateHandler().getCertificate(certificateHash, AtomCertificate.class);
-							if (certificate != null)
-								pendingBlock.putCertificate(certificate);
+							if (pendingBlock.containsCertificate(certificateHash) == false)
+							{
+								AtomCertificate certificate = BlockHandler.this.context.getLedger().getStateHandler().getCertificate(certificateHash, AtomCertificate.class);
+								if (certificate != null)
+									pendingBlock.putCertificate(certificate);
+							}
 						}
 	
 						pendingBlock.constructBlock();

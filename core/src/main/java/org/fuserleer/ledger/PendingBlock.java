@@ -22,6 +22,7 @@ import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.time.Time;
+import org.fuserleer.utils.Numbers;
 
 import com.google.common.primitives.Longs;
 
@@ -104,8 +105,10 @@ class PendingBlock implements Hashable
 		}
 	}
 			
-	void setHeader(BlockHeader header)
+	void setHeader(final BlockHeader header)
 	{
+		Objects.requireNonNull(header, "Block header is null");
+
 		this.lock.lock();
 		try
 		{
@@ -189,8 +192,9 @@ class PendingBlock implements Hashable
 		}
 	}
 	
-	boolean putAtom(PendingAtom atom)
+	boolean putAtom(final PendingAtom atom)
 	{
+		Objects.requireNonNull(atom, "Pending atom is null");
 		this.lock.lock();
 		try
 		{
@@ -208,8 +212,10 @@ class PendingBlock implements Hashable
 		}
 	}
 	
-	boolean putCertificate(AtomCertificate certificate)
+	boolean putCertificate(final AtomCertificate certificate)
 	{
+		Objects.requireNonNull(certificate, "Certificate is null");
+
 		this.lock.lock();
 		try
 		{
@@ -220,6 +226,38 @@ class PendingBlock implements Hashable
 			}
 			
 			return false;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	boolean containsAtom(final Hash atom)
+	{
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is ZERO");
+
+		this.lock.lock();
+		try
+		{
+			return this.atoms.containsKey(atom);
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+	
+	boolean containsCertificate(final Hash certificate)
+	{
+		Objects.requireNonNull(certificate, "Certificate hash is null");
+		Hash.notZero(certificate, "Certificate hash is ZERO");
+		
+		this.lock.lock();
+		try
+		{
+			return this.certificates.containsKey(certificate);
 		}
 		finally
 		{
@@ -288,12 +326,14 @@ class PendingBlock implements Hashable
 		return this.witnessed;
 	}
 	
-	public boolean voted(ECPublicKey identity)
+	public boolean voted(final ECPublicKey identity)
 	{
+		Objects.requireNonNull(identity, "Vote identity is null");
+		
 		this.lock.lock();
 		try
 		{
-			return this.votes.containsKey(Objects.requireNonNull(identity, "Vote identity is null"));
+			return this.votes.containsKey(identity);
 		}
 		finally
 		{
@@ -330,9 +370,10 @@ class PendingBlock implements Hashable
 		}
 	}
 
-	public long vote(BlockVote vote, long weight) throws ValidationException
+	public long vote(final BlockVote vote, long weight) throws ValidationException
 	{
 		Objects.requireNonNull(vote, "Vote is null");
+		Numbers.isNegative(weight, "Votw weight is negative");
 		
 		if (vote.getObject().equals(getHash()) == false)
 			throw new ValidationException("Vote from "+vote.getOwner()+" is not for "+getHash());

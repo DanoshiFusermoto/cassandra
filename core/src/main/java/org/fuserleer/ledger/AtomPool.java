@@ -81,9 +81,6 @@ public final class AtomPool implements Service
 								AtomPool.this.lock.writeLock().lock();
 								try
 								{
-									if (AtomPool.this.votesToCountQueue.remove(atomVote.getKey(), atomVote.getValue()) == false)
-										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
-									
 									if (atomVote.getValue().verify(atomVote.getValue().getOwner()) == false)
 									{
 										atomsLog.error(AtomPool.this.context.getName()+": Atom pool votes failed verification for "+atomVote.getValue().getOwner());
@@ -125,6 +122,10 @@ public final class AtomPool implements Service
 								finally
 								{
 									votesCounted++;
+									
+									if (AtomPool.this.votesToCountQueue.remove(atomVote.getKey(), atomVote.getValue()) == false)
+										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
+									
 									AtomPool.this.lock.writeLock().unlock();
 								}
 							}

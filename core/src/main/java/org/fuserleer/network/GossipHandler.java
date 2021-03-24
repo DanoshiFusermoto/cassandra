@@ -103,47 +103,48 @@ public class GossipHandler implements Service
 						failedItemRequests.add(requestedItem.getKey());
 					}
 				}
+			
+				// Can do the disconnect and request retry outside of the lock
+				if (failedItemRequests.isEmpty() == false)
+				{
+					try
+					{
+						gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
+						if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
+							getPeer().disconnect("Did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
+						
+						// Try to re-add the failed items if any other node is reporting them in their inventory
+						List<ConnectedPeer> connectedPeers = new ArrayList<ConnectedPeer>(GossipHandler.this.requestSources.keySet());
+						for (Hash item : failedItemRequests)
+						{
+							boolean readded = false;
+							for (ConnectedPeer connectedPeer : connectedPeers)
+							{
+								if (connectedPeer.getState().equals(PeerState.CONNECTED) == false)
+									continue;
+								
+								if (GossipHandler.this.requestSources.containsEntry(connectedPeer, item) == false)
+									continue;
+								
+								GossipHandler.this.toRequest.put(this.type, item);
+								readded = true;
+								gossipLog.info(GossipHandler.this.context.getName()+": Re-requesting "+item+" of type "+this.type+" from "+getPeer());
+								break;
+							}
+							
+							if (readded == false)
+								gossipLog.error(GossipHandler.this.context.getName()+": Unable to re-request "+item+" of type "+this.type+" which failed on "+getPeer());
+						}
+					}
+					catch (Throwable t)
+					{
+						gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer(), t);
+					}
+				}
 			}
 			finally
 			{
 				GossipHandler.this.lock.writeLock().unlock();
-			}
-			
-			// Can do the disconnect and request retry outside of the lock
-			if (failedItemRequests.isEmpty() == false)
-			{
-				try
-				{
-					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer()+" did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
-					if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
-						getPeer().disconnect("Did not respond fully to request of "+this.items.size()+" items of type "+this.type+" "+failedItemRequests);
-					
-					// Try to re-add the failed items if any other node is reporting them in their inventory
-					List<ConnectedPeer> connectedPeers = new ArrayList<ConnectedPeer>(GossipHandler.this.requestSources.keySet());
-					for (Hash item : failedItemRequests)
-					{
-						boolean readded = false;
-						for (ConnectedPeer connectedPeer : connectedPeers)
-						{
-							if (connectedPeer.getState().equals(PeerState.CONNECTED) == false)
-								continue;
-							
-							if (GossipHandler.this.requestSources.containsEntry(connectedPeer, item) == false)
-								continue;
-							
-							GossipHandler.this.toRequest.put(this.type, item);
-							readded = true;
-							break;
-						}
-						
-						if (readded == false)
-							gossipLog.error(GossipHandler.this.context.getName()+": Unable to re-request "+item+" of type "+this.type+" which failed on "+getPeer());
-					}
-				}
-				catch (Throwable t)
-				{
-					gossipLog.error(GossipHandler.this.context.getName()+": "+getPeer(), t);
-				}
 			}
 		}
 

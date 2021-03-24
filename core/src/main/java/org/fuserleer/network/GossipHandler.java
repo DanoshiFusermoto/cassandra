@@ -14,7 +14,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -61,7 +60,7 @@ public class GossipHandler implements Service
 		
 		GossipPeerTask(final ConnectedPeer peer, final Map<Hash, Long> items, final Class<? extends Primitive> type)
 		{
-			super(peer, 30, TimeUnit.SECONDS);
+			super(peer, 15, TimeUnit.SECONDS);
 			
 			this.type = type;
 			this.items = new HashMap<Hash, Long>(items);
@@ -211,7 +210,6 @@ public class GossipHandler implements Service
 	private final Context context;
 
 	private final BlockingQueue<Broadcast> broadcastQueue;
-	private final Semaphore broadcastRequestSemaphore = new Semaphore(0);
 	private final Multimap<Class<? extends Primitive>, Broadcast> toBroadcast = Multimaps.synchronizedMultimap(HashMultimap.create());
 	private final Multimap<Class<? extends Primitive>, Hash> toRequest = Multimaps.synchronizedMultimap(HashMultimap.create());
 
@@ -230,6 +228,7 @@ public class GossipHandler implements Service
 	private Executable broadcastProcessor = new Executable()
 	{
 		private long lastHousekeeping = System.currentTimeMillis(); 
+		private boolean pendingWork = true;
 		
 		@Override
 		public void execute()
@@ -240,10 +239,14 @@ public class GossipHandler implements Service
 				{
 					try
 					{
-						// TODO convert to a wait / notify
-						if (GossipHandler.this.broadcastRequestSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
-							continue;
-
+						if (this.pendingWork == false)
+						{
+							synchronized(GossipHandler.this.broadcastProcessor)
+							{
+								GossipHandler.this.broadcastProcessor.wait(TimeUnit.SECONDS.toMillis(1));
+							}
+						}
+						
 						GossipHandler.this.lock.writeLock().lock();
 						try
 						{
@@ -252,7 +255,7 @@ public class GossipHandler implements Service
 								GossipHandler.this.toBroadcast.clear();
 								GossipHandler.this.toRequest.clear();
 								GossipHandler.this.broadcastQueue.clear();
-								GossipHandler.this.broadcastRequestSemaphore.drainPermits();
+								this.pendingWork = false;
 								continue;
 							}
 
@@ -261,11 +264,20 @@ public class GossipHandler implements Service
 								Broadcast broadcast = GossipHandler.this.broadcastQueue.poll();
 								GossipHandler.this.toBroadcast.put(broadcast.getPrimitive().getClass(), broadcast);
 							}
+
+							if (GossipHandler.this.toBroadcast.isEmpty() == true && 
+								GossipHandler.this.toRequest.isEmpty() == true)
+								this.pendingWork = false;
+							else
+								this.pendingWork = true;
 						}
 						finally
 						{
 							GossipHandler.this.lock.writeLock().unlock();
 						}
+						
+						if (this.pendingWork == false)
+							continue;
 						
 						// Broadcast
 						final List<Class<? extends Primitive>> broadcastTypes = new ArrayList<>(GossipHandler.this.toBroadcast.keySet());
@@ -343,9 +355,6 @@ public class GossipHandler implements Service
 								{
 									for (Entry<Long, Broadcast> broadcast : toBroadcast.entries())
 										GossipHandler.this.toBroadcast.remove(type, broadcast.getValue());
-									
-									if (GossipHandler.this.broadcastRequestSemaphore.tryAcquire(toBroadcast.size()) == false)
-										gossipLog.warn(GossipHandler.this.context.getName()+": Could not acquire "+toBroadcast.size()+" permits for broadcast");
 								}
 								finally
 								{
@@ -477,8 +486,8 @@ public class GossipHandler implements Service
 
 		this.broadcastQueue = new LinkedBlockingQueue<Broadcast>(this.context.getConfiguration().get("ledger.gossip.queue", 1<<16));
 
-//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
+		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -521,7 +530,6 @@ public class GossipHandler implements Service
 											continue;
 		
 										GossipHandler.this.toRequest.put(syncInvMessage.getType(), item);
-										GossipHandler.this.broadcastRequestSemaphore.release();
 									}
 								}
 								finally
@@ -584,7 +592,6 @@ public class GossipHandler implements Service
 											continue;
 		
 										GossipHandler.this.toRequest.put(broadcastInvMessage.getType(), item);
-										GossipHandler.this.broadcastRequestSemaphore.release();
 									}
 								}
 								finally
@@ -816,7 +823,10 @@ public class GossipHandler implements Service
 		{
 			if (this.broadcastQueue.offer(new Broadcast(object), 1, TimeUnit.SECONDS) == true)
 			{
-				this.broadcastRequestSemaphore.release();
+				synchronized(GossipHandler.this.broadcastProcessor)
+				{
+					GossipHandler.this.broadcastProcessor.notify();
+				}
 				return true;
 			}
 		}
@@ -842,12 +852,14 @@ public class GossipHandler implements Service
 			for (Primitive object : objects)
 			{
 				if (this.broadcastQueue.offer(new Broadcast(object), 1, TimeUnit.SECONDS) == true)
-				{
-					this.broadcastRequestSemaphore.release();
 					queued.add(object);
-				}
 				else
 					break;
+			}
+			
+			synchronized(GossipHandler.this.broadcastProcessor)
+			{
+				GossipHandler.this.broadcastProcessor.notify();
 			}
 		}
 		catch (InterruptedException e)
@@ -870,7 +882,10 @@ public class GossipHandler implements Service
 		{
 			if (this.broadcastQueue.offer(new Broadcast(object, shardGroups), 1, TimeUnit.SECONDS) == true)
 			{
-				this.broadcastRequestSemaphore.release();
+				synchronized(GossipHandler.this.broadcastProcessor)
+				{
+					GossipHandler.this.broadcastProcessor.notify();
+				}
 				return true;
 			}
 		}
@@ -922,7 +937,7 @@ public class GossipHandler implements Service
 
 						this.toRequest.remove(type, i);
 					});
-	
+					
 					GetInventoryItemsMessage getInventoryItemsMessage = new GetInventoryItemsMessage(itemsToRequest.keySet(), type); 
 					this.context.getNetwork().getMessaging().send(getInventoryItemsMessage, peer);
 					
@@ -946,7 +961,6 @@ public class GossipHandler implements Service
 						this.toRequest.put(type, itemToRequest);
 						this.itemsRequested.remove(itemToRequest);
 					}
-					
 					throw t;
 				}
 			}

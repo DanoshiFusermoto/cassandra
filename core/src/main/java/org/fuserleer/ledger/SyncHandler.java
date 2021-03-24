@@ -328,7 +328,8 @@ public class SyncHandler implements Service
 									{
 										for (Hash block : syncPeerInventory)
 										{
-											if (SyncHandler.this.request(syncPeer, block, false) == true)
+											if (SyncHandler.this.blocksRequested.containsKey(block) == false && 
+												SyncHandler.this.request(syncPeer, block, false) == true)
 												break;
 										}
 									}
@@ -623,7 +624,7 @@ public class SyncHandler implements Service
 		{
 			if (this.blocksRequested.containsKey(block) == true)
 			{
-				syncLog.warn(SyncHandler.this.context.getName()+": No blocks required from "+peer);
+				syncLog.warn(SyncHandler.this.context.getName()+": Block "+block+" is already requested when requesting from "+peer);
 				return false;
 			}
 			

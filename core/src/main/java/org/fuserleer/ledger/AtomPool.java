@@ -3,6 +3,7 @@ package org.fuserleer.ledger;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -41,6 +42,7 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.CustomInteger;
@@ -72,6 +74,23 @@ public final class AtomPool implements Service
 						if (AtomPool.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
 							continue;
 	
+						List<AtomVote> atomVotesToSync = new ArrayList<AtomVote>();
+						AtomPool.this.votesToSyncQueue.drainTo(atomVotesToSync, 64);
+						if (atomVotesToSync.isEmpty() == false)
+						{
+							for (AtomVote atomVote : atomVotesToSync)
+							{
+								try
+								{
+									process(atomVote);
+								}
+								catch (Exception ex)
+								{
+									atomsLog.error(AtomPool.this.context.getName()+": Error syncing atom vote "+atomVote, ex);
+								}
+							}
+						}
+						
 						if (AtomPool.this.votesToCountQueue.isEmpty() == false)
 						{
 							int votesCounted = 0;
@@ -81,37 +100,8 @@ public final class AtomPool implements Service
 								AtomPool.this.lock.writeLock().lock();
 								try
 								{
-									if (atomVote.getValue().verify(atomVote.getValue().getOwner()) == false)
-									{
-										atomsLog.error(AtomPool.this.context.getName()+": Atom pool votes failed verification for "+atomVote.getValue().getOwner());
-										// TODO disconnect and ban
-										continue;
-									}
-						
 									if (OperationStatus.KEYEXIST.equals(AtomPool.this.context.getLedger().getLedgerStore().store(atomVote.getValue())) == false)
-									{
-										PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getValue().getAtom());
-										if (pendingAtom == null)
-										{
-											atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getValue().getAtom()+" not found for vote "+atomVote.getKey()+" for "+atomVote.getValue().getOwner());
-											continue;
-										}
-												
-										if (pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true)
-										{
-											atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getValue().getAtom()+" already prepared in block "+pendingAtom.getBlock()+" for vote "+atomVote.getKey()+" for "+atomVote.getValue().getOwner());
-											continue;
-										}
-
-										if (pendingAtom.voted(atomVote.getValue().getOwner()) == true)
-										{
-											atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getValue().getAtom()+" already has vote from "+atomVote.getValue().getOwner());
-											continue;
-										}
-											
-										pendingAtom.queue(atomVote.getValue());
-										applyVotes(pendingAtom);
-									}
+										process(atomVote.getValue());
 									else
 										atomsLog.warn(AtomPool.this.context.getName()+": Received already seen atom vote "+atomVote.getKey()+":"+atomVote.getValue().getAtom()+" for "+atomVote.getValue().getOwner());
 								}
@@ -190,12 +180,14 @@ public final class AtomPool implements Service
 	private final Map<Long, Set<PendingAtom>> buckets = new HashMap<Long, Set<PendingAtom>>();
 
 	private final BlockingQueue<PendingAtom> votesToCastQueue;
+	private final MappedBlockingQueue<Hash, AtomVote> votesToSyncQueue;
 	private final MappedBlockingQueue<Hash, AtomVote> votesToCountQueue;
 
 	public AtomPool(final Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.votesToCastQueue = new LinkedBlockingQueue<PendingAtom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
+		this.votesToSyncQueue = new MappedBlockingQueue<Hash, AtomVote>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, AtomVote>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 
 		long location = Long.MIN_VALUE;
@@ -303,6 +295,45 @@ public final class AtomPool implements Service
 				}
 			}
 		});
+		
+		// SYNC //
+		this.context.getNetwork().getGossipHandler().register(StateVote.class, new SyncInventory() 
+		{
+			@Override
+			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
+			{
+				if (type.equals(AtomVote.class) == false)
+				{
+					atomsLog.error(AtomPool.this.context.getName()+": Atom vote type expected but got "+type);
+					return Collections.emptyList();
+				}
+				
+				AtomPool.this.lock.writeLock().lock();
+				try
+				{
+					Set<Hash> required = new HashSet<Hash>();
+					for (Hash item : items)
+					{
+						if (AtomPool.this.votesToCountQueue.contains(item) == true)
+							continue;
+						
+						final AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);
+						if (atomVote != null)
+						{
+							AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
+							AtomPool.this.voteProcessorSemaphore.release();
+						}
+						else
+							required.add(item);
+					}
+					return required;
+				}
+				finally
+				{
+					AtomPool.this.lock.writeLock().unlock();
+				}
+			}
+		});
 
 		Thread voteProcessorThread = new Thread(this.voteProcessor);
 		voteProcessorThread.setDaemon(true);
@@ -331,6 +362,7 @@ public final class AtomPool implements Service
 			this.pending.clear();
 			this.states.clear();
 			this.votesToCastQueue.clear();
+			this.votesToSyncQueue.clear();
 			this.votesToCountQueue.clear();
 			this.voteProcessorSemaphore.drainPermits();
 		}
@@ -338,6 +370,40 @@ public final class AtomPool implements Service
 		{
 			this.lock.writeLock().unlock();
 		}
+	}
+	
+	private boolean process(final AtomVote atomVote) throws IOException, CryptoException
+	{
+		Objects.requireNonNull(atomVote, "Atom vote is null");
+		
+		if (atomVote.verify(atomVote.getOwner()) == false)
+		{
+			atomsLog.error(AtomPool.this.context.getName()+": Atom pool votes failed verification for "+atomVote.getOwner());
+			return false;
+		}
+
+		PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
+		if (pendingAtom == null)
+		{
+			atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" not found for vote "+atomVote+" for "+atomVote.getOwner());
+			return false;
+		}
+				
+		if (pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true)
+		{
+			atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" already prepared in block "+pendingAtom.getBlock()+" for vote "+atomVote.getHash()+" for "+atomVote.getOwner());
+			return false;
+		}
+
+		if (pendingAtom.voted(atomVote.getOwner()) == true)
+		{
+			atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" already has vote from "+atomVote.getOwner());
+			return false;
+		}
+			
+		pendingAtom.queue(atomVote);
+		applyVotes(pendingAtom);
+		return true;
 	}
 	
 	// TODO Can apply atom pool votes < prepared but the broadcast wont know which shards to gossip any atom votes to

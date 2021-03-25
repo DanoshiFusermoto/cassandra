@@ -57,6 +57,7 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
+import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
@@ -86,10 +87,12 @@ public final class StateHandler implements Service
 	private final Map<StateKey<?, ?>, PendingAtom> states = new HashMap<StateKey<?, ?>, PendingAtom>();
 
 	private final BlockingQueue<PendingAtom> executionQueue;
-	
 	private final BlockingQueue<StateMessage> provisionResponses;
 	private final MappedBlockingQueue<StateKey<?, ?>, PendingAtom> provisionQueue;
 	private final Multimap<StateKey<?, ?>, Entry<Hash, ConnectedPeer>> inboundProvisionRequests = Multimaps.synchronizedMultimap(HashMultimap.create());
+
+	private final MappedBlockingQueue<Hash, StateCertificate> certificatesToSyncQueue;
+	private final MappedBlockingQueue<Hash, StateCertificate> certificatesToProcessQueue;
 
 	// FIXME Need to remember the local state inputs for an atom/statekey pair to serve state requests to remote validators.
 	//       ideally would want to embed the state inputs into the atom / state certificates for future reference and
@@ -116,6 +119,43 @@ public final class StateHandler implements Service
 				{
 					try
 					{
+						List<StateCertificate> certificatesToSync = new ArrayList<StateCertificate>();
+						StateHandler.this.certificatesToSyncQueue.drainTo(certificatesToSync, 64);
+						if (certificatesToSync.isEmpty() == false)
+						{
+							for (StateCertificate stateCertificate : certificatesToSync)
+							{
+								try
+								{
+									process(stateCertificate);
+								}
+								catch (Exception ex)
+								{
+									stateLog.error(StateHandler.this.context.getName()+": Error syncing certificate for " + stateCertificate, ex);
+								}
+							}
+						}
+
+						List<StateCertificate> certificatesToProcess = new ArrayList<StateCertificate>();
+						StateHandler.this.certificatesToProcessQueue.drainTo(certificatesToProcess, 64);
+						if (certificatesToProcess.isEmpty() == false)
+						{
+							for (StateCertificate stateCertificate : certificatesToProcess)
+							{
+								try
+								{
+									if (OperationStatus.KEYEXIST.equals(StateHandler.this.context.getLedger().getLedgerStore().store(stateCertificate)) == false)
+										StateHandler.this.process(stateCertificate);
+									else
+										cerbyLog.warn(StateHandler.this.context.getName()+": State certificate "+stateCertificate.getHash()+" of "+stateCertificate.getState()+" already seen for "+stateCertificate.getAtom());
+								}
+								catch (Exception ex)
+								{
+									stateLog.error(StateHandler.this.context.getName()+": Error processing certificate for " + stateCertificate, ex);
+								}
+							}
+						}
+
 						Entry<StateKey<?, ?>, PendingAtom> stateToProvision = StateHandler.this.provisionQueue.poll(1, TimeUnit.SECONDS);
 						if (stateToProvision != null)
 						{
@@ -318,6 +358,8 @@ public final class StateHandler implements Service
 		this.provisionQueue = new MappedBlockingQueue<StateKey<?, ?>, PendingAtom>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.provisionResponses = new LinkedBlockingQueue<StateMessage>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.executionQueue = new LinkedBlockingQueue<PendingAtom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
+		this.certificatesToSyncQueue = new MappedBlockingQueue<Hash, StateCertificate>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.certificatesToProcessQueue = new MappedBlockingQueue<Hash, StateCertificate>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 
 //		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
 //		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
@@ -404,7 +446,9 @@ public final class StateHandler implements Service
 					Set<Hash> required = new HashSet<Hash>();
 					for (Hash item : items)
 					{
-						if (StateHandler.this.context.getLedger().getLedgerStore().has(item) == true)
+						if (StateHandler.this.certificatesToSyncQueue.contains(item) == true || 
+							StateHandler.this.certificatesToProcessQueue.contains(item) == true || 
+							StateHandler.this.context.getLedger().getLedgerStore().has(item) == true)
 							continue;
 					
 						if (cerbyLog.hasLevel(Logging.DEBUG) == true)
@@ -437,7 +481,7 @@ public final class StateHandler implements Service
 					return;
 				}
 
-				StateHandler.this.process(stateCertificate);
+				StateHandler.this.certificatesToProcessQueue.put(stateCertificate.getHash(), stateCertificate);
 			}
 		});
 					
@@ -621,6 +665,42 @@ public final class StateHandler implements Service
 		});
 		
 		// SYNC //
+		this.context.getNetwork().getGossipHandler().register(StateCertificate.class, new SyncInventory() 
+		{
+			@Override
+			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
+			{
+				if (type.equals(StateCertificate.class) == false)
+				{
+					cerbyLog.error(StateHandler.this.context.getName()+": State certificate type expected but got "+type);
+					return Collections.emptyList();
+				}
+				
+				StateHandler.this.lock.writeLock().lock();
+				try
+				{
+					Set<Hash> required = new HashSet<Hash>();
+					for (Hash item : items)
+					{
+						if (StateHandler.this.certificatesToSyncQueue.contains(item) == true || 
+							StateHandler.this.certificatesToProcessQueue.contains(item) == true)
+							continue;
+						
+						final StateCertificate stateCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateCertificate.class);
+						if (stateCertificate != null)
+							StateHandler.this.certificatesToSyncQueue.put(item, stateCertificate);
+						else
+							required.add(item);
+					}
+					return required;
+				}
+				finally
+				{
+					StateHandler.this.lock.writeLock().unlock();
+				}
+			}
+		});
+
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
@@ -843,8 +923,10 @@ public final class StateHandler implements Service
 		}
 	}
 	
-	private void process(StateCertificate certificate) throws IOException, CryptoException, ValidationException
+	private boolean process(final StateCertificate certificate) throws IOException, CryptoException, ValidationException
 	{
+		Objects.requireNonNull(certificate, "State certificate is null");
+		
 		StateHandler.this.lock.writeLock().lock();
 		try
 		{
@@ -858,7 +940,7 @@ public final class StateHandler implements Service
 					for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
 						this.states.remove(stateKey, pendingAtom);
 				}
-				return;
+				return false;
 			}
 
 			PendingAtom pendingAtom = StateHandler.this.atoms.get(certificate.getAtom());
@@ -869,7 +951,7 @@ public final class StateHandler implements Service
 				if (pendingAtom == null)
 				{
 					cerbyLog.warn(this.context.getName()+": AtomHandler return null for Atom "+certificate.getAtom()+".  Possibly committed");
-					return;
+					return false;
 				}
 				
 				this.atoms.put(certificate.getAtom(), pendingAtom);
@@ -878,24 +960,20 @@ public final class StateHandler implements Service
 			if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 				cerbyLog.debug(this.context.getName()+": State certificate "+certificate.getState()+" for "+certificate.getAtom());
 		
-			if (OperationStatus.KEYEXIST.equals(StateHandler.this.context.getLedger().getLedgerStore().store(certificate)) == false)
+			if (pendingAtom.addCertificate(certificate) == false)
+				return false;
+				
+			long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(certificate.getHeight());
+			Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
+			shardGroups.remove(ShardMapper.toShardGroup(certificate.getState().get(), numShardGroups));
+			if (shardGroups.isEmpty() == false)
 			{
-				if (pendingAtom.addCertificate(certificate) == false)
-					return;
-				
-				long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(certificate.getHeight());
-				Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
-				shardGroups.remove(ShardMapper.toShardGroup(certificate.getState().get(), numShardGroups));
-				if (shardGroups.isEmpty() == false)
-				{
-					this.context.getNetwork().getGossipHandler().broadcast(certificate, shardGroups);
-					cerbyLog.info(StateHandler.this.context.getName()+": Broadcasted state certificate "+certificate);
-				}
-				
-				pendingAtom.buildCertificate();
+				this.context.getNetwork().getGossipHandler().broadcast(certificate, shardGroups);
+				cerbyLog.info(StateHandler.this.context.getName()+": Broadcasted state certificate "+certificate);
 			}
-			else
-				cerbyLog.warn(this.context.getName()+": State certificate "+certificate.getHash()+" of "+certificate.getState()+" already seen for "+certificate.getAtom());
+			
+			pendingAtom.buildCertificate();
+			return true;
 		}
 		finally
 		{

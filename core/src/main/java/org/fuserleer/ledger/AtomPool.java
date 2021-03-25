@@ -80,6 +80,7 @@ public final class AtomPool implements Service
 						{
 							for (AtomVote atomVote : atomVotesToSync)
 							{
+								AtomPool.this.lock.writeLock().lock();
 								try
 								{
 									process(atomVote);
@@ -87,6 +88,10 @@ public final class AtomPool implements Service
 								catch (Exception ex)
 								{
 									atomsLog.error(AtomPool.this.context.getName()+": Error syncing atom vote "+atomVote, ex);
+								}
+								finally
+								{
+									AtomPool.this.lock.writeLock().unlock();
 								}
 							}
 						}
@@ -297,7 +302,7 @@ public final class AtomPool implements Service
 		});
 		
 		// SYNC //
-		this.context.getNetwork().getGossipHandler().register(StateVote.class, new SyncInventory() 
+		this.context.getNetwork().getGossipHandler().register(AtomVote.class, new SyncInventory() 
 		{
 			@Override
 			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
@@ -385,16 +390,13 @@ public final class AtomPool implements Service
 		PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
 		if (pendingAtom == null)
 		{
-			atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" not found for vote "+atomVote+" for "+atomVote.getOwner());
+			// Already committed? (return false silently if WARN log level not applied)
+			if (atomsLog.hasLevel(Logging.WARN) == true && this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atomVote.getAtom())) == null)
+				atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" not found for vote "+atomVote+" for "+atomVote.getOwner());
+
 			return false;
 		}
 				
-		if (pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true)
-		{
-			atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" already prepared in block "+pendingAtom.getBlock()+" for vote "+atomVote.getHash()+" for "+atomVote.getOwner());
-			return false;
-		}
-
 		if (pendingAtom.voted(atomVote.getOwner()) == true)
 		{
 			atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" already has vote from "+atomVote.getOwner());
@@ -412,16 +414,19 @@ public final class AtomPool implements Service
 	// In a < prepared state the votes are "cached" in the pending atom and applied when the preparation stage is executed
 	private void applyVotes(final PendingAtom pendingAtom) throws IOException
 	{
+		Objects.requireNonNull(pendingAtom, "Pending atom is null");
+		
+		long currentWeight = pendingAtom.voteWeight();
 		Collection<AtomVote> appliedVotes = pendingAtom.apply();
 		if (appliedVotes.isEmpty() == true)
 			return;
 		
 		for (AtomVote appliedVote : appliedVotes)
 			this.context.getNetwork().getGossipHandler().broadcast(appliedVote);
-	
+
 		Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), this.context.getLedger().numShardGroups());
 		long voteThresold = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups);
-		if (pendingAtom.voteWeight() >= voteThresold)
+		if (currentWeight < voteThresold && pendingAtom.voteWeight() >= voteThresold)
 		{
 			if (atomsLog.hasLevel(Logging.DEBUG) == true)
 				atomsLog.debug(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups));

@@ -39,6 +39,39 @@ public final class SyncInventoryMessage extends Message
 		this(items, Serialization.getInstance().getIdForClass(Objects.requireNonNull(type, "Type is null")));
 	}
 	
+	public SyncInventoryMessage(final Collection<Hash> items, int start, int end, final Class<? extends Primitive> type)
+	{
+		this(items, start, end, Serialization.getInstance().getIdForClass(Objects.requireNonNull(type, "Type is null")));
+	}
+
+	public SyncInventoryMessage(final Collection<Hash> items, int start, int end, final String type)
+	{
+		super();
+
+		Objects.requireNonNull(type, "Type is null");
+		Numbers.isZero(type.length(), "Type is empty");
+
+		Objects.requireNonNull(items, "Items is null");
+		if (items.isEmpty() == true)
+			throw new IllegalArgumentException("Items is empty");
+		
+		Numbers.isNegative(end - start, "Delta is negative");
+		Numbers.greaterThan(end - start, MAX_ITEMS, "Items is greater than allowed max of "+MAX_ITEMS);
+
+		this.type = type;
+		this.items = new ArrayList<Hash>();
+		int i = 0;
+		for (Hash item : items)
+		{
+			if (i >= start)
+				this.items.add(item);
+			
+			i++;
+			if (i==end)
+				break;
+		}
+	}
+
 	public SyncInventoryMessage(final Collection<Hash> items, final String type)
 	{
 		super();
@@ -60,6 +93,11 @@ public final class SyncInventoryMessage extends Message
 		return this.items;
 	}
 	
+	public int size()
+	{
+		return this.items.size();
+	}
+
 	public Class<? extends Primitive> getType()
 	{
 		Class<? extends Primitive> type = (Class<? extends Primitive>) Serialization.getInstance().getClassForId(this.type);

@@ -12,6 +12,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.primitives.Longs;
 
 @SerializerId2("ledger.state.vote")
 public final class StateVote extends Vote<StateKey<?, ?>>
@@ -86,6 +87,11 @@ public final class StateVote extends Vote<StateKey<?, ?>>
 		return this.block;
 	}
 	
+	public long getHeight()
+	{
+		return Longs.fromByteArray(this.block.toByteArray());
+	}
+
 	public <T extends StateKey<?, ?>> T getState()
 	{
 		return (T) this.getObject();

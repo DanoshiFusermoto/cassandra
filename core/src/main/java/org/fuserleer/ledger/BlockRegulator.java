@@ -55,7 +55,7 @@ final class BlockRegulator implements Service
 				current = null;
 				if (prevHeight >= 0)
 				{
-					Hash prev = this.context.getLedger().getLedgerStore().get(prevHeight);
+					Hash prev = this.context.getLedger().getLedgerStore().getSyncBlock(prevHeight);
 					current = this.context.getLedger().getLedgerStore().get(prev, BlockHeader.class);
 					if (current == null)
 						throw new IllegalStateException("Previous committed block header at height "+prevHeight+" not found");

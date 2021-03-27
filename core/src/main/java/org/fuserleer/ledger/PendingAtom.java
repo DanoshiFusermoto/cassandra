@@ -3,11 +3,8 @@ package org.fuserleer.ledger;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -33,7 +30,6 @@ import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
-
 /** 
  * Represents an Atom that is currently being processed.
  * <br><br>
@@ -44,7 +40,7 @@ public final class PendingAtom implements Hashable
 	private static final Logger atomsLog = Logging.getLogger("atoms");
 	private static final Logger cerbyLog = Logging.getLogger("cerby");
 
-	public final static int ATOM_COMMIT_TIMEOUT_BLOCKS = 30;	// TODO need a much smarter timeout mechanism along with recovery.  ~10 minutes per phase if block production is ~5 seconds.  Sufficient for alpha testing.
+	public final static int ATOM_COMMIT_TIMEOUT_BLOCKS = 60;	// TODO need a much smarter timeout mechanism along with recovery.  ~10 minutes per phase if block production is ~5 seconds.  Sufficient for alpha testing.
 	public final static int ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS = 600;	// TODO Long inclusion commit timeout ~10 minutes.  Is extended if atom is suspected included in a block (evidence of state votes etc).  Sufficient for alpha testing.
 	
 	public static PendingAtom create(final Context context, final Atom atom)
@@ -73,7 +69,6 @@ public final class PendingAtom implements Hashable
 	
 	private long			voteWeight;
 	private long			voteThreshold;
-	private final Set<AtomVote> queued;
 	private final Set<AtomVote> votes;
 	private final Map<ECPublicKey, Long> voted;
 	
@@ -101,7 +96,6 @@ public final class PendingAtom implements Hashable
 		this.inclusionDelay = 0;
 		this.voteWeight = 0l;
 		this.voteThreshold = 0l;
-		this.queued = new HashSet<AtomVote>();
 		this.votes = new HashSet<AtomVote>();
 		this.voted = new HashMap<ECPublicKey, Long>();
 		this.certificates = new HashMap<StateKey<?, ?>, StateCertificate>();
@@ -534,61 +528,25 @@ public final class PendingAtom implements Hashable
 		}
 	}
 
-	Collection<AtomVote> queued()
-	{
-		this.lock.readLock().lock();
-		try
-		{
-			return new ArrayList<AtomVote>(this.queued);
-		}
-		finally
-		{
-			this.lock.readLock().unlock();
-		}
-	}
-
-	void queue(final AtomVote vote)
+	public boolean vote(final AtomVote vote) throws IOException
 	{
 		this.lock.writeLock().lock();
 		try
 		{
-			Objects.requireNonNull(vote, "Atom vote is null");
-			this.queued.add(vote);
-		}
-		finally
-		{
-			this.lock.writeLock().unlock();
-		}
-	}
-
-	Collection<AtomVote> apply() throws IOException
-	{
-		this.lock.writeLock().lock();
-		try
-		{
-			if (getStatus().lessThan(CommitStatus.PREPARED) == true)
-				return Collections.emptySet();
-		
-			List<AtomVote> applied = new ArrayList<AtomVote>();
-			Iterator<AtomVote> queuedIterator = this.queued.iterator();
-			while(queuedIterator.hasNext() == true)
+			long votePower = this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), vote.getOwner());
+			if (this.voted.containsKey(vote.getOwner()) == false)
 			{
-				AtomVote vote = queuedIterator.next();
-				long votePower = this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), vote.getOwner());
-				if (this.voted.containsKey(vote.getOwner()) == false)
-				{
-					this.votes.add(vote);
-					this.voted.put(vote.getOwner(), votePower);
-					this.voteWeight += votePower;
-					applied.add(vote);
-				}
-				else
-					atomsLog.warn(this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+this.hash);
-				
-				queuedIterator.remove();
+				this.votes.add(vote);
+				this.voted.put(vote.getOwner(), votePower);
+				this.voteWeight += votePower;
+			}
+			else
+			{
+				atomsLog.warn(this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+this.hash);
+				return false;
 			}
 
-			return applied;
+			return true;
 		}
 		finally
 		{
@@ -657,7 +615,7 @@ public final class PendingAtom implements Hashable
 			{
 				this.certificates.put(certificate.getState(), certificate);
 				
-				// Not in a block yet, effectively cancel the inclusion timeout
+				// Not in a block yet but has at least a certificate so effectively cancel the inclusion timeout
 				if (this.block == null)
 					setInclusionTimeout(Long.MAX_VALUE);
 				else

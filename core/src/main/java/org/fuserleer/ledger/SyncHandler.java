@@ -31,10 +31,11 @@ import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
-import org.fuserleer.ledger.messages.SyncAcquiredMessage;
+//import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.GetSyncBlockMessage;
 import org.fuserleer.ledger.messages.InventoryMessage;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.ledger.messages.SyncBlockInventoryMessage;
 import org.fuserleer.ledger.messages.SyncBlockMessage;
 import org.fuserleer.logging.Logger;
@@ -506,7 +507,7 @@ public class SyncHandler implements Service
 								Hash current = getSyncBlockInventoryMessage.getHead();
 								do
 								{
-									Hash next = SyncHandler.this.context.getLedger().getLedgerStore().get(Longs.fromByteArray(current.toByteArray())+1);
+									Hash next = SyncHandler.this.context.getLedger().getLedgerStore().getSyncBlock(Longs.fromByteArray(current.toByteArray())+1);
 									if (next != null)
 										inventory.add(next);
 									
@@ -889,9 +890,10 @@ public class SyncHandler implements Service
 
 	void setSynced(boolean synced)
 	{
+		// TODO what happens with an exception here?
+		this.context.getEvents().post(new SyncStatusChangeEvent(synced));
 		this.synced = synced;
 		this.context.getNode().setSynced(synced);
-		this.context.getEvents().post(new SyncStatusChangeEvent(synced));
 		reset();
 	}
 

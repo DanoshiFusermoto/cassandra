@@ -6,7 +6,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -19,7 +18,6 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -39,6 +37,8 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.Path.Elements;
+import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
@@ -54,7 +54,6 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
@@ -63,9 +62,6 @@ import org.fuserleer.node.Node;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.UInt256;
 
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
 import com.sleepycat.je.OperationStatus;
 
@@ -293,53 +289,63 @@ public final class StatePool implements Service
 						if (StatePool.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
 							continue;
 
-						List<StateVote> stateVotesToSync = new ArrayList<StateVote>();
-						StatePool.this.votesToSyncQueue.drainTo(stateVotesToSync, 64);
-						if (stateVotesToSync.isEmpty() == false)
+						if (StatePool.this.context.getLedger().isSynced() == false)
+							continue;
+
+						if (StatePool.this.votesToSyncQueue.isEmpty() == false)
 						{
-							for (StateVote stateVote : stateVotesToSync)
+							Entry<Hash, StateVote> stateVote;
+							while((stateVote = StatePool.this.votesToSyncQueue.peek()) != null)
 							{
 								try
 								{
-									process(stateVote);
+									process(stateVote.getValue());
 								}
 								catch (Exception ex)
 								{
-									statePoolLog.error(StatePool.this.context.getName()+": Error syncing vote for " + stateVote, ex);
+									statePoolLog.error(StatePool.this.context.getName()+": Error syncing vote for " + stateVote.getValue(), ex);
+								}
+								finally
+								{
+									if (StatePool.this.votesToSyncQueue.remove(stateVote.getKey(), stateVote.getValue()) == false)
+										throw new IllegalStateException("State pool vote peek/remove failed for "+stateVote.getValue());
 								}
 							}
 						}
 
 						List<StateVote> stateVotesToBroadcast = new ArrayList<StateVote>();
-						List<StateVote> stateVotesToCount = new ArrayList<StateVote>();
-						StatePool.this.votesToCountQueue.drainTo(stateVotesToCount, 64);
-						if (stateVotesToCount.isEmpty() == false)
+						if (StatePool.this.votesToCountQueue.isEmpty() == false)
 						{
-							for (StateVote stateVote : stateVotesToCount)
+							Entry<Hash, StateVote> stateVote;
+							while((stateVote = StatePool.this.votesToCountQueue.peek()) != null)
 							{
 								try
 								{
-									if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == false)
+									if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote.getValue()).equals(OperationStatus.SUCCESS) == false)
 									{
-										statePoolLog.warn(StatePool.this.context.getName()+": Received already seen state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
+										statePoolLog.warn(StatePool.this.context.getName()+": Received already seen state vote of "+stateVote.getValue().getState()+" for "+stateVote.getValue().getOwner());
 										continue;
 									}
 									
-									if (process(stateVote) == true)
-										stateVotesToBroadcast.add(stateVote);
+									if (process(stateVote.getValue()) == true)
+										stateVotesToBroadcast.add(stateVote.getValue());
 								}
 								catch (Exception ex)
 								{
-									statePoolLog.error(StatePool.this.context.getName()+": Error counting vote for " + stateVote, ex);
+									statePoolLog.error(StatePool.this.context.getName()+": Error counting vote for " + stateVote.getValue(), ex);
+								}
+								finally
+								{
+									if (StatePool.this.votesToCountQueue.remove(stateVote.getKey(), stateVote.getValue()) == false)
+										throw new IllegalStateException("State pool vote peek/remove failed for "+stateVote.getValue());
 								}
 							}
 						}
 
-						List<PendingState> stateVotesToCast = new ArrayList<PendingState>();
-						StatePool.this.votesToCastQueue.drainTo(stateVotesToCast, 64);
-						if (stateVotesToCast.isEmpty() == false)
+						if (StatePool.this.votesToCastQueue.isEmpty() == false)
 						{
-							for (PendingState pendingState : stateVotesToCast)
+							PendingState pendingState;
+							while((pendingState = StatePool.this.votesToCastQueue.peek()) != null)
 							{
 								StatePool.this.lock.writeLock().lock();
 								try
@@ -393,6 +399,9 @@ public final class StatePool implements Service
 								}
 								finally
 								{
+									if (pendingState != StatePool.this.votesToCastQueue.poll())
+										throw new IllegalStateException("State pool vote cast peek/pool failed for "+pendingState.getKey());
+
 									StatePool.this.lock.writeLock().unlock();
 								}
 							}
@@ -432,9 +441,6 @@ public final class StatePool implements Service
 	private final MappedBlockingQueue<Hash, StateVote> votesToCountQueue;
 	private final Map<Hash, PendingState> states = new HashMap<Hash, PendingState>();
 	
-	// Sync cache
-	private final Multimap<Long, Hash> stateVoteSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
-
 	StatePool(Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
@@ -444,7 +450,8 @@ public final class StatePool implements Service
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		
 //		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL);
+		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -483,7 +490,8 @@ public final class StatePool implements Service
 					Set<Hash> required = new HashSet<Hash>();
 					for (Hash item : items)
 					{
-						if (StatePool.this.votesToCountQueue.contains(item) == true || 
+						if (StatePool.this.votesToSyncQueue.contains(item) == true || 
+							StatePool.this.votesToCountQueue.contains(item) == true || 
 							StatePool.this.context.getLedger().getLedgerStore().has(item) == true)
 							continue;
 
@@ -555,44 +563,6 @@ public final class StatePool implements Service
 		});
 		
 		// SYNC //
-		this.context.getNetwork().getGossipHandler().register(StateVote.class, new SyncInventory() 
-		{
-			@Override
-			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
-			{
-				if (type.equals(StateVote.class) == false)
-				{
-					gossipLog.error(StatePool.this.context.getName()+": State vote type expected but got "+type);
-					return Collections.emptyList();
-				}
-				
-				StatePool.this.lock.writeLock().lock();
-				try
-				{
-					Set<Hash> required = new HashSet<Hash>();
-					for (Hash item : items)
-					{
-						if (StatePool.this.votesToCountQueue.contains(item) == true)
-							continue;
-						
-						final StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
-						if (stateVote != null)
-						{
-							StatePool.this.votesToSyncQueue.put(stateVote.getHash(), stateVote);
-							StatePool.this.voteProcessorSemaphore.release();
-						}
-						else
-							required.add(item);
-					}
-					return required;
-				}
-				finally
-				{
-					StatePool.this.lock.writeLock().unlock();
-				}
-			}
-		});
-
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
@@ -609,8 +579,8 @@ public final class StatePool implements Service
 							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
 								statePoolLog.debug(StatePool.this.context.getName()+": State pool (votes) inventory request from "+peer);
 							
-							List<PendingState> pendingStates = new ArrayList<PendingState>(StatePool.this.states.values());
-							List<Hash> stateVoteInventory = new ArrayList<Hash>();
+							final Set<PendingState> pendingStates = new HashSet<PendingState>(StatePool.this.states.values());
+							final Set<Hash> stateVoteInventory = new HashSet<Hash>();
 							for (PendingState pendingState : pendingStates)
 							{
 								for (StateVote stateVote : pendingState.votes())
@@ -620,7 +590,7 @@ public final class StatePool implements Service
 							long height = StatePool.this.context.getLedger().getHead().getHeight();
 							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								stateVoteInventory.addAll(StatePool.this.stateVoteSyncCache.get(height));
+								stateVoteInventory.addAll(StatePool.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateVote.class));
 								height--;
 							}
 							
@@ -630,7 +600,7 @@ public final class StatePool implements Service
 							int offset = 0;
 							while(offset < stateVoteInventory.size())
 							{
-								SyncInventoryMessage stateVoteInventoryMessage = new SyncInventoryMessage(stateVoteInventory.subList(offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, stateVoteInventory.size())), StateVote.class);
+								SyncInventoryMessage stateVoteInventoryMessage = new SyncInventoryMessage(stateVoteInventory, offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, stateVoteInventory.size()), StateVote.class);
 								StatePool.this.context.getNetwork().getMessaging().send(stateVoteInventoryMessage, peer);
 								offset += SyncInventoryMessage.MAX_ITEMS; 
 							}
@@ -746,8 +716,6 @@ public final class StatePool implements Service
 				if (pendingState == null)
 					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
 
-				this.stateVoteSyncCache.putAll(this.context.getLedger().getHead().getHeight(), pendingState.votes().stream().map(sv -> sv.getHash()).collect(Collectors.toList()));
-
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.committed");
 			}
@@ -777,8 +745,6 @@ public final class StatePool implements Service
 				PendingState pendingState = this.states.remove(stateAtomBlockHash);
 				if (pendingState == null)
 					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
-				
-				this.stateVoteSyncCache.putAll(this.context.getLedger().getHead().getHeight(), pendingState.votes().stream().map(sv -> sv.getHash()).collect(Collectors.toList()));
 				
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.aborted");
@@ -904,16 +870,6 @@ public final class StatePool implements Service
 			StatePool.this.lock.writeLock().lock();
 			try
 			{
-				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
-				if (trimTo > 0)
-				{
-					Iterator<Long> stateVoteSyncCacheKeyIterator = StatePool.this.stateVoteSyncCache.keySet().iterator();
-					while(stateVoteSyncCacheKeyIterator.hasNext() == true)
-					{
-						if (stateVoteSyncCacheKeyIterator.next() < trimTo)
-							stateVoteSyncCacheKeyIterator.remove();
-					}
-				}
 			}
 			finally
 			{
@@ -972,18 +928,49 @@ public final class StatePool implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-
 			StatePool.this.lock.writeLock().lock();
 			try
 			{
-				statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state pool");
-				StatePool.this.voteProcessorSemaphore.drainPermits();
-				StatePool.this.states.clear();
-				StatePool.this.votesToCastQueue.clear();
-				StatePool.this.votesToSyncQueue.clear();
-				StatePool.this.votesToCountQueue.clear();
+				if (event.isSynced() == true)
+				{
+					statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known state pool state");
+					for (long height = Math.max(0, StatePool.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  StatePool.this.context.getLedger().getHead().getHeight() ; height++)
+					{
+						try
+						{
+							Collection<Hash> items = StatePool.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateVote.class);
+							for (Hash item : items)
+							{
+								StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
+								Commit commit = StatePool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateVote.getAtom()));
+								if (commit == null || commit.getPath().get(Elements.CERTIFICATE) != null)
+									continue;
+									
+								PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
+								if (pendingAtom == null)
+								{
+									Atom atom = StatePool.this.context.getLedger().getLedgerStore().get(stateVote.getAtom(), Atom.class);
+									StatePool.this.context.getLedger().getAtomHandler().submit(atom);
+								}
+								
+								StatePool.this.votesToSyncQueue.put(stateVote.getHash(), stateVote);
+							}
+						}
+						catch (Exception ex)
+						{
+							statePoolLog.error(StatePool.this.context.getName()+": Failed to load state for state pool at height "+height, ex);
+						}
+					}					
+				}
+				else
+				{
+					statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state pool");
+					StatePool.this.voteProcessorSemaphore.drainPermits();
+					StatePool.this.states.clear();
+					StatePool.this.votesToCastQueue.clear();
+					StatePool.this.votesToSyncQueue.clear();
+					StatePool.this.votesToCountQueue.clear();
+				}
 			}
 			finally
 			{

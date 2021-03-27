@@ -24,7 +24,6 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
-import org.fuserleer.Universe;
 import org.fuserleer.collections.MappedBlockingQueue;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
@@ -52,9 +51,9 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
 import org.fuserleer.network.messages.GetInventoryItemsMessage;
+import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
@@ -62,9 +61,6 @@ import org.fuserleer.time.Time;
 import org.fuserleer.utils.MathUtils;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
 import com.sleepycat.je.OperationStatus;
 
@@ -216,27 +212,55 @@ public class BlockHandler implements Service
 						if (BlockHandler.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
 							continue;
 
-						List<BlockVote> blockVotesToBroadcast = new ArrayList<BlockVote>();
-						List<BlockVote> blockVotesToCount = new ArrayList<BlockVote>();
-						BlockHandler.this.votesToCountQueue.drainTo(blockVotesToCount, 64);
-						if (blockVotesToCount.isEmpty() == false)
+						if (BlockHandler.this.context.getLedger().isSynced() == false)
+							continue;
+
+						if (BlockHandler.this.votesToSyncQueue.isEmpty() == false)
 						{
-							for (BlockVote blockVote : blockVotesToCount)
+							Entry<Hash, BlockVote> blockVote;
+							while((blockVote = BlockHandler.this.votesToSyncQueue.peek()) != null)
 							{
 								try
 								{
-									if (BlockHandler.this.context.getLedger().getLedgerStore().store(blockVote).equals(OperationStatus.SUCCESS) == false)
-									{
-										blocksLog.warn(BlockHandler.this.context.getName()+": Received already seen block vote of "+blockVote+" for "+blockVote.getOwner());
-										continue;
-									}
-									
-									if (process(blockVote) == true)
-										blockVotesToBroadcast.add(blockVote);
+									process(blockVote.getValue());
 								}
 								catch (Exception ex)
 								{
-									blocksLog.error(BlockHandler.this.context.getName()+": Error counting block vote for " + blockVote, ex);
+									blocksLog.error(BlockHandler.this.context.getName()+": Error syncing block vote "+blockVote, ex);
+								}
+								finally
+								{
+									if (BlockHandler.this.votesToSyncQueue.remove(blockVote.getKey(), blockVote.getValue()) == false)
+										throw new IllegalStateException("Block vote peek/remove failed for "+blockVote.getValue());
+								}
+							}
+						}
+
+						List<BlockVote> blockVotesToBroadcast = new ArrayList<BlockVote>();
+						if (BlockHandler.this.votesToCountQueue.isEmpty() == false)
+						{
+							Entry<Hash, BlockVote> blockVote;
+							while((blockVote = BlockHandler.this.votesToCountQueue.peek()) != null)
+							{
+								try
+								{
+									if (BlockHandler.this.context.getLedger().getLedgerStore().store(blockVote.getValue()).equals(OperationStatus.SUCCESS) == false)
+									{
+										blocksLog.warn(BlockHandler.this.context.getName()+": Received already seen block vote of "+blockVote.getValue()+" for "+blockVote.getValue().getOwner());
+										continue;
+									}
+									
+									if (process(blockVote.getValue()) == true)
+										blockVotesToBroadcast.add(blockVote.getValue());
+								}
+								catch (Exception ex)
+								{
+									blocksLog.error(BlockHandler.this.context.getName()+": Error counting block vote for "+blockVote.getValue(), ex);
+								}
+								finally
+								{
+									if (BlockHandler.this.votesToCountQueue.remove(blockVote.getKey(), blockVote.getValue()) == false)
+										throw new IllegalStateException("Block vote peek/remove failed for "+blockVote.getValue());
 								}
 							}
 						}
@@ -279,8 +303,7 @@ public class BlockHandler implements Service
 	private final AtomicReference<BlockHeader> 	currentVote;
 	private PendingBranch 						bestBranch;
 
-	// Sync cache
-	private final Multimap<Long, Hash> blockVoteSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
+	private final MappedBlockingQueue<Hash, BlockVote> votesToSyncQueue;
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
@@ -290,6 +313,7 @@ public class BlockHandler implements Service
 		this.pendingBlocks = Collections.synchronizedMap(new HashMap<Hash, PendingBlock>());
 		this.pendingBranches = Collections.synchronizedSet(new HashSet<PendingBranch>());
 		this.votePowerHandler = Objects.requireNonNull(votePowerHandler, "Vote power handler is null");
+		this.votesToSyncQueue = new MappedBlockingQueue<Hash, BlockVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, BlockVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.blockRegulator = new BlockRegulator(context);
 		this.voteClock = new AtomicLong(0);
@@ -579,94 +603,6 @@ public class BlockHandler implements Service
 		});
 
 		// SYNC //
-		this.context.getNetwork().getGossipHandler().register(BlockHeader.class, new SyncInventory() 
-		{
-			@Override
-			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
-			{
-				if (type.equals(BlockHeader.class) == false)
-				{
-					blocksLog.error(BlockHandler.this.context.getName()+": Block header type expected but got "+type);
-					return Collections.emptyList();
-				}
-				
-				BlockHandler.this.lock.writeLock().lock();
-				try
-				{
-					Set<Hash> required = new HashSet<Hash>();
-					for (Hash item : items)
-					{
-						if (BlockHandler.this.pendingBlocks.containsKey(item) == true)
-							continue;
-						
-						BlockHeader blockHeader = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockHeader.class);
-						if (blockHeader != null)
-						{
-							try
-							{
-								push(blockHeader);
-							}
-							catch(Exception ex)
-							{
-								blocksLog.error(BlockHandler.this.context.getName()+": Failed to push block header on sync "+blockHeader, ex);
-							}
-						}
-						else
-							required.add(item);
-					}
-					return required;
-				}
-				finally
-				{
-					BlockHandler.this.lock.writeLock().unlock();
-				}
-			}
-		});
-		
-		this.context.getNetwork().getGossipHandler().register(BlockVote.class, new SyncInventory() 
-		{
-			@Override
-			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException, ValidationException
-			{
-				if (type.equals(BlockVote.class) == false)
-				{
-					blocksLog.error(BlockHandler.this.context.getName()+": Block vote type expected but got "+type);
-					return Collections.emptyList();
-				}
-		
-				BlockHandler.this.lock.writeLock().lock();
-				try
-				{
-					Set<Hash> required = new HashSet<Hash>();
-					for (Hash item : items)
-					{
-						if (BlockHandler.this.votesToCountQueue.contains(item) == true)
-							continue;
-						
-						final BlockVote blockVote = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockVote.class);
-						if (blockVote != null)
-						{
-							try
-							{
-								BlockHandler.this.process(blockVote);
-							}
-							catch(Exception ex)
-							{
-								blocksLog.error(BlockHandler.this.context.getName()+": Failed to process block vote on sync "+blockVote, ex);
-							}
-						}
-						else
-							required.add(item);
-					}
-					return required;
-				}
-				finally
-				{
-					BlockHandler.this.lock.writeLock().unlock();
-				}
-			}
-		});
-
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
@@ -687,9 +623,9 @@ public class BlockHandler implements Service
 							if (blocksLog.hasLevel(Logging.DEBUG) == true)
 								blocksLog.debug(BlockHandler.this.context.getName()+": Broadcasting about "+BlockHandler.this.pendingBlocks.size()+" pool blocks to "+peer);
 
-							List<PendingBlock> pendingBlocks = new ArrayList<PendingBlock>(BlockHandler.this.pendingBlocks.values());
-							List<Hash> pendingBlockInventory = new ArrayList<Hash>();
-							List<Hash> blockVoteInventory = new ArrayList<Hash>();
+							final Set<PendingBlock> pendingBlocks = new HashSet<PendingBlock>(BlockHandler.this.pendingBlocks.values());
+							final Set<Hash> pendingBlockInventory = new HashSet<Hash>();
+							final Set<Hash> blockVoteInventory = new HashSet<Hash>();
 							
 							for (PendingBlock pendingBlock : pendingBlocks)
 							{
@@ -702,21 +638,15 @@ public class BlockHandler implements Service
 							long height = BlockHandler.this.context.getLedger().getHead().getHeight();
 							while (height > syncAcquiredMessage.getHead().getHeight())
 							{
-								pendingBlockInventory.add(BlockHandler.this.context.getLedger().getLedgerStore().get(height));
-								height--;
-							}
-							
-							height = BlockHandler.this.context.getLedger().getHead().getHeight();
-							while (height >= syncAcquiredMessage.getHead().getHeight())
-							{
-								blockVoteInventory.addAll(BlockHandler.this.blockVoteSyncCache.get(height));
+								pendingBlockInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class));
+								blockVoteInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class));
 								height--;
 							}
 							
 							int offset = 0;
 							while(offset < pendingBlockInventory.size())
 							{
-								BroadcastInventoryMessage pendingBlockInventoryMessage = new BroadcastInventoryMessage(pendingBlockInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, pendingBlockInventory.size())), BlockHeader.class);
+								SyncInventoryMessage pendingBlockInventoryMessage = new SyncInventoryMessage(pendingBlockInventory, offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, pendingBlockInventory.size()), BlockHeader.class);
 								BlockHandler.this.context.getNetwork().getMessaging().send(pendingBlockInventoryMessage, peer);
 								offset += BroadcastInventoryMessage.MAX_ITEMS; 
 							}
@@ -724,7 +654,7 @@ public class BlockHandler implements Service
 							offset = 0;
 							while(offset < blockVoteInventory.size())
 							{
-								BroadcastInventoryMessage blockVoteInventoryMessage = new BroadcastInventoryMessage(blockVoteInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, blockVoteInventory.size())), BlockVote.class);
+								SyncInventoryMessage blockVoteInventoryMessage = new SyncInventoryMessage(blockVoteInventory, offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, blockVoteInventory.size()), BlockVote.class);
 								BlockHandler.this.context.getNetwork().getMessaging().send(blockVoteInventoryMessage, peer);
 								offset += BroadcastInventoryMessage.MAX_ITEMS; 
 							}
@@ -849,6 +779,9 @@ public class BlockHandler implements Service
 			while(blockIterator.hasNext())
 			{
 				PendingBlock pendingBlock = blockIterator.next();
+				if (pendingBlock.getBlock() == null)
+					break;
+				
 				if (BlockHandler.this.voteClock.get() < pendingBlock.getHeader().getHeight())
 				{
 					BlockHandler.this.voteClock.set(pendingBlock.getHeader().getHeight());
@@ -867,9 +800,9 @@ public class BlockHandler implements Service
 						if (blocksLog.hasLevel(Logging.DEBUG) == true)
 						{
 							if (pendingBlock.getHeader().getOwner().equals(BlockHandler.this.context.getNode().getIdentity()) == true)
-								blocksLog.info(BlockHandler.this.context.getName()+": Voted on own block "+pendingBlock);
+								blocksLog.debug(BlockHandler.this.context.getName()+": Voted on own block "+pendingBlock+" "+blockHeaderVote.getHash());
 							else
-								blocksLog.info(BlockHandler.this.context.getName()+": Voted on block "+pendingBlock);
+								blocksLog.debug(BlockHandler.this.context.getName()+": Voted on block "+pendingBlock+" "+blockHeaderVote.getHash());
 						}
 					}
 				}
@@ -1232,10 +1165,7 @@ public class BlockHandler implements Service
 			{
 				Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
 				if (pendingBlockEntry.getValue().getHeight() <= head.getHeight())
-				{
 					pendingBlocksIterator.remove();
-					this.blockVoteSyncCache.putAll(pendingBlockEntry.getValue().getHeight(), pendingBlockEntry.getValue().votes().stream().map(bv -> bv.getHash()).collect(Collectors.toList()));
-				}
 			}
 
 			for (PendingBlock pendingBlock : this.pendingBlocks.values())
@@ -1366,6 +1296,8 @@ public class BlockHandler implements Service
 					committable.put(committableBlock, pendingBranch);
 				
 				// TODO need a lower probability tiebreaker here
+				// TODO what happens if the branch has many un-constructable blocks which satisfy the below condition?
+				//      possible situation for a liveness break?  is this an attack surface that needs to be countered?
 				if (bestBranch == null || 
 					bestBranch.getHigh().getHeader().getAverageStep() < pendingBranch.getHigh().getHeader().getAverageStep() ||
 					(bestBranch.getHigh().getHeader().getAverageStep() == pendingBranch.getHigh().getHeader().getAverageStep() && bestBranch.getHigh().getHeader().getStep() < pendingBranch.getHigh().getHeader().getStep()))
@@ -1421,25 +1353,6 @@ public class BlockHandler implements Service
 				BlockHandler.this.voteClock.set(blockCommittedEvent.getBlock().getHeader().getHeight());
 				BlockHandler.this.currentVote.set(null);
 			}
-
-			BlockHandler.this.lock.writeLock().lock();
-			try
-			{
-				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
-				if (trimTo > 0)
-				{
-					Iterator<Long> blockVoteSyncCacheKeyIterator = BlockHandler.this.blockVoteSyncCache.keySet().iterator();
-					while(blockVoteSyncCacheKeyIterator.hasNext() == true)
-					{
-						if (blockVoteSyncCacheKeyIterator.next() < trimTo)
-							blockVoteSyncCacheKeyIterator.remove();
-					}
-				}
-			}
-			finally
-			{
-				BlockHandler.this.lock.writeLock().unlock();
-			}
 		}
 	};
 	
@@ -1449,17 +1362,51 @@ public class BlockHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-
 			BlockHandler.this.lock.writeLock().lock();
 			try
 			{
-				blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing block handler");
-				BlockHandler.this.bestBranch = null;
-				BlockHandler.this.pendingBlocks.clear();
-				BlockHandler.this.pendingBranches.clear();
-				BlockHandler.this.votesToCountQueue.clear();
+				if (event.isSynced() == true)
+				{
+					blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known block handler state");
+					for (long height = Math.max(0, BlockHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  BlockHandler.this.context.getLedger().getHead().getHeight() ; height++)
+					{
+						try
+						{
+							Collection<Hash> items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class);
+							for (Hash item : items)
+							{
+								BlockHeader blockHeader = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockHeader.class);
+								if (blockHeader.getHeight() <=  BlockHandler.this.context.getLedger().getHead().getHeight())
+									continue;
+								
+								BlockHandler.this.push(blockHeader);
+							}
+							
+							items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class);
+							for (Hash item : items)
+							{
+								BlockVote blockVote = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockVote.class);
+								if (blockVote.getHeight() <= BlockHandler.this.context.getLedger().getHead().getHeight())
+									continue;
+								
+								BlockHandler.this.votesToSyncQueue.put(blockVote.getHash(), blockVote);
+							}
+						}
+						catch (IOException ex)
+						{
+							blocksLog.error(BlockHandler.this.context.getName()+": Failed to load state for block handler at height "+height, ex);
+						}
+					}
+				}
+				else
+				{
+					blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing block handler");
+					BlockHandler.this.bestBranch = null;
+					BlockHandler.this.pendingBlocks.clear();
+					BlockHandler.this.pendingBranches.clear();
+					BlockHandler.this.votesToSyncQueue.clear();
+					BlockHandler.this.votesToCountQueue.clear();
+				}
 			}
 			finally
 			{

@@ -30,11 +30,14 @@ import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
+import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
+import org.fuserleer.ledger.events.AtomPersistedEvent;
+import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -42,12 +45,14 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.GetInventoryItemsMessage;
+import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.CustomInteger;
 import org.fuserleer.utils.Longs;
 
+import com.google.common.collect.HashMultimap;
+import com.google.common.collect.Multimap;
 import com.google.common.eventbus.Subscribe;
 import com.sleepycat.je.OperationStatus;
 
@@ -74,39 +79,60 @@ public final class AtomPool implements Service
 						if (AtomPool.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
 							continue;
 	
-						List<AtomVote> atomVotesToSync = new ArrayList<AtomVote>();
-						AtomPool.this.votesToSyncQueue.drainTo(atomVotesToSync, 64);
-						if (atomVotesToSync.isEmpty() == false)
+						if (AtomPool.this.context.getLedger().isSynced() == false)
+							continue;
+
+						if (AtomPool.this.votesToSyncQueue.isEmpty() == false)
 						{
-							for (AtomVote atomVote : atomVotesToSync)
+							Entry<Hash, AtomVote> atomVote;
+							while((atomVote = AtomPool.this.votesToSyncQueue.peek()) != null)
 							{
-								AtomPool.this.lock.writeLock().lock();
 								try
 								{
-									process(atomVote);
+									process(atomVote.getValue());
 								}
 								catch (Exception ex)
 								{
-									atomsLog.error(AtomPool.this.context.getName()+": Error syncing atom vote "+atomVote, ex);
+									atomsLog.error(AtomPool.this.context.getName()+": Error syncing atom vote "+atomVote.getValue(), ex);
 								}
 								finally
 								{
-									AtomPool.this.lock.writeLock().unlock();
+									if (AtomPool.this.votesToSyncQueue.remove(atomVote.getKey(), atomVote.getValue()) == false)
+										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
 								}
 							}
 						}
-						
+
+						Multimap<AtomVote, Long> atomVotesToBroadcast = HashMultimap.create();
 						if (AtomPool.this.votesToCountQueue.isEmpty() == false)
 						{
 							int votesCounted = 0;
 							do
 							{
 								final Entry<Hash, AtomVote> atomVote = AtomPool.this.votesToCountQueue.peek();
-								AtomPool.this.lock.writeLock().lock();
+								AtomPool.this.lock.readLock().lock();
 								try
 								{
-									if (OperationStatus.KEYEXIST.equals(AtomPool.this.context.getLedger().getLedgerStore().store(atomVote.getValue())) == false)
-										process(atomVote.getValue());
+									if (OperationStatus.KEYEXIST.equals(AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote.getValue())) == false)
+									{
+										if (process(atomVote.getValue()) == true)
+										{
+											PendingAtom pendingAtom = AtomPool.this.get(atomVote.getValue().getAtom());
+											if (pendingAtom == null)
+												pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getValue().getAtom());
+											
+											if (pendingAtom != null)
+											{
+												if (pendingAtom.getStatus().greaterThan(CommitStatus.NONE) == true)
+												{
+													Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), AtomPool.this.context.getLedger().numShardGroups());
+													atomVotesToBroadcast.putAll(atomVote.getValue(), shardGroups);
+												}
+											}
+											else
+												atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getValue().getAtom()+" is gone after applying vote "+atomVote.getValue()+" from "+atomVote.getValue().getOwner());
+										}
+									}
 									else
 										atomsLog.warn(AtomPool.this.context.getName()+": Received already seen atom vote "+atomVote.getKey()+":"+atomVote.getValue().getAtom()+" for "+atomVote.getValue().getOwner());
 								}
@@ -121,7 +147,7 @@ public final class AtomPool implements Service
 									if (AtomPool.this.votesToCountQueue.remove(atomVote.getKey(), atomVote.getValue()) == false)
 										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
 									
-									AtomPool.this.lock.writeLock().unlock();
+									AtomPool.this.lock.readLock().unlock();
 								}
 							}
 							while(votesToCountQueue.isEmpty() == false && votesCounted < 64);
@@ -143,13 +169,20 @@ public final class AtomPool implements Service
 										if (atomsLog.hasLevel(Logging.DEBUG))
 											atomsLog.debug(AtomPool.this.context.getName()+": Voting on atom "+pendingAtom.getHash());
 	
-										AtomVote atomPoolVote = new AtomVote(pendingAtom.getHash(), AtomPool.this.context.getNode().getIdentity());
-										atomPoolVote.sign(AtomPool.this.context.getNode().getKey());
+										AtomVote atomVote = new AtomVote(pendingAtom.getHash(), AtomPool.this.context.getNode().getIdentity());
+										atomVote.sign(AtomPool.this.context.getNode().getKey());
 	
-										AtomPool.this.context.getLedger().getLedgerStore().store(atomPoolVote);
-										pendingAtom.queue(atomPoolVote);
-										applyVotes(pendingAtom);
-									}
+										if (OperationStatus.KEYEXIST.equals(AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote)) == false)
+										{
+											pendingAtom.vote(atomVote);
+										}
+										else
+											atomsLog.warn(AtomPool.this.context.getName()+": Already cast atom vote "+atomVote.getHash()+":"+atomVote.getAtom()+" for "+atomVote.getOwner()+" (did out of sync recently happen?)");
+									}										
+									
+									Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), AtomPool.this.context.getLedger().numShardGroups());
+									for (AtomVote atomVote : pendingAtom.votes())
+										atomVotesToBroadcast.putAll(atomVote, shardGroups);
 								}
 								catch (Exception ex)
 								{
@@ -160,6 +193,21 @@ public final class AtomPool implements Service
 									AtomPool.this.lock.writeLock().unlock();
 								}
 							}
+						}
+						
+						try
+						{
+							if (atomVotesToBroadcast.isEmpty() == false)
+							{
+								Collection<AtomVote> atomVotes = atomVotesToBroadcast.keySet();
+								AtomPool.this.context.getMetaData().increment("ledger.pool.state.votes", atomVotes.size());
+								for (AtomVote atomVote : atomVotes)
+									AtomPool.this.context.getNetwork().getGossipHandler().broadcast(atomVote, atomVotesToBroadcast.get(atomVote));
+							}
+						}
+						catch (Exception ex)
+						{
+							atomsLog.error(AtomPool.this.context.getName()+": Error broadcasting atom votes "+atomVotesToBroadcast, ex);
 						}
 					} 
 					catch (InterruptedException e) 
@@ -187,7 +235,7 @@ public final class AtomPool implements Service
 	private final BlockingQueue<PendingAtom> votesToCastQueue;
 	private final MappedBlockingQueue<Hash, AtomVote> votesToSyncQueue;
 	private final MappedBlockingQueue<Hash, AtomVote> votesToCountQueue;
-
+	
 	public AtomPool(final Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
@@ -239,7 +287,8 @@ public final class AtomPool implements Service
 					Set<Hash> required = new HashSet<Hash>();
 					for (Hash item : items)
 					{
-						if (AtomPool.this.votesToCountQueue.contains(item) == true || 
+						if (AtomPool.this.votesToSyncQueue.contains(item) == true || 
+							AtomPool.this.votesToCountQueue.contains(item) == true || 
 							AtomPool.this.context.getLedger().getLedgerStore().has(item) == true)
 							continue;
 						
@@ -302,43 +351,6 @@ public final class AtomPool implements Service
 		});
 		
 		// SYNC //
-		this.context.getNetwork().getGossipHandler().register(AtomVote.class, new SyncInventory() 
-		{
-			@Override
-			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
-			{
-				if (type.equals(AtomVote.class) == false)
-				{
-					atomsLog.error(AtomPool.this.context.getName()+": Atom vote type expected but got "+type);
-					return Collections.emptyList();
-				}
-				
-				AtomPool.this.lock.writeLock().lock();
-				try
-				{
-					Set<Hash> required = new HashSet<Hash>();
-					for (Hash item : items)
-					{
-						if (AtomPool.this.votesToCountQueue.contains(item) == true)
-							continue;
-						
-						final AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);
-						if (atomVote != null)
-						{
-							AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
-							AtomPool.this.voteProcessorSemaphore.release();
-						}
-						else
-							required.add(item);
-					}
-					return required;
-				}
-				finally
-				{
-					AtomPool.this.lock.writeLock().unlock();
-				}
-			}
-		});
 
 		Thread voteProcessorThread = new Thread(this.voteProcessor);
 		voteProcessorThread.setDaemon(true);
@@ -346,6 +358,7 @@ public final class AtomPool implements Service
 		voteProcessorThread.start();
 		
 		this.context.getEvents().register(this.syncChangeListener);
+		this.context.getEvents().register(this.syncBlockListener);
 		this.context.getEvents().register(this.atomEventListener);
 	}
 
@@ -354,6 +367,7 @@ public final class AtomPool implements Service
 	{
 		this.voteProcessor.terminate(true);
 		this.context.getEvents().unregister(this.syncChangeListener);
+		this.context.getEvents().unregister(this.syncBlockListener);
 		this.context.getEvents().unregister(this.atomEventListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
@@ -387,51 +401,46 @@ public final class AtomPool implements Service
 			return false;
 		}
 
-		PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
-		if (pendingAtom == null)
+		AtomPool.this.lock.readLock().lock();
+		try
 		{
-			// Already committed? (return false silently if WARN log level not applied)
-			if (atomsLog.hasLevel(Logging.WARN) == true && this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atomVote.getAtom())) == null)
-				atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" not found for vote "+atomVote+" for "+atomVote.getOwner());
-
-			return false;
-		}
-				
-		if (pendingAtom.voted(atomVote.getOwner()) == true)
-		{
-			atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" already has vote from "+atomVote.getOwner());
-			return false;
-		}
+			PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
+			if (pendingAtom == null)
+				pendingAtom = AtomPool.this.pending.get(atomVote.getAtom());
 			
-		pendingAtom.queue(atomVote);
-		applyVotes(pendingAtom);
-		return true;
-	}
+			if (pendingAtom == null)
+			{
+				// Already committed? (return false silently if WARN log level not applied)
+				if (atomsLog.hasLevel(Logging.WARN) == true && this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atomVote.getAtom())) == null)
+					atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" not found for vote "+atomVote+" for "+atomVote.getOwner());
 	
-	// TODO Can apply atom pool votes < prepared but the broadcast wont know which shards to gossip any atom votes to
-	// as preparation of an atom discovers the state keys.
-	//
-	// In a < prepared state the votes are "cached" in the pending atom and applied when the preparation stage is executed
-	private void applyVotes(final PendingAtom pendingAtom) throws IOException
-	{
-		Objects.requireNonNull(pendingAtom, "Pending atom is null");
-		
-		long currentWeight = pendingAtom.voteWeight();
-		Collection<AtomVote> appliedVotes = pendingAtom.apply();
-		if (appliedVotes.isEmpty() == true)
-			return;
-		
-		for (AtomVote appliedVote : appliedVotes)
-			this.context.getNetwork().getGossipHandler().broadcast(appliedVote);
-
-		Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), this.context.getLedger().numShardGroups());
-		long voteThresold = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups);
-		if (currentWeight < voteThresold && pendingAtom.voteWeight() >= voteThresold)
-		{
-			if (atomsLog.hasLevel(Logging.DEBUG) == true)
-				atomsLog.debug(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups));
+				return false;
+			}
+					
+			if (pendingAtom.vote(atomVote) == true)
+			{
+				if (pendingAtom.getStatus().greaterThan(CommitStatus.NONE) == true)
+				{
+					long currentWeight = pendingAtom.voteWeight();
+					Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), this.context.getLedger().numShardGroups());
+					long voteThresold = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups);
+					if (currentWeight < voteThresold && pendingAtom.voteWeight() >= voteThresold)
+					{
+						if (atomsLog.hasLevel(Logging.DEBUG) == true)
+							atomsLog.debug(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups));
+						
+						AtomPool.this.context.getMetaData().increment("ledger.pool.atoms.agreed");
+					}
+				}
+				
+				return true;
+			}
 			
-			AtomPool.this.context.getMetaData().increment("ledger.pool.atoms.agreed");
+			return false;
+		}
+		finally
+		{
+			AtomPool.this.lock.readLock().unlock();
 		}
 	}
 	
@@ -796,8 +805,35 @@ public final class AtomPool implements Service
 		}
 	}
 	
+	// SYNC BLOCK LISTENER //
+	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(final BlockCommittedEvent event) 
+		{
+			AtomPool.this.lock.writeLock().lock();
+			try
+			{
+				for (Atom atom : event.getBlock().getAtoms())
+					if (AtomPool.this.context.getLedger().getAtomPool().remove(atom.getHash()) == null)
+						atomsLog.error(AtomPool.this.context.getName()+": Pending atom "+atom.getHash()+" was not found in pool when processing block commit "+event.getBlock().getHeader());
+			}
+			finally
+			{
+				AtomPool.this.lock.writeLock().unlock();
+			}
+		}
+	};
+						
 	private SynchronousEventListener atomEventListener = new SynchronousEventListener() 
 	{
+		@Subscribe
+		public void on(final AtomPersistedEvent event) 
+		{
+			if (AtomPool.this.add(event.getPendingAtom()) == false)
+				atomsLog.error(AtomPool.this.context.getName()+": Atom "+event.getAtom().getHash()+" not added to atom pool");
+		}
+		
 		@Subscribe
 		public void on(AtomExceptionEvent event)
 		{
@@ -840,14 +876,64 @@ public final class AtomPool implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-
 			AtomPool.this.lock.writeLock().lock();
 			try
 			{
-				atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom pool");
-				reset();
+				if (event.isSynced() == true)
+				{
+					atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom pool state");
+					for (long height = Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  AtomPool.this.context.getLedger().getHead().getHeight() ; height++)
+					{
+						try
+						{
+							Collection<Hash> items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
+							for (Hash item : items)
+							{
+								Commit commit = AtomPool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, item));
+								if (commit != null && commit.getPath().get(Elements.BLOCK) != null)
+									continue;
+									
+								PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(item);
+								if (pendingAtom == null)
+								{
+									Atom atom = AtomPool.this.context.getLedger().getLedgerStore().get(item, Atom.class);
+									AtomPool.this.context.getLedger().getAtomHandler().submit(atom);
+								}
+								else
+									AtomPool.this.add(pendingAtom);
+							}
+							
+							items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class);
+							for (Hash item : items)
+							{
+								AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);
+								Commit commit = AtomPool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atomVote.getAtom()));
+								if (commit != null && commit.getPath().get(Elements.BLOCK) != null)
+									continue;
+									
+								PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
+								if (pendingAtom == null)
+								{
+									Atom atom = AtomPool.this.context.getLedger().getLedgerStore().get(atomVote.getAtom(), Atom.class);
+									AtomPool.this.context.getLedger().getAtomHandler().submit(atom);
+								}
+								else
+									AtomPool.this.add(pendingAtom);
+								
+								AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
+							}
+						}
+						catch (Exception ex)
+						{
+							atomsLog.error(AtomPool.this.context.getName()+": Failed to load state for atom pool at height "+height, ex);
+						}
+					}
+				}
+				else
+				{
+					atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom pool");
+					reset();
+				}
 			}
 			finally
 			{

@@ -1,20 +1,16 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -44,16 +40,12 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
 
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
 
 public class AtomHandler implements Service
@@ -65,10 +57,6 @@ public class AtomHandler implements Service
 	private final Map<Hash, PendingAtom> pendingAtoms = Collections.synchronizedMap(new HashMap<>());
 	private final MappedBlockingQueue<Hash, Atom> atomQueue;
 
-	// Sync cache
-	private final Multimap<Long, Hash> atomSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
-	private final Multimap<Long, Hash> atomVoteSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
-	
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
 	private Executable atomProcessor = new Executable()
@@ -113,7 +101,7 @@ public class AtomHandler implements Service
 				                	// Store all valid atoms even if they aren't within the local shard group.
 									// Those atoms will be broadcast the the relevant groups and it needs to be stored
 									// to be able to serve the requests for it.  Such atoms can be pruned per epoch
-				                	AtomHandler.this.context.getLedger().getLedgerStore().store(pendingAtom.getAtom());  // TODO handle failure
+				                	AtomHandler.this.context.getLedger().getLedgerStore().store(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.getAtom());  // TODO handle failure
 				                	
 				                	shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
 				                	if (shardGroups.contains(localShardGroup) == false)
@@ -234,43 +222,6 @@ public class AtomHandler implements Service
 			}
 		});
 		
-		this.context.getNetwork().getGossipHandler().register(Atom.class, new SyncInventory() 
-		{
-			@Override
-			public Collection<Hash> process(final Class<? extends Primitive> type, final Collection<Hash> items) throws IOException, InterruptedException
-			{
-				AtomHandler.this.lock.writeLock().lock();
-				try
-				{
-					Set<Hash> required = new HashSet<Hash>();
-					for (Hash item : items)
-					{
-						PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(item);
-						if (pendingAtom != null && pendingAtom.getAtom() != null)
-							continue;
-
-						if (AtomHandler.this.atomQueue.contains(item) == true)
-							continue;
-						
-						Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
-						if (atom != null)
-						{
-							Commit commit = AtomHandler.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom.getHash()));
-							if (commit == null || commit.getPath().get(Elements.BLOCK) == null)
-								AtomHandler.this.submit(atom);
-						}
-						else
-							required.add(item);
-					}
-					return required;
-				}
-				finally
-				{
-					AtomHandler.this.lock.writeLock().unlock();
-				}
-			}
-		});
-
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
@@ -288,9 +239,9 @@ public class AtomHandler implements Service
 								atomsLog.debug(AtomHandler.this.context.getName()+": Atom pool inventory request from "+peer);
 
 							// TODO will cause problems when pool is BIG
-							List<PendingAtom> pendingAtoms = new ArrayList<PendingAtom>(AtomHandler.this.pendingAtoms.values());
-							final List<Hash> pendingAtomInventory = new ArrayList<Hash>();
-							final List<Hash> atomVoteInventory = new ArrayList<Hash>();
+							Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(AtomHandler.this.pendingAtoms.values());
+							final Set<Hash> pendingAtomInventory = new HashSet<Hash>();
+							final Set<Hash> atomVoteInventory = new HashSet<Hash>();
 							
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
@@ -303,8 +254,8 @@ public class AtomHandler implements Service
 							long height = AtomHandler.this.context.getLedger().getHead().getHeight();
 							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								pendingAtomInventory.addAll(AtomHandler.this.atomSyncCache.get(height));
-								atomVoteInventory.addAll(AtomHandler.this.atomVoteSyncCache.get(height));
+								pendingAtomInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class));
+								atomVoteInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class));
 								height--;
 							}
 							
@@ -314,7 +265,7 @@ public class AtomHandler implements Service
 							int offset = 0;
 							while(offset < pendingAtomInventory.size())
 							{
-								SyncInventoryMessage pendingAtomInventoryMessage = new SyncInventoryMessage(pendingAtomInventory.subList(offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, pendingAtomInventory.size())), Atom.class);
+								SyncInventoryMessage pendingAtomInventoryMessage = new SyncInventoryMessage(pendingAtomInventory, offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, pendingAtomInventory.size()), Atom.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(pendingAtomInventoryMessage, peer);
 								offset += SyncInventoryMessage.MAX_ITEMS; 
 							}
@@ -325,7 +276,7 @@ public class AtomHandler implements Service
 							offset = 0;
 							while(offset < atomVoteInventory.size())
 							{
-								SyncInventoryMessage atomVoteInventoryMessage = new SyncInventoryMessage(atomVoteInventory.subList(offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, atomVoteInventory.size())), AtomVote.class);
+								SyncInventoryMessage atomVoteInventoryMessage = new SyncInventoryMessage(atomVoteInventory, offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, atomVoteInventory.size()),  AtomVote.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(atomVoteInventoryMessage, peer);
 								offset += SyncInventoryMessage.MAX_ITEMS; 
 							}
@@ -436,8 +387,6 @@ public class AtomHandler implements Service
 		AtomHandler.this.lock.writeLock().lock();
 		try
 		{
-    		this.atomSyncCache.put(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.getHash());
-    		this.atomVoteSyncCache.putAll(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.votes().stream().map(av -> av.getHash()).collect(Collectors.toList()));
 			this.pendingAtoms.remove(pendingAtom.getHash());
 		}
 		finally
@@ -468,31 +417,18 @@ public class AtomHandler implements Service
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent)
 		{
-			AtomHandler.this.lock.writeLock().lock();
+			// TODO needs to go in ledger class
+/*			AtomHandler.this.lock.writeLock().lock();
 			try
 			{
-				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
-				if (trimTo > 0)
-				{
-					Iterator<Long> atomSyncCacheKeyIterator = AtomHandler.this.atomSyncCache.keySet().iterator();
-					while(atomSyncCacheKeyIterator.hasNext() == true)
-					{
-						if (atomSyncCacheKeyIterator.next() < trimTo)
-							atomSyncCacheKeyIterator.remove();
-					}
-
-					Iterator<Long> atomVoteSyncCacheKeyIterator = AtomHandler.this.atomVoteSyncCache.keySet().iterator();
-					while(atomVoteSyncCacheKeyIterator.hasNext() == true)
-					{
-						if (atomVoteSyncCacheKeyIterator.next() < trimTo)
-							atomVoteSyncCacheKeyIterator.remove();
-					}
-				}
+//				long cleanTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
+//				if (cleanTo > 0)
+//					AtomHandler.this.context.getLedger().getLedgerStore().cleanSyncInventory(height);
 			}
 			finally
 			{
 				AtomHandler.this.lock.writeLock().unlock();
-			}
+			}*/
 		}
 	};
 
@@ -539,15 +475,43 @@ public class AtomHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-			
 			AtomHandler.this.lock.writeLock().lock();
 			try
 			{
-				atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom handler");
-				AtomHandler.this.atomQueue.clear();
-				AtomHandler.this.pendingAtoms.clear();
+				if (event.isSynced() == true)
+				{
+					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom handler state");
+					for (long height = Math.max(0, AtomHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  AtomHandler.this.context.getLedger().getHead().getHeight() ; height++)
+					{
+						try
+						{
+							Collection<Hash> items = AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
+							for (Hash item : items)
+							{
+								Commit commit = AtomHandler.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, item));
+								if (commit != null && commit.getPath().get(Elements.CERTIFICATE) != null)
+									continue;
+									
+								PendingAtom pendingAtom = AtomHandler.this.get(item);
+								if (pendingAtom == null)
+								{
+									Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
+									submit(atom);
+								}
+							}
+						}
+						catch (Exception ex)
+						{
+							atomsLog.error(AtomHandler.this.context.getName()+": Failed to load state for atom handler at height "+height, ex);
+						}
+					}
+				}
+				else
+				{
+					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom handler");
+					AtomHandler.this.atomQueue.clear();
+					AtomHandler.this.pendingAtoms.clear();
+				}
 			}
 			finally
 			{

@@ -43,7 +43,6 @@ import org.fuserleer.ledger.events.AtomCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomExecutedEvent;
-import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
@@ -57,8 +56,8 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.SyncInventory;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
+import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.PeerState;
@@ -102,9 +101,6 @@ public final class StateHandler implements Service
 	//		 Complexity required to do either is beyond immediate Cassandra scope, so for now just cheat and keep a largish cache.
 	private final Cache<Hash, Optional<UInt256>> stateInputs = CacheBuilder.newBuilder().maximumSize(1<<18).build();
 	
-	// Sync cache
-	private final Multimap<Long, Hash> stateCertificateSyncCache = Multimaps.synchronizedMultimap(HashMultimap.create());
-	
 	// TODO clean this up, used to track responses (or lack of) for state provisioning requests to remote validators and trigger peer tasks
 	private final Set<Hash> outboundProvisionRequests = Collections.synchronizedSet(new HashSet<Hash>());
 	
@@ -119,39 +115,47 @@ public final class StateHandler implements Service
 				{
 					try
 					{
-						List<StateCertificate> certificatesToSync = new ArrayList<StateCertificate>();
-						StateHandler.this.certificatesToSyncQueue.drainTo(certificatesToSync, 64);
-						if (certificatesToSync.isEmpty() == false)
+						if (StateHandler.this.certificatesToSyncQueue.isEmpty() == false)
 						{
-							for (StateCertificate stateCertificate : certificatesToSync)
+							Entry<Hash, StateCertificate> stateCertificate;
+							while((stateCertificate = StateHandler.this.certificatesToSyncQueue.peek()) != null)
 							{
 								try
 								{
-									process(stateCertificate);
+									process(stateCertificate.getValue());
 								}
 								catch (Exception ex)
 								{
-									stateLog.error(StateHandler.this.context.getName()+": Error syncing certificate for " + stateCertificate, ex);
+									stateLog.error(StateHandler.this.context.getName()+": Error syncing certificate for "+stateCertificate.getValue(), ex);
+								}
+								finally
+								{
+									if (StateHandler.this.certificatesToSyncQueue.remove(stateCertificate.getKey(), stateCertificate.getValue()) == false)
+										throw new IllegalStateException("State certificate sync peek/remove failed for "+stateCertificate.getValue());
 								}
 							}
 						}
 
-						List<StateCertificate> certificatesToProcess = new ArrayList<StateCertificate>();
-						StateHandler.this.certificatesToProcessQueue.drainTo(certificatesToProcess, 64);
-						if (certificatesToProcess.isEmpty() == false)
+						if (StateHandler.this.certificatesToProcessQueue.isEmpty() == false)
 						{
-							for (StateCertificate stateCertificate : certificatesToProcess)
+							Entry<Hash, StateCertificate> stateCertificate;
+							while((stateCertificate = StateHandler.this.certificatesToProcessQueue.peek()) != null)
 							{
 								try
 								{
-									if (OperationStatus.KEYEXIST.equals(StateHandler.this.context.getLedger().getLedgerStore().store(stateCertificate)) == false)
-										StateHandler.this.process(stateCertificate);
+									if (OperationStatus.KEYEXIST.equals(StateHandler.this.context.getLedger().getLedgerStore().store(stateCertificate.getValue())) == false)
+										StateHandler.this.process(stateCertificate.getValue());
 									else
-										cerbyLog.warn(StateHandler.this.context.getName()+": State certificate "+stateCertificate.getHash()+" of "+stateCertificate.getState()+" already seen for "+stateCertificate.getAtom());
+										cerbyLog.warn(StateHandler.this.context.getName()+": State certificate "+stateCertificate.getValue().getHash()+" of "+stateCertificate.getValue().getState()+" already seen for "+stateCertificate.getValue().getAtom());
 								}
 								catch (Exception ex)
 								{
-									stateLog.error(StateHandler.this.context.getName()+": Error processing certificate for " + stateCertificate, ex);
+									stateLog.error(StateHandler.this.context.getName()+": Error processing certificate "+stateCertificate.getValue(), ex);
+								}
+								finally
+								{
+									if (StateHandler.this.certificatesToProcessQueue.remove(stateCertificate.getKey(), stateCertificate.getValue()) == false)
+										throw new IllegalStateException("State certificate process peek/remove failed for "+stateCertificate.getValue());
 								}
 							}
 						}
@@ -665,42 +669,6 @@ public final class StateHandler implements Service
 		});
 		
 		// SYNC //
-		this.context.getNetwork().getGossipHandler().register(StateCertificate.class, new SyncInventory() 
-		{
-			@Override
-			public Collection<Hash> process(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
-			{
-				if (type.equals(StateCertificate.class) == false)
-				{
-					cerbyLog.error(StateHandler.this.context.getName()+": State certificate type expected but got "+type);
-					return Collections.emptyList();
-				}
-				
-				StateHandler.this.lock.writeLock().lock();
-				try
-				{
-					Set<Hash> required = new HashSet<Hash>();
-					for (Hash item : items)
-					{
-						if (StateHandler.this.certificatesToSyncQueue.contains(item) == true || 
-							StateHandler.this.certificatesToProcessQueue.contains(item) == true)
-							continue;
-						
-						final StateCertificate stateCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateCertificate.class);
-						if (stateCertificate != null)
-							StateHandler.this.certificatesToSyncQueue.put(item, stateCertificate);
-						else
-							required.add(item);
-					}
-					return required;
-				}
-				finally
-				{
-					StateHandler.this.lock.writeLock().unlock();
-				}
-			}
-		});
-
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
 			@Override
@@ -717,8 +685,8 @@ public final class StateHandler implements Service
 							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 								cerbyLog.debug(StateHandler.this.context.getName()+": State pool (certificates) inventory request from "+peer);
 							
-							final List<PendingAtom> pendingAtoms = new ArrayList<PendingAtom>(StateHandler.this.atoms.values());
-							final List<Hash> stateCertificateInventory = new ArrayList<Hash>();
+							final Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(StateHandler.this.atoms.values());
+							final Set<Hash> stateCertificateInventory = new HashSet<Hash>();
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
 								for (StateCertificate stateCertificate : pendingAtom.getCertificates())
@@ -738,7 +706,7 @@ public final class StateHandler implements Service
 							long height = StateHandler.this.context.getLedger().getHead().getHeight();
 							while (height >= syncAcquiredMessage.getHead().getHeight())
 							{
-								stateCertificateInventory.addAll(StateHandler.this.stateCertificateSyncCache.get(height));
+								stateCertificateInventory.addAll(StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateCertificate.class));
 								height--;
 							}
 							
@@ -748,7 +716,7 @@ public final class StateHandler implements Service
 							int offset = 0;
 							while(offset < stateCertificateInventory.size())
 							{
-								BroadcastInventoryMessage stateCertificateInventoryMessage = new BroadcastInventoryMessage(stateCertificateInventory.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, stateCertificateInventory.size())), StateCertificate.class);
+								SyncInventoryMessage stateCertificateInventoryMessage = new SyncInventoryMessage(stateCertificateInventory, offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, stateCertificateInventory.size()), StateCertificate.class);
 								StateHandler.this.context.getNetwork().getMessaging().send(stateCertificateInventoryMessage, peer);
 								offset += BroadcastInventoryMessage.MAX_ITEMS; 
 							}
@@ -861,12 +829,6 @@ public final class StateHandler implements Service
 		{
 			StateHandler.this.atoms.remove(pendingAtom.getHash());
 			pendingAtom.getStateKeys().forEach(sk -> {
-				long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
-				long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
-				long provisionShardGroup = ShardMapper.toShardGroup(sk.get(), numShardGroups);
-	        	if (provisionShardGroup != localShardGroup)
-	        		this.stateCertificateSyncCache.put(this.context.getLedger().getHead().getHeight(), pendingAtom.getCertificate(sk).getHash());
-
 				StateHandler.this.states.remove(sk, pendingAtom);
 				StateHandler.this.outboundProvisionRequests.remove(Hash.from(sk.get(), pendingAtom.getHash()));
 			});
@@ -1027,7 +989,7 @@ public final class StateHandler implements Service
 				if (StateHandler.this.atoms.containsKey(atomCertificateEvent.getCertificate().getAtom()) == false)
 					throw new IllegalStateException(StateHandler.this.context.getName()+": Pending atom "+atomCertificateEvent.getCertificate().getAtom()+" in certificate not found");
 				
-				StateHandler.this.context.getLedger().getLedgerStore().store(atomCertificateEvent.getCertificate());
+				StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), atomCertificateEvent.getCertificate());
 			}
 			finally
 			{
@@ -1039,21 +1001,6 @@ public final class StateHandler implements Service
 	// SYNC ATOM LISTENER //
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
-		@Subscribe
-		public void on(final AtomPersistedEvent event) 
-		{
-			StateHandler.this.lock.writeLock().lock();
-			try
-			{
-				if (StateHandler.this.context.getLedger().getAtomPool().add(event.getPendingAtom()) == false)
-					cerbyLog.error(StateHandler.this.context.getName()+": Atom "+event.getAtom().getHash()+" not added to atom pool");
-			}
-			finally
-			{
-				StateHandler.this.lock.writeLock().unlock();
-			}
-		}
-		
 		@Subscribe
 		public void on(final AtomAcceptedEvent event) 
 		{
@@ -1091,16 +1038,6 @@ public final class StateHandler implements Service
 			StateHandler.this.lock.writeLock().lock();
 			try
 			{
-				long trimTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
-				if (trimTo > 0)
-				{
-					Iterator<Long> stateCertificateSyncCacheKeyIterator = StateHandler.this.stateCertificateSyncCache.keySet().iterator();
-					while(stateCertificateSyncCacheKeyIterator.hasNext() == true)
-					{
-						if (stateCertificateSyncCacheKeyIterator.next() < trimTo)
-							stateCertificateSyncCacheKeyIterator.remove();
-					}
-				}
 			}
 			finally
 			{
@@ -1124,10 +1061,7 @@ public final class StateHandler implements Service
 					Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>();
 					for (Atom atom : event.getBlock().getAtoms())
 					{
-						PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomPool().remove(atom.getHash());
-						if (pendingAtom == null)
-							pendingAtom = StateHandler.this.atoms.get(atom.getHash());
-						
+						PendingAtom pendingAtom = StateHandler.this.atoms.get(atom.getHash());
 						if (pendingAtom == null)
 							pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(atom.getHash());
 						
@@ -1260,19 +1194,52 @@ public final class StateHandler implements Service
 		@Subscribe
 		public void on(final SyncStatusChangeEvent event) 
 		{
-			if (event.isSynced() == true)
-				return;
-
 			StateHandler.this.lock.writeLock().lock();
 			try
 			{
-				stateLog.info(StateHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state handler");
-				StateHandler.this.atoms.clear();
-				StateHandler.this.executionQueue.clear();
-				StateHandler.this.provisionQueue.clear();
-				StateHandler.this.provisionResponses.clear();
-				StateHandler.this.stateInputs.invalidateAll();
-				StateHandler.this.states.clear();
+				if (event.isSynced() == true)
+				{
+					cerbyLog.info(StateHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known state handler state");
+					for (long height = Math.max(0, StateHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  StateHandler.this.context.getLedger().getHead().getHeight() ; height++)
+					{
+						try
+						{
+							Collection<Hash> items = StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateCertificate.class);
+							for (Hash item : items)
+							{
+								StateCertificate stateCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateCertificate.class);
+								Commit commit = StateHandler.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateCertificate.getAtom()));
+								if (commit == null || commit.getPath().get(Elements.CERTIFICATE) != null)
+									continue;
+									
+								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(stateCertificate.getAtom());
+								if (pendingAtom == null)
+								{
+									Atom atom = StateHandler.this.context.getLedger().getLedgerStore().get(stateCertificate.getAtom(), Atom.class);
+									StateHandler.this.context.getLedger().getAtomHandler().submit(atom);
+								}
+								
+								StateHandler.this.certificatesToSyncQueue.put(stateCertificate.getHash(), stateCertificate);
+							}
+						}
+						catch (Exception ex)
+						{
+							cerbyLog.error(StateHandler.this.context.getName()+": Failed to load state for state handler at height "+height, ex);
+						}
+					}					
+				}
+				else
+				{
+					stateLog.info(StateHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state handler");
+					StateHandler.this.atoms.clear();
+					StateHandler.this.executionQueue.clear();
+					StateHandler.this.provisionQueue.clear();
+					StateHandler.this.provisionResponses.clear();
+					StateHandler.this.stateInputs.invalidateAll();
+					StateHandler.this.states.clear();
+					StateHandler.this.certificatesToProcessQueue.clear();
+					StateHandler.this.certificatesToSyncQueue.clear();
+				}
 			}
 			finally
 			{

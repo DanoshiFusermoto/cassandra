@@ -40,8 +40,6 @@ class PendingBlock implements Hashable
 	private boolean 	unbranched;
 	private Map<Hash, PendingAtom> atoms;
 	private Map<Hash, AtomCertificate> certificates;
-	
-//	private long  voteWeight;
 	private final Map<ECPublicKey, BlockVote> votes;
 	
 	private final ReentrantLock lock = new ReentrantLock();
@@ -51,7 +49,6 @@ class PendingBlock implements Hashable
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.hash = Objects.requireNonNull(block);
 		this.witnessed = Time.getLedgerTimeMS();
-//		this.voteWeight = 0l;
 		this.unbranched = true;
 		this.votes = new HashMap<ECPublicKey, BlockVote>();
 		this.atoms = new HashMap<Hash, PendingAtom>();
@@ -370,11 +367,9 @@ class PendingBlock implements Hashable
 		}
 	}
 
-//	public long vote(final BlockVote vote, long weight) throws ValidationException
 	public boolean vote(final BlockVote vote) throws ValidationException
 	{
 		Objects.requireNonNull(vote, "Vote is null");
-//		Numbers.isNegative(weight, "Votw weight is negative");
 		
 		if (vote.getObject().equals(getHash()) == false)
 			throw new ValidationException("Vote from "+vote.getOwner()+" is not for "+getHash());
@@ -382,16 +377,12 @@ class PendingBlock implements Hashable
 		if (vote.getOwner().verify(vote.getHash(), vote.getSignature()) == false)
 			throw new ValidationException("Signature from "+vote.getOwner()+" did not verify against "+getHash());
 		
-//		if (weight == 0)
-//			blocksLog.warn(this.context.getName()+": Weight is 0 for "+vote.getOwner()+" block vote "+vote.getHash()+":"+vote.getBlock()+":"+vote.getDecision());
-
 		this.lock.lock();
 		try
 		{
 			if (this.votes.containsKey(vote.getOwner()) == false)
 			{
 				this.votes.put(vote.getOwner(), vote);
-//				this.voteWeight += weight;
 				return true;
 			}
 			else
@@ -399,27 +390,12 @@ class PendingBlock implements Hashable
 				blocksLog.warn(this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+this.hash);
 				return false;
 			}
-
-//			return this.voteWeight;
 		}
 		finally
 		{
 			this.lock.unlock();
 		}
 	}
-	
-/*	public long weight()
-	{
-		this.lock.lock();
-		try
-		{
-			return this.voteWeight;
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}*/
 
 	public Collection<BlockVote> votes()
 	{

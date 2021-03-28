@@ -41,7 +41,7 @@ class PendingBlock implements Hashable
 	private Map<Hash, PendingAtom> atoms;
 	private Map<Hash, AtomCertificate> certificates;
 	
-	private long  voteWeight;
+//	private long  voteWeight;
 	private final Map<ECPublicKey, BlockVote> votes;
 	
 	private final ReentrantLock lock = new ReentrantLock();
@@ -51,7 +51,7 @@ class PendingBlock implements Hashable
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.hash = Objects.requireNonNull(block);
 		this.witnessed = Time.getLedgerTimeMS();
-		this.voteWeight = 0l;
+//		this.voteWeight = 0l;
 		this.unbranched = true;
 		this.votes = new HashMap<ECPublicKey, BlockVote>();
 		this.atoms = new HashMap<Hash, PendingAtom>();
@@ -370,10 +370,11 @@ class PendingBlock implements Hashable
 		}
 	}
 
-	public long vote(final BlockVote vote, long weight) throws ValidationException
+//	public long vote(final BlockVote vote, long weight) throws ValidationException
+	public boolean vote(final BlockVote vote) throws ValidationException
 	{
 		Objects.requireNonNull(vote, "Vote is null");
-		Numbers.isNegative(weight, "Votw weight is negative");
+//		Numbers.isNegative(weight, "Votw weight is negative");
 		
 		if (vote.getObject().equals(getHash()) == false)
 			throw new ValidationException("Vote from "+vote.getOwner()+" is not for "+getHash());
@@ -381,8 +382,8 @@ class PendingBlock implements Hashable
 		if (vote.getOwner().verify(vote.getHash(), vote.getSignature()) == false)
 			throw new ValidationException("Signature from "+vote.getOwner()+" did not verify against "+getHash());
 		
-		if (weight == 0)
-			blocksLog.warn(this.context.getName()+": Weight is 0 for "+vote.getOwner()+" block vote "+vote.getHash()+":"+vote.getBlock()+":"+vote.getDecision());
+//		if (weight == 0)
+//			blocksLog.warn(this.context.getName()+": Weight is 0 for "+vote.getOwner()+" block vote "+vote.getHash()+":"+vote.getBlock()+":"+vote.getDecision());
 
 		this.lock.lock();
 		try
@@ -390,12 +391,16 @@ class PendingBlock implements Hashable
 			if (this.votes.containsKey(vote.getOwner()) == false)
 			{
 				this.votes.put(vote.getOwner(), vote);
-				this.voteWeight += weight;
+//				this.voteWeight += weight;
+				return true;
 			}
 			else
+			{
 				blocksLog.warn(this.context.getName()+": "+vote.getOwner()+" has already cast a vote for "+this.hash);
+				return false;
+			}
 
-			return this.voteWeight;
+//			return this.voteWeight;
 		}
 		finally
 		{
@@ -403,7 +408,7 @@ class PendingBlock implements Hashable
 		}
 	}
 	
-	public long weight()
+/*	public long weight()
 	{
 		this.lock.lock();
 		try
@@ -414,7 +419,7 @@ class PendingBlock implements Hashable
 		{
 			this.lock.unlock();
 		}
-	}
+	}*/
 
 	public Collection<BlockVote> votes()
 	{

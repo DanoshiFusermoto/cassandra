@@ -14,11 +14,13 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
+import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.utils.Numbers;
 
 import com.google.common.annotations.VisibleForTesting;
 
@@ -583,10 +585,12 @@ public class PendingBranch
 			while(vertexIterator.hasNext())
 			{
 				PendingBlock vertex = vertexIterator.next();
-				long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), this.context.getLedger().numShardGroups(vertex.getHeight()));
-				if (vertex.weight() >= this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, vertex.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup)))
+				long weight = getWeight(vertex.getHeight());
+				long total = getTotalVotePower(vertex.getHeight());
+				long threshold = getVotePowerThreshold(vertex.getHeight());
+				if (weight >= threshold)
 				{
-					blocksLog.info(this.context.getName()+": Found commit at block with weight "+vertex.weight()+"/"+this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, vertex.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), localShardGroup)+" to commit list "+vertex);
+					blocksLog.info(this.context.getName()+": Found commit at block with weight "+weight+"/"+total+" to commit list "+vertex);
 					return vertex;
 				}
 			}
@@ -745,6 +749,141 @@ public class PendingBranch
 		try
 		{
 			return this.blocks.size();
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+	
+	// Vote power and weights //
+	long getVotePower(final long height, final ECPublicKey identity) throws IOException
+	{
+		Objects.requireNonNull(identity, "Identity is null");
+		Numbers.isNegative(height, "Height is negative");
+		
+		long committedPower = this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, height - VotePowerHandler.VOTE_POWER_MATURITY), identity);
+		long pendingPower = 0;
+		this.lock.lock();
+		try
+		{
+			for (PendingBlock vertex : this.blocks)
+			{
+				if (vertex.getHeight() <= height - VotePowerHandler.VOTE_POWER_MATURITY && vertex.getHeader().getOwner().equals(identity) == true)
+					pendingPower++;
+			}
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+		
+		return committedPower+pendingPower;
+	}
+
+	long getWeight(final long height) throws IOException
+	{
+		Numbers.isNegative(height, "Height is negative");
+		
+		this.lock.lock();
+		try
+		{
+			PendingBlock block = getBlockAtHeight(height);
+			if (block == null)
+				throw new IllegalStateException("Expected to find pending block at height "+height);
+			
+			long blockWeight = 0;
+			for (BlockVote vote : block.votes())
+			{
+				long voteWeight = getVotePower(vote.getHeight(), vote.getOwner());
+				if (voteWeight == 0)
+					blocksLog.warn(this.context.getName()+": Block vote "+vote.getHash()+" has zero weight for block "+block.getBlock()+" from "+vote.getOwner());
+				
+				blockWeight += voteWeight;
+			}
+				
+			return blockWeight;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	long getVotePowerThreshold(final long height) throws IOException
+	{
+		Numbers.isNegative(height, "Height is negative");
+		return twoFPlusOne(getTotalVotePower(height));
+	}
+
+	long getTotalVotePower(final long height) throws IOException
+	{
+		Numbers.isNegative(height, "Height is negative");
+		
+		long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), this.context.getLedger().numShardGroups()); 
+		long committedPower = this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, height - VotePowerHandler.VOTE_POWER_MATURITY), localShardGroup);
+		long pendingPower = 0;
+		this.lock.lock();
+		try
+		{
+			for (PendingBlock vertex : this.blocks)
+			{
+				if (vertex.getHeight() <= height - VotePowerHandler.VOTE_POWER_MATURITY)
+					pendingPower++;
+			}
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+		
+		return committedPower+pendingPower;
+	}
+	
+	private long twoFPlusOne(final long power)
+	{
+		Numbers.isNegative(power, "Power is negative");
+
+		long F = Math.max(1, power / 3);
+		long T = F * 2;
+		return Math.min(power, T + 1);
+	}
+	
+	private PendingBlock getBlockAtHeight(final long height)
+	{
+		Numbers.isNegative(height, "Height is negative");
+		
+		this.lock.lock();
+		try
+		{
+			PendingBlock block = null;
+			for (PendingBlock vertex : this.blocks)
+			{
+				if (vertex.getHeight() == height)
+				{
+					block = vertex;
+					break;
+				}
+			}
+			return block;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	public boolean isConstructed()
+	{
+		this.lock.lock();
+		try
+		{
+			for (PendingBlock vertex : this.blocks)
+			{
+				if (vertex.getBlock() == null)
+					return false;
+			}
+			return true;
 		}
 		finally
 		{

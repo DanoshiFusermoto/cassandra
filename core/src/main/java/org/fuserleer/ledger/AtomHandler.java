@@ -23,6 +23,7 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
@@ -31,6 +32,7 @@ import org.fuserleer.ledger.events.AtomDiscardedEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
@@ -297,6 +299,7 @@ public class AtomHandler implements Service
 		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.syncAtomListener);
 		this.context.getEvents().register(this.asyncBlockListener);
+		this.context.getEvents().register(this.syncBlockListener);
 
 		Thread atomProcessorThread = new Thread(this.atomProcessor);
 		atomProcessorThread.setDaemon(true);
@@ -309,6 +312,7 @@ public class AtomHandler implements Service
 	{
 		this.atomProcessor.terminate(true);
 
+		this.context.getEvents().unregister(this.syncBlockListener);
 		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncChangeListener);
@@ -426,6 +430,31 @@ public class AtomHandler implements Service
 			{
 				AtomHandler.this.lock.writeLock().unlock();
 			}*/
+		}
+	};
+
+	// SYNC BLOCK LISTENER //
+	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
+	{
+		@Subscribe
+		public void on(BlockCommitEvent blockCommitEvent)
+		{
+			AtomHandler.this.lock.writeLock().lock();
+			try
+			{
+				for (Hash atom : blockCommitEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS))
+				{
+					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(atom);
+					if (pendingAtom == null)
+						throw new IllegalStateException("Pending atom "+atom+" in block commit "+blockCommitEvent.getBlock().getHeader()+" not found");
+					
+					pendingAtom.setStatus(CommitStatus.ACCEPTED);
+				}
+			}
+			finally
+			{
+				AtomHandler.this.lock.writeLock().unlock();
+			}
 		}
 	};
 

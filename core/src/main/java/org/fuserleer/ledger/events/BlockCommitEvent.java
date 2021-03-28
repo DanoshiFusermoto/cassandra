@@ -4,9 +4,9 @@ import java.util.Objects;
 
 import org.fuserleer.ledger.Block;
 
-public final class BlockCommittedEvent extends BlockEvent
+public class BlockCommitEvent extends BlockEvent
 {
-	public BlockCommittedEvent(final Block block)
+	public BlockCommitEvent(final Block block)
 	{
 		super(Objects.requireNonNull(block, "Block is null"));
 	}

@@ -194,11 +194,6 @@ public final class PendingAtom implements Hashable
 		return this.stateMachine.getStateOps();
 	}
 	
-	void lock()
-	{
-		setStatus(CommitStatus.LOCKED);
-	}
-
 	void prepare() throws IOException, ValidationException
 	{
 		this.lock.writeLock().lock();
@@ -436,19 +431,15 @@ public final class PendingAtom implements Hashable
 		
 		this.status.updateAndGet((s) -> 
 		{
-			// Allow multiple locks // TODO omit the locked status entirely?
-			if (status.equals(CommitStatus.LOCKED) == false)
-			{
-				if (s.equals(status) == true)
-					throw new IllegalStateException("Status of pending atom "+this.hash+" is already set to "+status);
-				
-				if (s.greaterThan(status) == true)
-					throw new IllegalStateException("Pending atom "+this.hash+" has already been set to "+status+" now "+this.status);
-	
-				// Can always abort at any stage
-				if (status.equals(CommitStatus.ABORTED) == false && s.index() < status.index()-1)
-					throw new IllegalStateException("Pending atom "+this.hash+" can not skip to status "+status+" from "+this.status);
-			}
+			if (s.equals(status) == true)
+				throw new IllegalStateException("Status of pending atom "+this.hash+" is already set to "+status);
+			
+			// Can always abort at any stage
+			if (status.equals(CommitStatus.ABORTED) == false && s.index() < status.index()-1)
+				throw new IllegalStateException("Pending atom "+this.hash+" can not skip to status "+status+" from "+this.status);
+			
+			if (s.greaterThan(status) == true)
+				throw new IllegalStateException("Pending atom "+this.hash+" has already been set to "+status+" now "+this.status);
 			
 			return status;
 		});
@@ -677,9 +668,7 @@ public final class PendingAtom implements Hashable
 		{
 			if (this.status.get().lessThan(CommitStatus.PROVISIONING) == true)
 			{
-				if (this.status.get().greaterThan(CommitStatus.LOCKED) == true)
-					cerbyLog.warn(this.context.getName()+": Attempted to create atom certificate for "+getHash()+" when status "+this.status.get());
-				
+				cerbyLog.warn(this.context.getName()+": Attempted to create atom certificate for "+getHash()+" when status "+this.status.get());
 				return null;
 			}
 			

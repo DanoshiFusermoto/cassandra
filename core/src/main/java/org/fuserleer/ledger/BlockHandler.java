@@ -40,6 +40,7 @@ import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.PendingBranch.Type;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
+import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.BlockMessage;
@@ -292,7 +293,6 @@ public class BlockHandler implements Service
 
 	private final Context context;
 
-	private final VotePowerHandler 				votePowerHandler;
 	private final BlockRegulator				blockRegulator;
 
 	private final Map<Hash, PendingBlock>		pendingBlocks;
@@ -307,12 +307,11 @@ public class BlockHandler implements Service
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
-	BlockHandler(Context context, VotePowerHandler votePowerHandler)
+	BlockHandler(Context context)
 	{
 		this.context = Objects.requireNonNull(context);
 		this.pendingBlocks = Collections.synchronizedMap(new HashMap<Hash, PendingBlock>());
 		this.pendingBranches = Collections.synchronizedSet(new HashSet<PendingBranch>());
-		this.votePowerHandler = Objects.requireNonNull(votePowerHandler, "Vote power handler is null");
 		this.votesToSyncQueue = new MappedBlockingQueue<Hash, BlockVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, BlockVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.blockRegulator = new BlockRegulator(context);
@@ -938,10 +937,17 @@ public class BlockHandler implements Service
 					this.bestBranch = null;
 				
 				// Signal the commit
+				// TODO Might need to catch exceptions on these from synchronous listeners
 				for (PendingBlock committedBlock : committedBlocks)
 				{
-					BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock(), committedBlocks.getLast().getHeader());
-					BlockHandler.this.context.getEvents().post(blockCommittedEvent); // TODO Might need to catch exceptions on this from synchronous listeners
+					BlockCommitEvent blockCommitEvent = new BlockCommitEvent(committedBlock.getBlock());
+					BlockHandler.this.context.getEvents().post(blockCommitEvent);
+				}
+
+				for (PendingBlock committedBlock : committedBlocks)
+				{
+					BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock());
+					BlockHandler.this.context.getEvents().post(blockCommittedEvent);
 				}
 			}
 			

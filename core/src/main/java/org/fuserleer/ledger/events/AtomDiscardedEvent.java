@@ -16,7 +16,7 @@ public final class AtomDiscardedEvent extends AtomEvent
 	{
 		super(pendingAtom);
 		
-		if (pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true)
+		if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true)
 			throw new IllegalStateException("Can not discard pending atom "+pendingAtom.getHash()+" with status "+pendingAtom.getStatus());
 		
 		this.message = message;

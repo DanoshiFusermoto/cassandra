@@ -70,7 +70,7 @@ public final class Ledger implements Service, LedgerInterface
 		this.ledgerStore = new LedgerStore(this.context);
 
 		this.votePowerHandler = new VotePowerHandler(this.context);
-		this.blockHandler = new BlockHandler(this.context, this.votePowerHandler);
+		this.blockHandler = new BlockHandler(this.context);
 		this.syncHandler = new SyncHandler(this.context);
 		this.atomPool = new AtomPool(this.context);
 		this.atomHandler = new AtomHandler(this.context);
@@ -162,7 +162,7 @@ public final class Ledger implements Service, LedgerInterface
 			{
 				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
 				pendingAtom.prepare();
-				pendingAtom.lock();
+				pendingAtom.setStatus(CommitStatus.ACCEPTED);
 				pendingAtom.provision(Universe.getDefault().getGenesis().getHeader());
 				pendingAtom.setStatus(CommitStatus.PROVISIONED);
 				pendingAtom.execute();
@@ -477,7 +477,7 @@ public final class Ledger implements Service, LedgerInterface
     			
     			// Reasons NOT to ask for all the pool inventories
     			if (Ledger.this.isSynced() == false || 
-    				event.getPeer().getNode().isSynced() == false || 
+    				//event.getPeer().getNode().isSynced() == false || 
     				Ledger.this.context.getNode().isInSyncWith(event.getPeer().getNode(), Node.OOS_TRIGGER_LIMIT) == false)
     				return;
     			

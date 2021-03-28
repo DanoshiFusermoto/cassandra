@@ -365,15 +365,15 @@ public final class VotePowerHandler implements Service
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(BlockCommittedEvent event) 
+		public void on(BlockCommittedEvent blockCommittedEvent) 
 		{
 			try
 			{
-				update(event.getBlock());
+				update(blockCommittedEvent.getBlock());
 			}
 			catch (IOException ioex)
 			{
-				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to update vote powers in block "+event.getBlock().getHeader(), ioex);
+				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to update vote powers in block "+blockCommittedEvent.getBlock().getHeader(), ioex);
 			}
 		}
 		

@@ -112,8 +112,6 @@ public final class StateAccumulator implements LedgerProvider
 			if (this.pending.containsKey(pendingAtom.getHash()) == true)
 				throw new IllegalStateException("Atom "+pendingAtom.getHash()+" is already pending and locked");
 			
-			pendingAtom.lock();
-			
 			// State ops
 			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
 			{

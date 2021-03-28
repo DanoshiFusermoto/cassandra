@@ -542,7 +542,7 @@ public final class StateHandler implements Service
 							{
 								// Look for provisioned state in pending corresponding to the atom in question
 								pendingAtom = StateHandler.this.states.get(getStateMessage.getKey());
-								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true && 
+								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true && 
 									pendingAtom.getHash().equals(getStateMessage.getAtom()) == true)
 								{
 									value = pendingAtom.getInput(getStateMessage.getKey());
@@ -560,7 +560,7 @@ public final class StateHandler implements Service
 
 								// Look for state certificate in a pending atom
 								pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(getStateMessage.getAtom());
-								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true)
+								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true)
 								{
 									value = pendingAtom.getInput(getStateMessage.getKey());
 									if (value == null)
@@ -621,7 +621,7 @@ public final class StateHandler implements Service
 									cerbyLog.warn(StateHandler.this.context.getName()+": Pending atom "+getStateMessage.getAtom()+" was null for state request "+getStateMessage.getKey()+" for " + peer);
 
 								// Pending atom was found but is not in a suitable state to serve the request. Need to set a future response
-								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == false)
+								if (pendingAtom != null && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == false)
 									cerbyLog.warn(StateHandler.this.context.getName()+": Pending atom "+getStateMessage.getAtom()+" status is "+pendingAtom.getStatus()+" for state request "+getStateMessage.getKey()+" for " + peer);
 									
 								StateHandler.this.inboundProvisionRequests.put(getStateMessage.getKey(), new AbstractMap.SimpleEntry<>(getStateMessage.getAtom(), peer));
@@ -869,7 +869,7 @@ public final class StateHandler implements Service
 
 				try
    				{
-   					StateHandler.this.context.getNetwork().getMessaging().send(new StateMessage(request.getKey(), stateKey, value, CommitStatus.PROVISIONING), request.getValue());
+   					StateHandler.this.context.getNetwork().getMessaging().send(new StateMessage(request.getKey(), stateKey, value, CommitStatus.ACCEPTED), request.getValue());
    				}
    				catch (IOException ex)
    				{
@@ -1050,16 +1050,17 @@ public final class StateHandler implements Service
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final BlockCommittedEvent event) 
+		public void on(final BlockCommittedEvent blockCommittedEvent) 
 		{
-			// Creating pending atom from precommitted event if not seen // This is the most likely place for a pending atom object to be created
 			StateHandler.this.lock.writeLock().lock();
 			try
 			{
+				Set<PendingAtom> committed = new HashSet<PendingAtom>();
 				try
 				{
+					// Creating pending atom from accepted event if not seen // This is the most likely place for a pending atom object to be created
 					Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>();
-					for (Atom atom : event.getBlock().getAtoms())
+					for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
 					{
 						PendingAtom pendingAtom = StateHandler.this.atoms.get(atom.getHash());
 						if (pendingAtom == null)
@@ -1093,19 +1094,18 @@ public final class StateHandler implements Service
 							cerbyLog.debug(StateHandler.this.context.getName()+": Queuing pending atom "+pendingAtom.getHash()+" for provisioning");
 
                 		// TODO provisioning queue should only have ONE entry for a state address due to locking.  Verify!
-						Set<StateKey<?, ?>> stateKeys = StateHandler.this.context.getLedger().getStateAccumulator().provision(event.getBlock().getHeader(), pendingAtom);
+						Set<StateKey<?, ?>> stateKeys = StateHandler.this.context.getLedger().getStateAccumulator().provision(blockCommittedEvent.getBlock().getHeader(), pendingAtom);
 						push(pendingAtom);
 					}
 				}
 				catch (Exception ex)
 				{
-					cerbyLog.fatal(StateHandler.class.getName()+": Failed to create PendingAtom set for "+event.getBlock().getHeader()+" when processing BlockCommittedEvent", ex);
+					cerbyLog.fatal(StateHandler.class.getName()+": Failed to create PendingAtom set for "+blockCommittedEvent.getBlock().getHeader()+" when processing BranchCommittedEvent", ex);
 					return;
 				}
 				
 				// Commit atom states
-				Set<PendingAtom> committed = new HashSet<PendingAtom>();
-				for (AtomCertificate certificate : event.getBlock().getCertificates())
+				for (AtomCertificate certificate : blockCommittedEvent.getBlock().getCertificates())
 				{
 					try
 					{
@@ -1155,8 +1155,8 @@ public final class StateHandler implements Service
 					Set<PendingAtom> timedOut = new HashSet<PendingAtom>();
 					for (PendingAtom pendingAtom : StateHandler.this.atoms.values())
 					{
-						if (pendingAtom.getStatus().greaterThan(CommitStatus.LOCKED) == true && 
-							event.getBlock().getHeader().getHeight() > pendingAtom.getCommitTimeout())
+						if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true && 
+							blockCommittedEvent.getBlock().getHeader().getHeight() > pendingAtom.getCommitTimeout())
 							timedOut.add(pendingAtom);
 					}
 
@@ -1166,10 +1166,10 @@ public final class StateHandler implements Service
 					for (PendingAtom pendingAtom : timedOut)
 					{
 						if (pendingAtom.getAtom() == null)
-							cerbyLog.warn(StateHandler.this.context.getName()+": Atom "+pendingAtom.getHash()+" timeout but never seen at "+event.getBlock().getHeader());
+							cerbyLog.warn(StateHandler.this.context.getName()+": Atom "+pendingAtom.getHash()+" timeout but never seen at "+blockCommittedEvent.getBlock().getHeader());
 						else
 						{
-							cerbyLog.warn(StateHandler.this.context.getName()+": Atom "+pendingAtom.getHash()+" timeout at block "+event.getBlock().getHeader());
+							cerbyLog.warn(StateHandler.this.context.getName()+": Atom "+pendingAtom.getHash()+" timeout at block "+blockCommittedEvent.getBlock().getHeader());
 							remove(pendingAtom);
 							StateHandler.this.context.getEvents().post(new AtomCommitTimeoutEvent(pendingAtom));
 						}

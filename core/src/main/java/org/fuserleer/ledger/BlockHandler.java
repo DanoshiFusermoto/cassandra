@@ -940,7 +940,7 @@ public class BlockHandler implements Service
 				// Signal the commit
 				for (PendingBlock committedBlock : committedBlocks)
 				{
-					BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock());
+					BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock(), committedBlocks.getLast().getHeader());
 					BlockHandler.this.context.getEvents().post(blockCommittedEvent); // TODO Might need to catch exceptions on this from synchronous listeners
 				}
 			}

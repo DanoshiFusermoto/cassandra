@@ -252,7 +252,7 @@ public class AtomHandler implements Service
 							}
 							
 							long height = AtomHandler.this.context.getLedger().getHead().getHeight();
-							while (height >= syncAcquiredMessage.getHead().getHeight())
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
 							{
 								pendingAtomInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class));
 								atomVoteInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class));
@@ -326,10 +326,7 @@ public class AtomHandler implements Service
 	}
 
 	/**
-	 * Returns an existing pending atom or creates it providing that the atom is not already present in the store.
-	 * <br><br>
-	 * If the atom is not in the pending list and is persisted, it is assumed that it has already undergone
-	 * the pending atom process, as the only mechanism for it to be persisted is to first exist as a pending atom.
+	 * Returns an existing pending atom or creates it providing that the atom has not being included in a block.
 	 * <br><br>
 	 * TODO The above assumption should be tested in all cases.
 	 * 
@@ -346,7 +343,7 @@ public class AtomHandler implements Service
 			if (pendingAtom != null)
 				return pendingAtom;
 			
-			if (pendingAtom == null && this.context.getLedger().getLedgerStore().has(atom) == true)
+			if (pendingAtom == null && this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom)) != null)
 				return null;
 
 			pendingAtom = PendingAtom.create(this.context, atom);

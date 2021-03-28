@@ -588,7 +588,7 @@ public final class StatePool implements Service
 							}
 							
 							long height = StatePool.this.context.getLedger().getHead().getHeight();
-							while (height >= syncAcquiredMessage.getHead().getHeight())
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
 							{
 								stateVoteInventory.addAll(StatePool.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateVote.class));
 								height--;

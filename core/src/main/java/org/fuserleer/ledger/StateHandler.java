@@ -704,7 +704,7 @@ public final class StateHandler implements Service
 							}
 							
 							long height = StateHandler.this.context.getLedger().getHead().getHeight();
-							while (height >= syncAcquiredMessage.getHead().getHeight())
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
 							{
 								stateCertificateInventory.addAll(StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateCertificate.class));
 								height--;

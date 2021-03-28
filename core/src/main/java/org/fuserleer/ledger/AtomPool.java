@@ -3,7 +3,6 @@ package org.fuserleer.ledger;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -627,11 +626,11 @@ public final class AtomPool implements Service
 	List<PendingAtom> get(final long location, final long target, final long range, final int limit, final Collection<Hash> exclusions, boolean synced)
 	{
 		final List<PendingAtom> atoms = new ArrayList<PendingAtom>();
-		final List<AtomDiscardedEvent> removals = new ArrayList<AtomDiscardedEvent>();
+//		final List<AtomDiscardedEvent> removals = new ArrayList<AtomDiscardedEvent>();
 		final BlockHeader head = AtomPool.this.context.getLedger().getHead(); // TODO make this an argument
 		final long localShardGroup = ShardMapper.toShardGroup(AtomPool.this.context.getNode().getIdentity(), AtomPool.this.context.getLedger().numShardGroups());
 		final long systemTime = Time.getSystemTime();
-
+		
 		final Predicate<PendingAtom> filter = new Predicate<PendingAtom>()
 		{
 			@Override
@@ -643,13 +642,10 @@ public final class AtomPool implements Service
 					return false;
 				}
 
-				if (systemTime > pa.getInclusionTimeout() && pa.getStatus().lessThan(CommitStatus.PROVISIONING) == true)
-				{
-					removals.add(new AtomDiscardedEvent(pa, "Timed out"));
-					return false;
-				}
-				
 				if (systemTime < pa.getWitnessed() + pa.getInclusionDelay())
+					return false;
+
+				if (systemTime > pa.getInclusionTimeout())
 					return false;
 
 				if (exclusions.contains(pa.getHash()) == true)
@@ -774,12 +770,6 @@ public final class AtomPool implements Service
 			this.lock.readLock().unlock();
 		}
 
-		if (removals.isEmpty() == false)
-			removals.forEach(ade -> 
-			{
-				this.context.getEvents().post(ade);	// TODO ensure no synchronous event processing happens on this!
-			});
-		
 		return atoms;
 	}
 
@@ -809,14 +799,38 @@ public final class AtomPool implements Service
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final BlockCommittedEvent event) 
+		public void on(final BlockCommittedEvent blockCommittedEvent) 
 		{
 			AtomPool.this.lock.writeLock().lock();
 			try
 			{
-				for (Atom atom : event.getBlock().getAtoms())
-					if (AtomPool.this.context.getLedger().getAtomPool().remove(atom.getHash()) == null)
-						atomsLog.error(AtomPool.this.context.getName()+": Pending atom "+atom.getHash()+" was not found in pool when processing block commit "+event.getBlock().getHeader());
+				for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
+				{
+					PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomPool().remove(atom.getHash());
+					if (pendingAtom == null)
+					{
+						atomsLog.error(AtomPool.this.context.getName()+": Pending atom "+atom.getHash()+" was not found in pool when processing block commit "+blockCommittedEvent.getBlock().getHeader());
+						continue;
+					}
+				}
+				
+				// Timeout atoms on progress
+				// Don't process timeouts until after the entire branch has been committed as 
+				// pending atoms that would timeout may be committed somewhere on the branch ahead of this commit.
+				// TODO atoms should be witnessed and timedout based on agreed ledger time
+				long systemTime = Time.getSystemTime();
+				List<AtomDiscardedEvent> timedout = new ArrayList<AtomDiscardedEvent>();
+				for (PendingAtom pendingAtom : AtomPool.this.pending.values())
+				{
+					if (systemTime > pendingAtom.getInclusionTimeout() && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
+						timedout.add(new AtomDiscardedEvent(pendingAtom, "Timed out"));
+				}
+				
+				if (timedout.isEmpty() == false)
+					timedout.forEach(ade -> 
+					{
+						AtomPool.this.context.getEvents().post(ade);	// TODO ensure no synchronous event processing happens on this!
+					});
 			}
 			finally
 			{
@@ -899,8 +913,8 @@ public final class AtomPool implements Service
 									Atom atom = AtomPool.this.context.getLedger().getLedgerStore().get(item, Atom.class);
 									AtomPool.this.context.getLedger().getAtomHandler().submit(atom);
 								}
-								else
-									AtomPool.this.add(pendingAtom);
+//								else
+//									AtomPool.this.add(pendingAtom);
 							}
 							
 							items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class);
@@ -917,8 +931,8 @@ public final class AtomPool implements Service
 									Atom atom = AtomPool.this.context.getLedger().getLedgerStore().get(atomVote.getAtom(), Atom.class);
 									AtomPool.this.context.getLedger().getAtomHandler().submit(atom);
 								}
-								else
-									AtomPool.this.add(pendingAtom);
+//								else
+//									AtomPool.this.add(pendingAtom);
 								
 								AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
 							}

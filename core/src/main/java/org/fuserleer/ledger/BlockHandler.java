@@ -636,7 +636,7 @@ public class BlockHandler implements Service
 							}
 							
 							long height = BlockHandler.this.context.getLedger().getHead().getHeight();
-							while (height > syncAcquiredMessage.getHead().getHeight())
+							while (height > Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
 							{
 								pendingBlockInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class));
 								blockVoteInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class));
@@ -757,8 +757,7 @@ public class BlockHandler implements Service
 				if (blocksLog.hasLevel(Logging.DEBUG) == true)
 					blocksLog.debug(BlockHandler.this.context.getName()+": Block vote "+blockVote.getHash()+"/"+blockVote.getBlock()+" for "+blockVote.getOwner());
 
-				// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-				pendingBlock.vote(blockVote, BlockHandler.this.votePowerHandler.getVotePower(Math.max(0, pendingBlock.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), blockVote.getOwner()));
+				pendingBlock.vote(blockVote);
 			}
 			
 			return true;
@@ -769,9 +768,6 @@ public class BlockHandler implements Service
 	
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
 	{
-		// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-		long votePower = BlockHandler.this.votePowerHandler.getVotePower(Math.max(0, branch.getHigh().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), BlockHandler.this.context.getNode().getIdentity());
-
 		List<BlockVote> branchVotes = new ArrayList<BlockVote>();
 		synchronized(BlockHandler.this.voteClock)
 		{
@@ -787,11 +783,12 @@ public class BlockHandler implements Service
 					BlockHandler.this.voteClock.set(pendingBlock.getHeader().getHeight());
 					BlockHandler.this.currentVote.set(pendingBlock.getHeader());
 					
+					long votePower = branch.getVotePower(pendingBlock.getHeader().getHeight(), BlockHandler.this.context.getNode().getIdentity());
 					if (votePower > 0)
 					{
 						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity());
 						blockHeaderVote.sign(BlockHandler.this.context.getNode().getKey());
-						pendingBlock.vote(blockHeaderVote, votePower);
+						pendingBlock.vote(blockHeaderVote);
 						this.context.getLedger().getLedgerStore().store(blockHeaderVote);
 						this.context.getNetwork().getGossipHandler().broadcast(blockHeaderVote);
 						
@@ -1289,6 +1286,11 @@ public class BlockHandler implements Service
 					
 					continue;
 				}
+				
+				// Need constructed branches!
+				// NOTE disable this to promote a stall on liveness when critical gossip / connectivity issues
+				if (pendingBranch.isConstructed() == false)
+					continue;
 
 				// Short circuit on any branch that has a commit possible
 				PendingBlock committableBlock = pendingBranch.commitable();
@@ -1330,7 +1332,11 @@ public class BlockHandler implements Service
 			if (bestBranch != null)
 			{
 				if (blocksLog.hasLevel(Logging.DEBUG) == true)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getHigh().getHeader().getAverageStep()+":"+bestBranch.getHigh().weight()+"/"+this.votePowerHandler.getTotalVotePower(Math.max(0, bestBranch.getHigh().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups()))+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+				{
+					long branchWeight = bestBranch.getWeight(bestBranch.getHigh().getHeight());
+					long branchTotalVotePower = bestBranch.getTotalVotePower(bestBranch.getHigh().getHeight());
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getHigh().getHeader().getAverageStep()+":"+branchWeight+"/"+branchTotalVotePower+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+				}
 			}
 			
 			return bestBranch;

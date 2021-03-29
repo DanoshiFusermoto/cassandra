@@ -139,7 +139,10 @@ public class GossipHandler implements Service
 				}
 				
 				if (failedItemRequests.isEmpty() == false)
+				{
+					gossipLog.info(GossipHandler.this.context.getName()+": Detected "+failedItemRequests+" failed requests of type "+this.type+" from "+getPeer());
 					rerequest(failedItemRequests);
+				}
 			}
 			catch (Throwable t)
 			{
@@ -491,7 +494,7 @@ public class GossipHandler implements Service
 		this.broadcastQueue = new LinkedBlockingQueue<Broadcast>(this.context.getConfiguration().get("ledger.gossip.queue", 1<<16));
 
 //		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -917,7 +920,7 @@ public class GossipHandler implements Service
 				{
 					itemsPending.add(item);
 				}
-				else // if (this.context.getLedger().getLedgerStore().has(atom) == false)
+				else
 				{
 					itemsToRequest.put(item, ThreadLocalRandom.current().nextLong());
 					itemsPending.add(item);
@@ -957,10 +960,7 @@ public class GossipHandler implements Service
 				catch (Throwable t)
 				{
 					if (gossipPeerTask != null)
-					{
-						if (gossipPeerTask.cancel() == true)
-							this.requestTasks.remove(peer, gossipPeerTask);
-					}
+						gossipPeerTask.cancel();
 					
 					for (Hash itemToRequest : itemsToRequest.keySet())
 					{
@@ -1010,18 +1010,14 @@ public class GossipHandler implements Service
     		try
     		{
     			GossipHandler.this.requestSources.removeAll(event.getPeer());
-    			if (GossipHandler.this.requestTasks.containsKey(event.getPeer()) == false)
-    				return;
-    			
+
     			GossipPeerTask requestTask = GossipHandler.this.requestTasks.get(event.getPeer());
     			if (requestTask != null)
     			{
     				try
     				{
-    					if (requestTask.isCancelled() == false)
-    						requestTask.cancel();
-
-    					gossipLog.info(GossipHandler.this.context.getName()+": Cancelled gossip task of "+requestTask.items.keySet()+" of type "+requestTask.type+" from "+event.getPeer());
+    					if (requestTask.isCancelled() == false && requestTask.cancel() == true)
+    						gossipLog.info(GossipHandler.this.context.getName()+": Cancelled gossip task of "+requestTask.items.keySet()+" of type "+requestTask.type+" from "+event.getPeer());
     				}
     	    		catch (Throwable t)
     	    		{

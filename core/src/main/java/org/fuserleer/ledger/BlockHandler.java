@@ -196,7 +196,6 @@ public class BlockHandler implements Service
 		}
 	};
 	
-	private final Semaphore voteProcessorSemaphore = new Semaphore(0);
 	private final MappedBlockingQueue<Hash, BlockVote> votesToCountQueue;
 	private Executable voteProcessor = new Executable()
 	{
@@ -209,9 +208,10 @@ public class BlockHandler implements Service
 				{
 					try
 					{
-						// TODO convert to a wait / notify
-						if (BlockHandler.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
-							continue;
+						synchronized(BlockHandler.this.voteProcessor)
+						{
+							BlockHandler.this.voteProcessor.wait(TimeUnit.SECONDS.toMillis(1));
+						}
 
 						if (BlockHandler.this.context.getLedger().isSynced() == false)
 							continue;
@@ -519,7 +519,10 @@ public class BlockHandler implements Service
 				}
 				
 				BlockHandler.this.votesToCountQueue.put(blockVote.getHash(), blockVote);
-				BlockHandler.this.voteProcessorSemaphore.release();
+				synchronized(BlockHandler.this.voteProcessor)
+				{
+					BlockHandler.this.voteProcessor.notify();
+				}
 			}
 		});
 		
@@ -862,7 +865,7 @@ public class BlockHandler implements Service
 							if (arg0.getCertificates().size() < arg1.getCertificates().size())
 								return 1;
 							
-							return (int) (arg0.getWitnessed() - arg1.getWitnessed());
+							return (int) (arg0.getWitnessedAt() - arg1.getWitnessedAt());
 						}
 					});
 				}
@@ -1408,6 +1411,11 @@ public class BlockHandler implements Service
 						{
 							blocksLog.error(BlockHandler.this.context.getName()+": Failed to load state for block handler at height "+height, ex);
 						}
+					}
+				
+					synchronized(BlockHandler.this.voteProcessor)
+					{
+						BlockHandler.this.voteProcessor.notify();
 					}
 				}
 				else

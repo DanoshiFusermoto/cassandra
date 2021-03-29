@@ -20,7 +20,7 @@ import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.Universe;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.events.EventListener;
+import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
@@ -709,6 +709,7 @@ public class SyncHandler implements Service
 				this.atoms.put(pendingAtom.getHash(), pendingAtom);
 				pendingAtom.prepare();
 				this.context.getLedger().getStateAccumulator().lock(pendingAtom);
+				pendingAtom.accepted();
 				pendingAtom.provision(block.getHeader());
 			}
 
@@ -747,19 +748,22 @@ public class SyncHandler implements Service
 		if (syncPeers.isEmpty() == true)
 		{
 			if (isSynced() == true)
+			{
 				setSynced(false);
+				syncLog.info(this.context.getName()+": Out of sync state triggered due to no sync peers available");
+			}
 
 			return false;
 		}
 	
 		// Out of sync?
-		PendingBranch bestBranch = this.context.getLedger().getBlockHandler().getBestBranch();
-		int OOSTrigger = bestBranch == null ? Node.OOS_TRIGGER_LIMIT : Node.OOS_TRIGGER_LIMIT + bestBranch.size(); 
+//		PendingBranch bestBranch = this.context.getLedger().getBlockHandler().getBestBranch();
+//		int OOSTrigger = bestBranch == null ? Node.OOS_TRIGGER_LIMIT : Node.OOS_TRIGGER_LIMIT + bestBranch.size(); 
 		// TODO need to deal with forks that don't converge with local chain due to safety break
-		if (isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), OOSTrigger)) == true)
+		if (isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), Node.OOS_TRIGGER_LIMIT)) == true)
 		{
 			setSynced(false);
-			syncLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+OOSTrigger);
+			syncLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+Node.OOS_TRIGGER_LIMIT);
 			
 			prepare();
 		}
@@ -769,8 +773,7 @@ public class SyncHandler implements Service
 			boolean syncAcquired = true;
 			for (ConnectedPeer syncPeer : syncPeers)
 			{
-				if (this.context.getNode().isAheadOf(syncPeer.getNode(), 0) == true || 
-					this.context.getNode().isInSyncWith(syncPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true)
+				if (this.context.getNode().isInSyncWith(syncPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true)
 					continue;
 					
 				syncAcquired = false;
@@ -878,6 +881,7 @@ public class SyncHandler implements Service
 				this.atoms.put(pendingAtom.getHash(), pendingAtom);
 				pendingAtom.prepare();
 				this.context.getLedger().getStateAccumulator().lock(pendingAtom);
+				pendingAtom.accepted();
 				pendingAtom.provision(block.getHeader());
 			}
 		}
@@ -898,7 +902,7 @@ public class SyncHandler implements Service
 	}
 
 	// PEER LISTENER //
-    private EventListener peerListener = new EventListener()
+    private SynchronousEventListener peerListener = new SynchronousEventListener()
     {
     	@Subscribe
 		public void on(PeerConnectedEvent event)

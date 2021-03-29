@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -14,7 +15,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -273,7 +273,6 @@ public final class StatePool implements Service
 		}
 	}
 	
-	private final Semaphore voteProcessorSemaphore = new Semaphore(0);
 	private Executable voteProcessor = new Executable()
 	{
 		@Override
@@ -285,9 +284,10 @@ public final class StatePool implements Service
 				{
 					try
 					{
-						// TODO convert to a wait / notify
-						if (StatePool.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
-							continue;
+						synchronized(StatePool.this.voteProcessor)
+						{
+							StatePool.this.voteProcessor.wait(TimeUnit.SECONDS.toMillis(1));
+						}
 
 						if (StatePool.this.context.getLedger().isSynced() == false)
 							continue;
@@ -436,6 +436,7 @@ public final class StatePool implements Service
 	};
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
+	private final Map<Hash, StateVote> votesToCountDelayed;
 	private final BlockingQueue<PendingState> votesToCastQueue;
 	private final MappedBlockingQueue<Hash, StateVote> votesToSyncQueue;
 	private final MappedBlockingQueue<Hash, StateVote> votesToCountQueue;
@@ -448,6 +449,7 @@ public final class StatePool implements Service
 		this.votesToCastQueue = new LinkedBlockingQueue<PendingState>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.votesToSyncQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.votesToCountDelayed = Collections.synchronizedMap(new HashMap<Hash, StateVote>());
 		
 //		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
 		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
@@ -492,6 +494,7 @@ public final class StatePool implements Service
 					{
 						if (StatePool.this.votesToSyncQueue.contains(item) == true || 
 							StatePool.this.votesToCountQueue.contains(item) == true || 
+							StatePool.this.votesToCountDelayed.containsKey(item) == true ||
 							StatePool.this.context.getLedger().getLedgerStore().has(item) == true)
 							continue;
 
@@ -525,8 +528,16 @@ public final class StatePool implements Service
 					return;
 				}
 				
-				StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
-				StatePool.this.voteProcessorSemaphore.release();
+				if (stateVote.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight())
+				{
+					StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
+					synchronized(StatePool.this.voteProcessor)
+					{
+						StatePool.this.voteProcessor.notify();
+					}
+				}
+				else
+					StatePool.this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
 			}
 		});
 					
@@ -542,6 +553,8 @@ public final class StatePool implements Service
 					for (Hash item : items)
 					{
 						StateVote stateVote = StatePool.this.votesToCountQueue.get(item);
+						if (stateVote == null)
+							stateVote = StatePool.this.votesToCountDelayed.get(item);
 						if (stateVote == null)
 							stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
 						
@@ -777,7 +790,10 @@ public final class StatePool implements Service
 					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
 
 				this.votesToCastQueue.add(pendingState);
-				StatePool.this.voteProcessorSemaphore.release();
+				synchronized(StatePool.this.voteProcessor)
+				{
+					StatePool.this.voteProcessor.notify();
+				}
 			}
 		}
 		finally
@@ -809,7 +825,7 @@ public final class StatePool implements Service
 				pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
 				if (pendingAtom == null)
 				{
-					statePoolLog.warn(StatePool.this.context.getName()+": Pending atom not found or completed for received state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
+					statePoolLog.warn(StatePool.this.context.getName()+": Pending atom "+stateVote.getAtom()+" not found or completed for received state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
 					return false;
 				}
 
@@ -870,6 +886,21 @@ public final class StatePool implements Service
 			StatePool.this.lock.writeLock().lock();
 			try
 			{
+				Iterator<StateVote> delayedStateVoteIterator = StatePool.this.votesToCountDelayed.values().iterator();
+				while(delayedStateVoteIterator.hasNext() == true)
+				{
+					StateVote delayedStateVote = delayedStateVoteIterator.next();
+					if (delayedStateVote.getHeight() <= blockCommittedEvent.getBlock().getHeader().getHeight())
+					{
+						StatePool.this.votesToCountQueue.put(delayedStateVote.getHash(), delayedStateVote);
+						delayedStateVoteIterator.remove();
+					}
+				}
+				
+				synchronized(StatePool.this.voteProcessor)
+				{
+					StatePool.this.voteProcessor.notify();
+				}
 			}
 			finally
 			{
@@ -934,7 +965,7 @@ public final class StatePool implements Service
 				if (event.isSynced() == true)
 				{
 					statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known state pool state");
-					for (long height = Math.max(0, StatePool.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  StatePool.this.context.getLedger().getHead().getHeight() ; height++)
+					for (long height = Math.max(0, StatePool.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height < StatePool.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try
 						{
@@ -960,16 +991,21 @@ public final class StatePool implements Service
 						{
 							statePoolLog.error(StatePool.this.context.getName()+": Failed to load state for state pool at height "+height, ex);
 						}
+
+						synchronized(StatePool.this.voteProcessor)
+						{
+							StatePool.this.voteProcessor.notify();
+						}
 					}					
 				}
 				else
 				{
 					statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state pool");
-					StatePool.this.voteProcessorSemaphore.drainPermits();
 					StatePool.this.states.clear();
 					StatePool.this.votesToCastQueue.clear();
 					StatePool.this.votesToSyncQueue.clear();
 					StatePool.this.votesToCountQueue.clear();
+					StatePool.this.votesToCountDelayed.clear();
 				}
 			}
 			finally

@@ -64,6 +64,7 @@ import org.fuserleer.network.peers.PeerState;
 import org.fuserleer.network.peers.PeerTask;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
+import org.fuserleer.time.Time;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.UInt256;
 
@@ -367,8 +368,10 @@ public final class StateHandler implements Service
 
 //		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
 //		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL);
-		stateLog.setLevels(Logging.ERROR | Logging.FATAL);
+		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL);
+//		stateLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 	
 	private void provision(final PendingAtom pendingAtom, final StateKey<?, ?> stateKey, final UInt256 value) throws InterruptedException
@@ -1156,7 +1159,8 @@ public final class StateHandler implements Service
 					for (PendingAtom pendingAtom : StateHandler.this.atoms.values())
 					{
 						if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true && 
-							blockCommittedEvent.getBlock().getHeader().getHeight() > pendingAtom.getCommitTimeout())
+							blockCommittedEvent.getBlock().getHeader().getHeight() > pendingAtom.getCommitBlockTimeout() && 
+							Time.getSystemTime() > pendingAtom.getAcceptedAt() + PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS)
 							timedOut.add(pendingAtom);
 					}
 

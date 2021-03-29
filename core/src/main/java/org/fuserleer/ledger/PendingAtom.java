@@ -41,7 +41,7 @@ public final class PendingAtom implements Hashable
 	private static final Logger cerbyLog = Logging.getLogger("cerby");
 
 	public final static int ATOM_COMMIT_TIMEOUT_BLOCKS = 60;	// TODO need a much smarter timeout mechanism along with recovery.  ~10 minutes per phase if block production is ~5 seconds.  Sufficient for alpha testing.
-	public final static int ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS = 600;	// TODO Long inclusion commit timeout ~10 minutes.  Is extended if atom is suspected included in a block (evidence of state votes etc).  Sufficient for alpha testing.
+	public final static int ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS = 60;	// TODO Long inclusion commit timeout ~10 minutes.  Is extended if atom is suspected included in a block (evidence of state votes etc).  Sufficient for alpha testing.
 	
 	public static PendingAtom create(final Context context, final Atom atom)
 	{
@@ -55,14 +55,16 @@ public final class PendingAtom implements Hashable
 	
 	private final Context 	context;
 	private final Hash		hash;
-	private	final long 		witnessed;
+	private	final long 		witnessedAt;
+	private	long 		    acceptedAt;
 	
 	/** The wall clock timeout if not included in a block for commit WARN subjective **/
 	private	long 			inclusionTimeout;
 	private long 			inclusionDelay;
 	
 	/** The block at which a commit timeout happens **/
-	private	long 			commitTimeout;
+	private	long 			commitBlockTimeout;
+	
 	private Hash			block;
 	private Atom 			atom;
 	private StateMachine	stateMachine;
@@ -90,9 +92,10 @@ public final class PendingAtom implements Hashable
 		this.context = Objects.requireNonNull(context, "Context is null");
 		
 		this.hash = Objects.requireNonNull(atom, "Atom is null");
-		this.witnessed = Time.getSystemTime();
-		this.commitTimeout = 0;
-		this.inclusionTimeout = this.witnessed + TimeUnit.SECONDS.toMillis(PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS);
+		this.witnessedAt = Time.getSystemTime();
+		this.acceptedAt = 0;
+		this.commitBlockTimeout = 0;
+		this.inclusionTimeout = this.witnessedAt + TimeUnit.SECONDS.toMillis(PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS);
 		this.inclusionDelay = 0;
 		this.voteWeight = 0l;
 		this.voteThreshold = 0l;
@@ -108,23 +111,37 @@ public final class PendingAtom implements Hashable
 		return this.hash;
 	}
 	
-	public long getCommitTimeout()
+	public long getCommitBlockTimeout()
 	{
-		return this.commitTimeout;
+		return this.commitBlockTimeout;
 	}
 
-	private void setCommitTimeout(final long commitTimeout)
+	public long getAcceptedAt()
+	{
+		return this.acceptedAt;
+	}
+	
+	private void setAcceptedAt(final long acceptedAt)
+	{
+		Numbers.isNegative(acceptedAt, "Accepted timestap is negative");
+		if (this.acceptedAt != 0)
+			throw new IllegalStateException("Accepted timestamp for pending atom "+this.getHash()+" is already set");
+		
+		this.acceptedAt = acceptedAt;
+	}
+
+	private void setCommitBlockTimeout(final long commitBlockTimeout)
 	{
 		if (this.block == null)
-			throw new IllegalStateException("Can not set commit timeout "+commitTimeout+" without being included in a block");
+			throw new IllegalStateException("Can not set commit block timeout "+commitBlockTimeout+" without being included in a block");
 		
-		Numbers.lessThan(commitTimeout, this.commitTimeout, commitTimeout+" is less than current commit block timeout "+this.commitTimeout);
-		this.commitTimeout = commitTimeout;
+		Numbers.lessThan(commitBlockTimeout, this.commitBlockTimeout, commitBlockTimeout+" is less than current commit block timeout "+this.commitBlockTimeout);
+		this.commitBlockTimeout = commitBlockTimeout;
 	}
 
-	public long getWitnessed()
+	public long getWitnessedAt()
 	{
-		return this.witnessed;
+		return this.witnessedAt;
 	}
 
 	public long getInclusionTimeout()
@@ -220,6 +237,20 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
+	public void accepted()
+	{
+		this.lock.writeLock().lock();
+		try
+		{
+			setStatus(CommitStatus.ACCEPTED);
+			setAcceptedAt(Time.getSystemTime());
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
 	Set<StateKey<?, ?>> provision(final BlockHeader block)
 	{
 		this.lock.writeLock().lock();
@@ -230,8 +261,8 @@ public final class PendingAtom implements Hashable
 			setStatus(CommitStatus.PROVISIONING);
 			this.block = block.getHash();
 			
-			long commitTimeout = Longs.fromByteArray(block.getHash().toByteArray()) + PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS;
-			setCommitTimeout(commitTimeout);
+			long commitBlockTimeout = Longs.fromByteArray(block.getHash().toByteArray()) + PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS;
+			setCommitBlockTimeout(commitBlockTimeout);
 			
 			return this.stateMachine.provision(block);
 		}
@@ -490,7 +521,7 @@ public final class PendingAtom implements Hashable
 	@Override
 	public String toString()
 	{
-		return this.hash+" @ "+this.witnessed;
+		return this.hash+" @ "+this.witnessedAt;
 	}
 	
 	boolean voted(final ECPublicKey identity)
@@ -614,9 +645,9 @@ public final class PendingAtom implements Hashable
 					// TODO The max timeout will be the highest block containing the atom in ANY of the shard groups
 					// 		Not a perfect solution over the long terms as block heights in groups will potentially have a lot of disparity
 					//		A mean timeout across all blocks of all shards is probably a better option
-					long commitTimeout = Longs.fromByteArray(certificate.getBlock().toByteArray()) + PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS;
-					if (commitTimeout > this.commitTimeout)
-						setCommitTimeout(commitTimeout);
+					long commitBlockTimeout = Longs.fromByteArray(certificate.getBlock().toByteArray()) + PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS;
+					if (commitBlockTimeout > this.commitBlockTimeout)
+						setCommitBlockTimeout(commitBlockTimeout);
 				}
 				
 				return true;
@@ -653,7 +684,7 @@ public final class PendingAtom implements Hashable
 			
 			this.certificate = certificate;
 			setInclusionTimeout(Long.MAX_VALUE);
-			setCommitTimeout(Long.MAX_VALUE);
+			setCommitBlockTimeout(Long.MAX_VALUE);
 		}
 		finally
 		{

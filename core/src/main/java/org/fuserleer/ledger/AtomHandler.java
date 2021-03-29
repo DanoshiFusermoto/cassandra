@@ -448,7 +448,7 @@ public class AtomHandler implements Service
 					if (pendingAtom == null)
 						throw new IllegalStateException("Pending atom "+atom+" in block commit "+blockCommitEvent.getBlock().getHeader()+" not found");
 					
-					pendingAtom.setStatus(CommitStatus.ACCEPTED);
+					pendingAtom.accepted();
 				}
 			}
 			finally

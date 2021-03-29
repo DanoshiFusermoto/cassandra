@@ -82,7 +82,7 @@ public final class Ledger implements Service, LedgerInterface
 
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
 
-		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
+		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
 	}
 	
 	@Override
@@ -162,7 +162,7 @@ public final class Ledger implements Service, LedgerInterface
 			{
 				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
 				pendingAtom.prepare();
-				pendingAtom.setStatus(CommitStatus.ACCEPTED);
+				pendingAtom.accepted();
 				pendingAtom.provision(Universe.getDefault().getGenesis().getHeader());
 				pendingAtom.setStatus(CommitStatus.PROVISIONED);
 				pendingAtom.execute();
@@ -335,7 +335,7 @@ public final class Ledger implements Service, LedgerInterface
 		@Subscribe
 		public void on(final AtomCommitTimeoutEvent event) 
 		{
-			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" aborted due to timeout");
+			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" commit aborted due to timeout");
 			Ledger.this.stateAccumulator.abort(event.getPendingAtom());
 		}
 
@@ -482,6 +482,7 @@ public final class Ledger implements Service, LedgerInterface
     				return;
     			
    				Ledger.this.context.getNetwork().getMessaging().send(new SyncAcquiredMessage(Ledger.this.getHead()), event.getPeer());
+   				ledgerLog.info(Ledger.this.context.getName()+": Requesting full inventory from "+event.getPeer());
     		}
     		catch (IOException ioex)
     		{

@@ -770,14 +770,19 @@ public class SyncHandler implements Service
 		else if (isSynced() == false)
 		{
 			// Can consider in sync? //
-			boolean syncAcquired = true;
+			boolean syncAcquired = false;
+			ConnectedPeer strongestPeer = null;
 			for (ConnectedPeer syncPeer : syncPeers)
 			{
-				if (this.context.getNode().isInSyncWith(syncPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true)
-					continue;
-					
-				syncAcquired = false;
+				if (strongestPeer == null || 
+					syncPeer.getNode().getHead().getHeight() > strongestPeer.getNode().getHead().getHeight())
+					strongestPeer = syncPeer;
 			}
+			
+			if (strongestPeer != null && 
+				(this.context.getNode().isInSyncWith(strongestPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true ||
+				 this.context.getNode().isAheadOf(strongestPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true))
+				syncAcquired = true;
 			
 			// Is block processing completed and local replica considered in sync?
 			if (this.blocksRequested.isEmpty() == true && 

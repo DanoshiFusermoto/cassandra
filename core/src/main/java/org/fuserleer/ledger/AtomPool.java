@@ -13,7 +13,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Predicate;
@@ -62,7 +61,6 @@ public final class AtomPool implements Service
 	private final static int 	NUM_BUCKETS = 4096;
 	private final static long 	BUCKET_SPAN = -(Long.MIN_VALUE / 2) / (NUM_BUCKETS / 4);
 
-	private final Semaphore voteProcessorSemaphore = new Semaphore(0);
 	private Executable voteProcessor = new Executable()
 	{
 		@Override
@@ -74,9 +72,10 @@ public final class AtomPool implements Service
 				{
 					try
 					{
-						// TODO convert to a wait / notify
-						if (AtomPool.this.voteProcessorSemaphore.tryAcquire(1, TimeUnit.SECONDS) == false)
-							continue;
+						synchronized(AtomPool.this.voteProcessor)
+						{
+							AtomPool.this.voteProcessor.wait(TimeUnit.SECONDS.toMillis(1));
+						}
 	
 						if (AtomPool.this.context.getLedger().isSynced() == false)
 							continue;
@@ -313,7 +312,10 @@ public final class AtomPool implements Service
 					atomsLog.debug(AtomPool.this.context.getName()+": Atom vote received "+vote.getHash()+":"+vote.getAtom()+" for "+vote.getOwner());
 				
 				AtomPool.this.votesToCountQueue.put(vote.getHash(), vote);
-				AtomPool.this.voteProcessorSemaphore.release();
+				synchronized(AtomPool.this.voteProcessor)
+				{
+					AtomPool.this.voteProcessor.notify();
+				}
 			}
 		});
 
@@ -382,7 +384,6 @@ public final class AtomPool implements Service
 			this.votesToCastQueue.clear();
 			this.votesToSyncQueue.clear();
 			this.votesToCountQueue.clear();
-			this.voteProcessorSemaphore.drainPermits();
 		}
 		finally
 		{
@@ -518,7 +519,10 @@ public final class AtomPool implements Service
 			}
 				
 			this.votesToCastQueue.add(pendingAtom);
-			this.voteProcessorSemaphore.release();
+			synchronized(AtomPool.this.voteProcessor)
+			{
+				AtomPool.this.voteProcessor.notify();
+			}
 			
 			return true;
 		}
@@ -642,7 +646,7 @@ public final class AtomPool implements Service
 					return false;
 				}
 
-				if (systemTime < pa.getWitnessed() + pa.getInclusionDelay())
+				if (systemTime < pa.getWitnessedAt() + pa.getInclusionDelay())
 					return false;
 
 				if (systemTime > pa.getInclusionTimeout())
@@ -941,6 +945,11 @@ public final class AtomPool implements Service
 						{
 							atomsLog.error(AtomPool.this.context.getName()+": Failed to load state for atom pool at height "+height, ex);
 						}
+					}
+					
+					synchronized(AtomPool.this.voteProcessor)
+					{
+						AtomPool.this.voteProcessor.notify();
 					}
 				}
 				else

@@ -638,7 +638,7 @@ public class BlockHandler implements Service
 							}
 							
 							long height = BlockHandler.this.context.getLedger().getHead().getHeight();
-							while (height > Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
 							{
 								pendingBlockInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class));
 								blockVoteInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class));
@@ -1296,16 +1296,17 @@ public class BlockHandler implements Service
 					continue;
 				}
 				
-				// Need constructed branches!
-				// NOTE disable this to promote a stall on liveness when critical gossip / connectivity issues
-				if (pendingBranch.isConstructed() == false)
-					continue;
-
 				// Short circuit on any branch that has a commit possible
+				// If not full constructed will commit the portion that is
 				PendingBlock committableBlock = pendingBranch.commitable();
 				if (committableBlock != null)
 					committable.put(committableBlock, pendingBranch);
 				
+				// Need fully constructed branches in order to select them!
+				// NOTE disable this to promote a stall on liveness when critical gossip / connectivity issues
+				if (pendingBranch.isConstructed() == false)
+					continue;
+
 				// TODO need a lower probability tiebreaker here
 				// TODO what happens if the branch has many un-constructable blocks which satisfy the below condition?
 				//      possible situation for a liveness break?  is this an attack surface that needs to be countered?
@@ -1391,7 +1392,7 @@ public class BlockHandler implements Service
 							for (Hash item : items)
 							{
 								BlockHeader blockHeader = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockHeader.class);
-								if (blockHeader.getHeight() <=  BlockHandler.this.context.getLedger().getHead().getHeight())
+								if (blockHeader.getHeight() <= BlockHandler.this.context.getLedger().getHead().getHeight())
 									continue;
 								
 								BlockHandler.this.push(blockHeader);

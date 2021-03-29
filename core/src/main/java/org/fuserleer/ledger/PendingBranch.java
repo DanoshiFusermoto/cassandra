@@ -585,6 +585,9 @@ public class PendingBranch
 			while(vertexIterator.hasNext())
 			{
 				PendingBlock vertex = vertexIterator.next();
+				if (vertex.getBlock() == null)
+					continue;
+				
 				long weight = getWeight(vertex.getHeight());
 				long total = getTotalVotePower(vertex.getHeight());
 				long threshold = getVotePowerThreshold(vertex.getHeight());

@@ -21,7 +21,7 @@ import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.events.BlockCommittedEvent;
+import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -365,15 +365,15 @@ public final class VotePowerHandler implements Service
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(BlockCommittedEvent blockCommittedEvent) 
+		public void on(BlockCommitEvent blockCommitEvent) 
 		{
 			try
 			{
-				update(blockCommittedEvent.getBlock());
+				update(blockCommitEvent.getBlock());
 			}
 			catch (IOException ioex)
 			{
-				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to update vote powers in block "+blockCommittedEvent.getBlock().getHeader(), ioex);
+				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to update vote powers in block "+blockCommitEvent.getBlock().getHeader(), ioex);
 			}
 		}
 		

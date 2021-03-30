@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -528,16 +529,24 @@ public final class StatePool implements Service
 					return;
 				}
 				
-				if (stateVote.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight())
+				StatePool.this.lock.writeLock().lock();
+				try
 				{
-					StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
-					synchronized(StatePool.this.voteProcessor)
+					if (stateVote.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight())
 					{
-						StatePool.this.voteProcessor.notify();
+						StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
+						synchronized(StatePool.this.voteProcessor)
+						{
+							StatePool.this.voteProcessor.notify();
+						}
 					}
+					else
+						StatePool.this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
 				}
-				else
-					StatePool.this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
+				finally
+				{
+					StatePool.this.lock.writeLock().unlock();
+				}
 			}
 		});
 					
@@ -593,7 +602,7 @@ public final class StatePool implements Service
 								statePoolLog.debug(StatePool.this.context.getName()+": State pool (votes) inventory request from "+peer);
 							
 							final Set<PendingState> pendingStates = new HashSet<PendingState>(StatePool.this.states.values());
-							final Set<Hash> stateVoteInventory = new HashSet<Hash>();
+							final Set<Hash> stateVoteInventory = new LinkedHashSet<Hash>();
 							for (PendingState pendingState : pendingStates)
 							{
 								for (StateVote stateVote : pendingState.votes())
@@ -610,12 +619,11 @@ public final class StatePool implements Service
 							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
 								statePoolLog.debug(StatePool.this.context.getName()+": Broadcasting about "+stateVoteInventory+" pool state votes to "+peer);
 
-							int offset = 0;
-							while(offset < stateVoteInventory.size())
+							while(stateVoteInventory.isEmpty() == false)
 							{
-								SyncInventoryMessage stateVoteInventoryMessage = new SyncInventoryMessage(stateVoteInventory, offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, stateVoteInventory.size()), StateVote.class);
+								SyncInventoryMessage stateVoteInventoryMessage = new SyncInventoryMessage(stateVoteInventory, 0, Math.min(SyncInventoryMessage.MAX_ITEMS, stateVoteInventory.size()), StateVote.class);
 								StatePool.this.context.getNetwork().getMessaging().send(stateVoteInventoryMessage, peer);
-								offset += SyncInventoryMessage.MAX_ITEMS; 
+								stateVoteInventory.removeAll(stateVoteInventoryMessage.getItems());
 							}
 						}
 						catch (Exception ex)

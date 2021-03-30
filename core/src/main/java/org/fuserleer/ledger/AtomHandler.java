@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -242,8 +243,8 @@ public class AtomHandler implements Service
 
 							// TODO will cause problems when pool is BIG
 							Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(AtomHandler.this.pendingAtoms.values());
-							final Set<Hash> pendingAtomInventory = new HashSet<Hash>();
-							final Set<Hash> atomVoteInventory = new HashSet<Hash>();
+							final Set<Hash> pendingAtomInventory = new LinkedHashSet<Hash>();
+							final Set<Hash> atomVoteInventory = new LinkedHashSet<Hash>();
 							
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
@@ -264,23 +265,21 @@ public class AtomHandler implements Service
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting "+pendingAtomInventory.size()+" / "+pendingAtomInventory+" pool atoms to "+peer);
 
-							int offset = 0;
-							while(offset < pendingAtomInventory.size())
+							while(pendingAtomInventory.isEmpty() == false)
 							{
-								SyncInventoryMessage pendingAtomInventoryMessage = new SyncInventoryMessage(pendingAtomInventory, offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, pendingAtomInventory.size()), Atom.class);
+								SyncInventoryMessage pendingAtomInventoryMessage = new SyncInventoryMessage(pendingAtomInventory, 0, Math.min(SyncInventoryMessage.MAX_ITEMS, pendingAtomInventory.size()), Atom.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(pendingAtomInventoryMessage, peer);
-								offset += SyncInventoryMessage.MAX_ITEMS; 
+								pendingAtomInventory.removeAll(pendingAtomInventoryMessage.getItems());
 							}
 
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting "+atomVoteInventory.size()+" / "+atomVoteInventory+" pool atom votes to "+peer);
 
-							offset = 0;
-							while(offset < atomVoteInventory.size())
+							while(atomVoteInventory.isEmpty() == false)
 							{
-								SyncInventoryMessage atomVoteInventoryMessage = new SyncInventoryMessage(atomVoteInventory, offset, Math.min(offset+SyncInventoryMessage.MAX_ITEMS, atomVoteInventory.size()),  AtomVote.class);
+								SyncInventoryMessage atomVoteInventoryMessage = new SyncInventoryMessage(atomVoteInventory, 0, Math.min(SyncInventoryMessage.MAX_ITEMS, atomVoteInventory.size()),  AtomVote.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(atomVoteInventoryMessage, peer);
-								offset += SyncInventoryMessage.MAX_ITEMS; 
+								atomVoteInventory.removeAll(atomVoteInventoryMessage.getItems());
 							}
 						}
 						catch (Exception ex)

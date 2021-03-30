@@ -9,13 +9,13 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -629,8 +629,8 @@ public class BlockHandler implements Service
 								blocksLog.debug(BlockHandler.this.context.getName()+": Broadcasting about "+BlockHandler.this.pendingBlocks.size()+" pool blocks to "+peer);
 
 							final Set<PendingBlock> pendingBlocks = new HashSet<PendingBlock>(BlockHandler.this.pendingBlocks.values());
-							final Set<Hash> pendingBlockInventory = new HashSet<Hash>();
-							final Set<Hash> blockVoteInventory = new HashSet<Hash>();
+							final Set<Hash> pendingBlockInventory = new LinkedHashSet<Hash>();
+							final Set<Hash> blockVoteInventory = new LinkedHashSet<Hash>();
 							
 							for (PendingBlock pendingBlock : pendingBlocks)
 							{
@@ -648,20 +648,18 @@ public class BlockHandler implements Service
 								height--;
 							}
 							
-							int offset = 0;
-							while(offset < pendingBlockInventory.size())
+							while(pendingBlockInventory.isEmpty() == false)
 							{
-								SyncInventoryMessage pendingBlockInventoryMessage = new SyncInventoryMessage(pendingBlockInventory, offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, pendingBlockInventory.size()), BlockHeader.class);
+								SyncInventoryMessage pendingBlockInventoryMessage = new SyncInventoryMessage(pendingBlockInventory, 0, Math.min(BroadcastInventoryMessage.MAX_ITEMS, pendingBlockInventory.size()), BlockHeader.class);
 								BlockHandler.this.context.getNetwork().getMessaging().send(pendingBlockInventoryMessage, peer);
-								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+								pendingBlockInventory.removeAll(pendingBlockInventoryMessage.getItems());
 							}
 
-							offset = 0;
-							while(offset < blockVoteInventory.size())
+							while(blockVoteInventory.isEmpty() == false)
 							{
-								SyncInventoryMessage blockVoteInventoryMessage = new SyncInventoryMessage(blockVoteInventory, offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, blockVoteInventory.size()), BlockVote.class);
+								SyncInventoryMessage blockVoteInventoryMessage = new SyncInventoryMessage(blockVoteInventory, 0, Math.min(BroadcastInventoryMessage.MAX_ITEMS, blockVoteInventory.size()), BlockVote.class);
 								BlockHandler.this.context.getNetwork().getMessaging().send(blockVoteInventoryMessage, peer);
-								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+								blockVoteInventory.removeAll(blockVoteInventoryMessage.getItems());
 							}
 						}
 						catch (Exception ex)

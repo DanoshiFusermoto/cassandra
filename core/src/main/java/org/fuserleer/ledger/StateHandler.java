@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -689,7 +690,7 @@ public final class StateHandler implements Service
 								cerbyLog.debug(StateHandler.this.context.getName()+": State pool (certificates) inventory request from "+peer);
 							
 							final Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(StateHandler.this.atoms.values());
-							final Set<Hash> stateCertificateInventory = new HashSet<Hash>();
+							final Set<Hash> stateCertificateInventory = new LinkedHashSet<Hash>();
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
 								for (StateCertificate stateCertificate : pendingAtom.getCertificates())
@@ -716,12 +717,11 @@ public final class StateHandler implements Service
 							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 								cerbyLog.debug(StateHandler.this.context.getName()+": Broadcasting about "+stateCertificateInventory+" pool state certificates to "+peer);
 
-							int offset = 0;
-							while(offset < stateCertificateInventory.size())
+							while(stateCertificateInventory.isEmpty() == false)
 							{
-								SyncInventoryMessage stateCertificateInventoryMessage = new SyncInventoryMessage(stateCertificateInventory, offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, stateCertificateInventory.size()), StateCertificate.class);
+								SyncInventoryMessage stateCertificateInventoryMessage = new SyncInventoryMessage(stateCertificateInventory, 0, Math.min(BroadcastInventoryMessage.MAX_ITEMS, stateCertificateInventory.size()), StateCertificate.class);
 								StateHandler.this.context.getNetwork().getMessaging().send(stateCertificateInventoryMessage, peer);
-								offset += BroadcastInventoryMessage.MAX_ITEMS; 
+								stateCertificateInventory.removeAll(stateCertificateInventoryMessage.getItems());
 							}
 						}
 						catch (Exception ex)

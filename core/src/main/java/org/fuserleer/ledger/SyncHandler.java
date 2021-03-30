@@ -573,13 +573,13 @@ public class SyncHandler implements Service
 			
 			this.context.getEvents().register(this.peerListener);
 			
+			// SyncHandler starts as OOS, prepare the last known good state
+			prepare();
+
 			Thread syncProcessorThread = new Thread(this.syncProcessor);
 			syncProcessorThread.setDaemon(true);
 			syncProcessorThread.setName(this.context.getName()+" Sync Processor");
 			syncProcessorThread.start();
-			
-			// SyncHandler starts as OOS, prepare the last known good state
-			prepare();
 		}
 		catch (Throwable t)
 		{

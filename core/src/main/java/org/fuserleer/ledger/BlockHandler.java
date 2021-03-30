@@ -152,6 +152,9 @@ public class BlockHandler implements Service
 						{
 							if (generatedBlock != null && BlockHandler.this.upsertBlock(generatedBlock) == true)
 							{
+								for (PendingAtom pendingAtom : generatedBlock.getAtoms())
+									pendingAtom.lock();
+								
 								BlockHandler.this.buildClock.set(generatedBlock.getHeader().getHeight());
 								this.generatedCount++;
 								this.generatedTimeTotal += (Time.getSystemTime()-generationStart);
@@ -1007,7 +1010,10 @@ public class BlockHandler implements Service
 							{
 								PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomPool().get(atomHash);
 								if (pendingAtom != null)
+								{
+									pendingAtom.lock();
 									pendingBlock.putAtom(pendingAtom);
+								}
 							}
 						}
 		
@@ -1152,9 +1158,6 @@ public class BlockHandler implements Service
 			{
 				PendingBranch pendingBranch = pendingBranchIterator.next();
 				
-//				if (pendingBranch.equals(branch) == false)
-//					pendingBranch.trimTo(committedBlocks.getLast());
-
 				if (pendingBranch.isEmpty() == false && pendingBranch.getLow().getHeight() <= head.getHeight())
 					pendingBranch.trimTo(head);
 				
@@ -1171,7 +1174,12 @@ public class BlockHandler implements Service
 			{
 				Entry<Hash, PendingBlock> pendingBlockEntry = pendingBlocksIterator.next();
 				if (pendingBlockEntry.getValue().getHeight() <= head.getHeight())
+				{
+					for (PendingAtom pendingAtom : pendingBlockEntry.getValue().getAtoms())
+						pendingAtom.unlock();
+						
 					pendingBlocksIterator.remove();
+				}
 			}
 
 			for (PendingBlock pendingBlock : this.pendingBlocks.values())

@@ -249,7 +249,8 @@ public final class AtomPool implements Service
 			location += BUCKET_SPAN;
 		}
 
-		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -826,7 +827,7 @@ public final class AtomPool implements Service
 				List<AtomDiscardedEvent> timedout = new ArrayList<AtomDiscardedEvent>();
 				for (PendingAtom pendingAtom : AtomPool.this.pending.values())
 				{
-					if (systemTime > pendingAtom.getInclusionTimeout() && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
+					if (pendingAtom.lockCount() == 0 && systemTime > pendingAtom.getInclusionTimeout() && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
 						timedout.add(new AtomDiscardedEvent(pendingAtom, "Timed out"));
 				}
 				

@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -78,6 +79,7 @@ public final class PendingAtom implements Hashable
 	private final Map<StateKey<?, ?>, StateCertificate> certificates;
 	
 	private final AtomicReference<CommitStatus>	status;
+	private final AtomicInteger locks;
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
 	private PendingAtom(final Context context, final Atom atom)
@@ -103,6 +105,7 @@ public final class PendingAtom implements Hashable
 		this.voted = new HashMap<ECPublicKey, Long>();
 		this.certificates = new HashMap<StateKey<?, ?>, StateCertificate>();
 		this.status = new AtomicReference<CommitStatus>(CommitStatus.NONE);
+		this.locks = new AtomicInteger(0);
 	}
 	
 	@Override
@@ -237,7 +240,34 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
-	public void accepted()
+	int lock()
+	{
+		int lockCount = this.locks.incrementAndGet();
+		if (atomsLog.hasLevel(Logging.DEBUG) == true)
+			atomsLog.debug(this.context.getName()+": Lock count of "+lockCount+" for pending atom "+getHash());
+		return lockCount;
+	}
+	
+	int unlock()
+	{
+		int lockCount = this.locks.updateAndGet((i) -> {
+			i--;
+			if (i < 0)
+				throw new IllegalStateException("Pending atom "+getHash()+" locks would become negative");
+			return i;
+		});
+
+		if (atomsLog.hasLevel(Logging.DEBUG) == true)
+			atomsLog.debug(this.context.getName()+": Lock count of "+lockCount+" for pending atom "+getHash());
+		return lockCount;
+	}
+	
+	int lockCount()
+	{
+		return this.locks.get();
+	}
+
+	void accepted()
 	{
 		this.lock.writeLock().lock();
 		try

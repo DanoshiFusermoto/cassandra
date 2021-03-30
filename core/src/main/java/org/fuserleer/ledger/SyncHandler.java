@@ -62,26 +62,23 @@ public class SyncHandler implements Service
 	private final class SyncPeerTask extends PeerTask 
 	{
 		final Entry<Hash, Long> requestedBlock;
-		final boolean rerequest;
 		
-		SyncPeerTask(final ConnectedPeer peer, final Entry<Hash, Long> block, final boolean rerequest)
+		SyncPeerTask(final ConnectedPeer peer, final Entry<Hash, Long> block)
 		{
 			super(peer, 10, TimeUnit.SECONDS);
 			
 			this.requestedBlock = block;
-			this.rerequest = rerequest;
 		}
 		
 		@Override
 		public void execute()
 		{
-			boolean doReRequest = true;
 			boolean failedRequest = false;
 			
 			SyncHandler.this.lock.lock();
 			try
 			{
-				doReRequest = SyncHandler.this.requestTasks.remove(getPeer(), this);
+				SyncHandler.this.requestTasks.remove(getPeer(), this);
 				if (SyncHandler.this.blocksRequested.remove(this.requestedBlock.getKey(), this.requestedBlock.getValue()) == true)
 					failedRequest = true;
 			}
@@ -96,7 +93,7 @@ public class SyncHandler implements Service
 				try
 				{
 					syncLog.error(SyncHandler.this.context.getName()+": "+getPeer()+" did not respond to block request of "+this.requestedBlock.getKey());
-					if (this.rerequest == false && (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING)))
+					if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
 						getPeer().disconnect("Did not respond to block request of "+this.requestedBlock.getKey());
 				}
 				catch (Throwable t)
@@ -104,8 +101,7 @@ public class SyncHandler implements Service
 					syncLog.error(SyncHandler.this.context.getName()+": "+getPeer(), t);
 				}
 				
-				if (this.rerequest == false && doReRequest == true)
-					rerequest(this.requestedBlock.getKey());
+				rerequest(this.requestedBlock.getKey());
 			}
 		}
 
@@ -129,18 +125,16 @@ public class SyncHandler implements Service
 		@Override
 		public void cancelled()
 		{
-			boolean doReRequest = true;
 			boolean failedRequest = false;
 
 			SyncHandler.this.lock.lock();
 			try
 			{
-				doReRequest = SyncHandler.this.requestTasks.remove(getPeer(), this);
-				
+				SyncHandler.this.requestTasks.remove(getPeer(), this);
 				if (SyncHandler.this.blocksRequested.remove(this.requestedBlock.getKey(), this.requestedBlock.getValue()) == true)
 					failedRequest = true;
 				
-				if (failedRequest == true && this.rerequest == false && doReRequest == true)
+				if (failedRequest == true)
 					rerequest(this.requestedBlock.getKey());
 			}
 			finally
@@ -159,7 +153,7 @@ public class SyncHandler implements Service
 				ConnectedPeer rerequestPeer = rerequestConnectedPeers.get(0);
 				try
 				{
-					SyncHandler.this.request(rerequestPeer, block, true);
+					SyncHandler.this.request(rerequestPeer, block);
 				}
 				catch (IOException ioex)
 				{
@@ -330,7 +324,7 @@ public class SyncHandler implements Service
 										for (Hash block : syncPeerInventory)
 										{
 											if (SyncHandler.this.blocksRequested.containsKey(block) == false && 
-												SyncHandler.this.request(syncPeer, block, false) == true)
+												SyncHandler.this.request(syncPeer, block) == true)
 												break;
 										}
 									}
@@ -617,7 +611,7 @@ public class SyncHandler implements Service
 		}
 	}
 	
-	private boolean request(final ConnectedPeer peer, final Hash block, final boolean rerequest) throws IOException
+	private boolean request(final ConnectedPeer peer, final Hash block) throws IOException
 	{
 		final Entry<Hash, Long> blockRequest = new AbstractMap.SimpleEntry<>(block, ThreadLocalRandom.current().nextLong());
 		SyncHandler.this.lock.lock();
@@ -640,7 +634,7 @@ public class SyncHandler implements Service
 				GetSyncBlockMessage getBlockMessage = new GetSyncBlockMessage(blockRequest.getKey()); 
 				this.context.getNetwork().getMessaging().send(getBlockMessage, peer);
 					
-				syncPeerTask = new SyncPeerTask(peer, blockRequest, rerequest);
+				syncPeerTask = new SyncPeerTask(peer, blockRequest);
 				this.requestTasks.put(peer, syncPeerTask);
 				Executor.getInstance().schedule(syncPeerTask);
 			}

@@ -148,6 +148,13 @@ public final class Ledger implements Service, LedgerInterface
 	private void integrity() throws IOException, ValidationException, StateLockedException
 	{
 		Hash headHash = this.ledgerStore.head();
+		
+		Hash genesis = this.ledgerStore.getSyncBlock(0);
+		if (genesis != null)
+		{
+			if (Universe.getDefault().getGenesis().getHeader().getHash().equals(genesis) == false)
+				throw new RuntimeException("You didn't clean your database dumbass!");
+		}
 
 		// Check if this is just a new ledger store and doesn't need integrity or recovery
 		if (headHash.equals(Universe.getDefault().getGenesis().getHeader().getHash()) == true && this.ledgerStore.has(headHash) == false)

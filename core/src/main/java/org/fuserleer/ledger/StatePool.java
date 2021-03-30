@@ -516,7 +516,7 @@ public final class StatePool implements Service
 			{
 				StateVote stateVote = (StateVote) object;
 				if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-					statePoolLog.debug(StatePool.this.context.getName()+": State vote received "+stateVote+" for "+stateVote.getOwner());
+					statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" received for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner());
 
 				long numShardGroups = StatePool.this.context.getLedger().numShardGroups();
 				long localShardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), numShardGroups); 
@@ -769,6 +769,59 @@ public final class StatePool implements Service
 		}
 	}
 	
+	void remove(final PendingAtom atom)
+	{
+		Objects.requireNonNull(atom, "Atom is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(atom.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			final Collection<StateKey<?, ?>> stateKeys = atom.getStateKeys();
+			for (StateKey<?, ?> stateKey : stateKeys)
+			{
+				long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+				if (stateShardGroup != localShardGroup)
+					continue;
+				
+				Hash stateAtomBlockHash = Hash.from(stateKey.get(), atom.getHash(), atom.getBlock());
+				PendingState pendingState = this.states.remove(stateAtomBlockHash);
+				if (pendingState == null)
+					throw new IllegalStateException(this.context.getName()+": Expected pending state "+stateKey+" not found");
+
+				this.votesToCastQueue.remove(pendingState);
+				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
+			}
+			
+			Iterator<StateVote> votesToCountDelayedIterator = this.votesToCountDelayed.values().iterator();
+			while(votesToCountDelayedIterator.hasNext() == true)
+			{
+				StateVote voteToCountDelayed = votesToCountDelayedIterator.next();
+				if (stateKeys.contains(voteToCountDelayed.getObject()) == true)
+					votesToCountDelayedIterator.remove();
+			}
+			
+			final List<Hash> removals = new ArrayList<Hash>();
+			this.votesToCountQueue.forEach((h,sv) -> {
+				if (stateKeys.contains(sv.getObject()) == true)
+					removals.add(h);
+			});
+			this.votesToSyncQueue.forEach((h,sv) -> {
+				if (stateKeys.contains(sv.getObject()) == true)
+					removals.add(h);
+			});
+			
+			this.votesToCountQueue.removeAll(removals);
+			this.votesToSyncQueue.removeAll(removals);
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	
 	void queue(final PendingAtom atom)
 	{
 		Objects.requireNonNull(atom);
@@ -850,8 +903,16 @@ public final class StatePool implements Service
 				{
 					StateCertificate stateCertificate = pendingState.buildCertificate();
 					if (stateCertificate != null)
+					{
+						if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+							statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (CERTIFICATE)");
 						StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+					}
+					else if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+						statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (NOT CERTIFICATE)");
 				}
+				else if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+					statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (NOT PROVISIONED)");
 				
 				return true;
 			}
@@ -922,7 +983,13 @@ public final class StatePool implements Service
 		@Subscribe
 		public void on(final AtomCommitTimeoutEvent event) 
 		{
-//			remove(atomCommitTimeoutEvent.getPendingAtom());
+			// TODO disable to witness state pool saturation
+			// 		In a liveness resolve situation vote power is being taken for pending state votes
+			//		from when the liveness break was active.  
+			//		The missing vote power needed for a threshold never voted, as that caused the liveness issue.
+			//		The absence of that same vote power can cause state vote issues AFTER the liveness issue 
+			//		is resolved, causing accepted atoms to fail en-mass.
+			remove(event.getPendingAtom());
 		}
 
 		@Subscribe

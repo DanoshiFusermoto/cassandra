@@ -336,8 +336,11 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		}
 	}
 
-	boolean has(Hash hash) throws DatabaseException
+	boolean has(final Hash hash) throws DatabaseException
 	{
+		Objects.requireNonNull(hash, "Hash is null");
+		Hash.notZero(hash, "Hash is ZERO");
+		
 		try
         {
 			if (this.primitiveLRW.containsKey(hash) == true)
@@ -358,8 +361,10 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		}
 	}
 	
-	final OperationStatus store(Block block) throws IOException 
+	final OperationStatus store(final Block block) throws IOException 
 	{
+		Objects.requireNonNull(block, "Block is null");
+		
 		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
 		try 
 		{
@@ -424,8 +429,10 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 	
-	final OperationStatus store(BlockHeader blockHeader) throws IOException 
+	final OperationStatus store(final BlockHeader blockHeader) throws IOException 
 	{
+		Objects.requireNonNull(blockHeader, "Block header is null");
+		
 		if (this.primitiveLRW.containsKey(blockHeader.getHash()) == true)
 			return OperationStatus.KEYEXIST;
 
@@ -458,8 +465,11 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
-	final OperationStatus store(long height, Atom atom) throws IOException 
+	final OperationStatus store(final long height, final Atom atom) throws IOException 
 	{
+		Objects.requireNonNull(atom, "Atom is null");
+		Numbers.isNegative(height, "Height is negative");
+		
 		if (this.primitiveLRW.containsKey(atom.getHash()) == true)
 			return OperationStatus.KEYEXIST;
 
@@ -496,19 +506,24 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
-	private OperationStatus store(Transaction transaction, Hash hash, Primitive primitive, byte[] bytes) throws IOException 
+	private OperationStatus store(final Transaction transaction, final Hash hash, final Primitive primitive, final byte[] bytes) throws IOException 
 	{
-		Objects.requireNonNull(hash);
-		Objects.requireNonNull(bytes);
+		Objects.requireNonNull(hash, "Hash is null");
+		Hash.notZero(hash, "Hash is ZERO");
+		Objects.requireNonNull(primitive, "Primitive is null");
+		Objects.requireNonNull(bytes, "Bytes is null");
+		Numbers.isZero(bytes.length, "Bytes is empty");
+		
 		DatabaseEntry key = new DatabaseEntry(hash.toByteArray());
 		DatabaseEntry value = new DatabaseEntry(bytes);
 		OperationStatus status = this.primitives.putNoOverwrite(transaction, key, value);
 		return status;
 	}
 	
-	final OperationStatus store(long height, AtomVote vote) throws IOException 
+	final OperationStatus store(final long height, final AtomVote vote) throws IOException 
 	{
-		Objects.requireNonNull(vote, "Votes is null");
+		Objects.requireNonNull(vote, "Vote is null");
+		Numbers.isNegative(height, "Height is negative");
 		
 		if (this.primitiveLRW.containsKey(vote.getHash()) == true)
 			return OperationStatus.KEYEXIST;
@@ -546,7 +561,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
-	final OperationStatus store(BlockVote vote) throws IOException 
+	final OperationStatus store(final BlockVote vote) throws IOException 
 	{
 		Objects.requireNonNull(vote, "Vote is null");
 		
@@ -586,7 +601,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 	
-	final OperationStatus store(StateVote vote) throws IOException 
+	final OperationStatus store(final StateVote vote) throws IOException 
 	{
 		Objects.requireNonNull(vote, "Vote is null");
 		
@@ -626,7 +641,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
-	final OperationStatus store(StateCertificate certificate) throws IOException 
+	final OperationStatus store(final StateCertificate certificate) throws IOException 
 	{
 		Objects.requireNonNull(certificate, "State certificate is null");
 		
@@ -666,10 +681,11 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
-	final OperationStatus store(long height, AtomCertificate certificate) throws IOException 
+	final OperationStatus store(final long height, final AtomCertificate certificate) throws IOException 
 	{
 		Objects.requireNonNull(certificate, "Certificate is null");
-		
+		Numbers.isNegative(height, "Height is negative");
+
 		if (this.primitiveLRW.containsKey(certificate.getHash()) == true)
 			return OperationStatus.KEYEXIST;
 
@@ -709,7 +725,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	// STATE //
 	final Commit search(final StateKey<?, ?> key) throws IOException
 	{
-		Objects.requireNonNull(key);
+		Objects.requireNonNull(key, "State key is null");
 
 		try
         {
@@ -733,7 +749,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	@Override
 	public final CommitStatus has(final StateKey<?, ?> key) throws IOException
 	{
-		Objects.requireNonNull(key);
+		Objects.requireNonNull(key, "State key is null");
 
 		try
         {
@@ -756,7 +772,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	@Override
 	public UInt256 get(final StateKey<?, ?> key) throws IOException
 	{
-		Objects.requireNonNull(key);
+		Objects.requireNonNull(key, "State key is null");
 
 		try
         {
@@ -832,7 +848,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 
 		    for (Atom atom : block.getAtoms())
 		    {
-				if (this.primitiveLRW.containsKey(block.getHash()) == false)
+				if (this.primitiveLRW.containsKey(atom.getHash()) == false)
 				{
 					DatabaseEntry atomKey = new DatabaseEntry(atom.getHash().toByteArray());
 					DatabaseEntry atomValue = new DatabaseEntry(Serialization.getInstance().toDson(atom, DsonOutput.Output.PERSIST));
@@ -846,7 +862,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    
 		    for (AtomCertificate certificate : block.getCertificates())
 		    {
-				if (this.primitiveLRW.containsKey(block.getHash()) == false)
+				if (this.primitiveLRW.containsKey(certificate.getHash()) == false)
 				{
 					DatabaseEntry certificateKey = new DatabaseEntry(certificate.getHash().toByteArray());
 					DatabaseEntry certificateValue = new DatabaseEntry(Serialization.getInstance().toDson(certificate, DsonOutput.Output.PERSIST));
@@ -925,9 +941,9 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    } 
 	}
 	
-	final void commit(CommitOperation commit) throws IOException
+	final void commit(final CommitOperation commit) throws IOException
 	{
-	    Objects.requireNonNull(commit);
+	    Objects.requireNonNull(commit, "Commit operation is null");
 		
 	    Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
 	    try 
@@ -1030,8 +1046,10 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	}
 	
 	// SYNC //
-	boolean has(long height) throws DatabaseException
+	boolean has(final long height) throws DatabaseException
 	{
+		Numbers.isNegative(height, "Height is negative");
+		
 		try
         {
 			OperationStatus status = this.syncChain.get(null, new DatabaseEntry(Longs.toByteArray(height)), null, LockMode.DEFAULT);
@@ -1071,8 +1089,10 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	}
 
 	// SYNC //
-	Hash getSyncBlock(long height) throws DatabaseException
+	Hash getSyncBlock(final long height) throws DatabaseException
 	{
+		Numbers.isNegative(height, "Height is negative");
+		
 		try
         {
 			DatabaseEntry blockHash = new DatabaseEntry();
@@ -1122,7 +1142,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		return items;
 	}
 	
-	private OperationStatus storeSyncInventory(Transaction transaction, long height, Hash item, Class<? extends Primitive> type)
+	private OperationStatus storeSyncInventory(final Transaction transaction, final long height, final Hash item, final Class<? extends Primitive> type)
 	{
 		Objects.requireNonNull(transaction, "Transaction is null");
 		Objects.requireNonNull(item, "Item hash is null");
@@ -1139,7 +1159,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	// IDENTIFIER SEARCH //
 	final Collection<Commit> search(final AssociationSearchQuery query) throws IOException
 	{
-		Objects.requireNonNull(query);
+		Objects.requireNonNull(query, "Search query is null");
 		
 		Cursor searchCursor = this.stateAssociations.openCursor(null, null);
 		try

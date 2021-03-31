@@ -6,7 +6,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -300,7 +299,8 @@ public final class StatePool implements Service
 							{
 								try
 								{
-									process(stateVote.getValue());
+									if (process(stateVote.getValue()) == false)
+										statePoolLog.warn(StatePool.this.context.getName()+": Syncing state vote "+stateVote.getValue().getState()+" returned false for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
 								}
 								catch (Exception ex)
 								{
@@ -324,12 +324,14 @@ public final class StatePool implements Service
 								{
 									if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote.getValue()).equals(OperationStatus.SUCCESS) == false)
 									{
-										statePoolLog.warn(StatePool.this.context.getName()+": Received already seen state vote of "+stateVote.getValue().getState()+" for "+stateVote.getValue().getOwner());
+										statePoolLog.warn(StatePool.this.context.getName()+": Received already seen state vote of "+stateVote.getValue().getState()+" for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
 										continue;
 									}
 									
 									if (process(stateVote.getValue()) == true)
 										stateVotesToBroadcast.add(stateVote.getValue());
+									else
+										statePoolLog.warn(StatePool.this.context.getName()+": Processing of state vote "+stateVote.getValue().getState()+" returned false for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
 								}
 								catch (Exception ex)
 								{
@@ -448,8 +450,8 @@ public final class StatePool implements Service
 		this.context = Objects.requireNonNull(context, "Context is null");
 		
 		this.votesToCastQueue = new LinkedBlockingQueue<PendingState>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
-		this.votesToSyncQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
-		this.votesToCountQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.votesToSyncQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<20));
+		this.votesToCountQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<20));
 		this.votesToCountDelayed = Collections.synchronizedMap(new HashMap<Hash, StateVote>());
 		
 //		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
@@ -529,24 +531,16 @@ public final class StatePool implements Service
 					return;
 				}
 				
-				StatePool.this.lock.writeLock().lock();
-				try
+				if (stateVote.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight())
 				{
-					if (stateVote.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight())
+					StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
+					synchronized(StatePool.this.voteProcessor)
 					{
-						StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
-						synchronized(StatePool.this.voteProcessor)
-						{
-							StatePool.this.voteProcessor.notify();
-						}
+						StatePool.this.voteProcessor.notify();
 					}
-					else
-						StatePool.this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
 				}
-				finally
-				{
-					StatePool.this.lock.writeLock().unlock();
-				}
+				else
+					StatePool.this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
 			}
 		});
 					
@@ -802,16 +796,12 @@ public final class StatePool implements Service
 				StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
 			}
 			
-			Iterator<StateVote> votesToCountDelayedIterator = this.votesToCountDelayed.values().iterator();
-			while(votesToCountDelayedIterator.hasNext() == true)
-			{
-				StateVote voteToCountDelayed = votesToCountDelayedIterator.next();
-				if (stateKeys.contains(voteToCountDelayed.getObject()) == true)
-					votesToCountDelayedIterator.remove();
-			}
-			
 			final List<Hash> removals = new ArrayList<Hash>();
 			this.votesToCountQueue.forEach((h,sv) -> {
+				if (stateKeys.contains(sv.getObject()) == true)
+					removals.add(h);
+			});
+			this.votesToCountDelayed.forEach((h,sv) -> {
 				if (stateKeys.contains(sv.getObject()) == true)
 					removals.add(h);
 			});
@@ -822,6 +812,7 @@ public final class StatePool implements Service
 			
 			this.votesToCountQueue.removeAll(removals);
 			this.votesToSyncQueue.removeAll(removals);
+			synchronized(this.votesToCountDelayed) { this.votesToCountDelayed.keySet().removeAll(removals); }
 		}
 		finally
 		{
@@ -874,31 +865,39 @@ public final class StatePool implements Service
 		}
 
 		StatePool.this.lock.writeLock().lock();
-		PendingAtom pendingAtom;
 		PendingState pendingState;
 		try
 		{
 			Hash stateAtomBlockHash = Hash.from(stateVote.getState().get(), stateVote.getAtom(), stateVote.getBlock());
+			final PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
 			pendingState = StatePool.this.states.get(stateAtomBlockHash);
 			// Creating pending state objects from vote if particle not seen or committed
 			if (pendingState == null)
 			{
-				pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
+				// Pending state and atom null is likely the atom has already been committed
+				// Check for a commit status, and if true silently accept
 				if (pendingAtom == null)
 				{
-					statePoolLog.warn(StatePool.this.context.getName()+": Pending atom "+stateVote.getAtom()+" not found or completed for received state vote of "+stateVote.getState()+" for "+stateVote.getOwner());
-					return false;
+					Commit commit = StatePool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateVote.getAtom()));
+					if (commit == null)
+						throw new IllegalStateException("Pending state "+stateVote.getState()+" and atom "+stateVote.getAtom()+" not found, no commit present");
+					
+					if (commit != null && commit.getPath().get(Elements.CERTIFICATE) == null)
+						throw new IllegalStateException("Pending state "+stateVote.getState()+" and atom "+stateVote.getAtom()+" not found, commit lacking certificate");
+
+					if (stateVote.getBlock().equals(commit.getPath().get(Elements.BLOCK)) == false || 
+						stateVote.getAtom().equals(commit.getPath().get(Elements.ATOM)) == false)
+						throw new IllegalStateException("State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
+					
+					return true;
 				}
 
+				// Atom is known, pending state is not yet created
 				pendingState = new PendingState(stateVote.getState(), stateVote.getAtom(), stateVote.getBlock());
 				add(pendingState);
 			}
-			else
-			{
-				pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(pendingState.getAtom());
-				if (pendingAtom == null)
-					throw new IllegalStateException("Pending atom "+pendingState.getAtom()+" for pending state "+pendingState.getKey()+" not found");
-			}
+			else if (pendingAtom == null)
+				throw new IllegalStateException("Pending atom "+pendingState.getAtom()+" for pending state "+pendingState.getKey()+" not found");
 
 			if (pendingState.getBlock().equals(stateVote.getBlock()) == false || 
 				pendingState.getAtom().equals(stateVote.getAtom()) == false)
@@ -955,16 +954,15 @@ public final class StatePool implements Service
 			StatePool.this.lock.writeLock().lock();
 			try
 			{
-				Iterator<StateVote> delayedStateVoteIterator = StatePool.this.votesToCountDelayed.values().iterator();
-				while(delayedStateVoteIterator.hasNext() == true)
-				{
-					StateVote delayedStateVote = delayedStateVoteIterator.next();
-					if (delayedStateVote.getHeight() <= blockCommittedEvent.getBlock().getHeader().getHeight())
+				final List<Hash> removals = new ArrayList<Hash>();
+				StatePool.this.votesToCountDelayed.forEach((h,sv) -> {
+					if (sv.getHeight() <= blockCommittedEvent.getBlock().getHeader().getHeight())
 					{
-						StatePool.this.votesToCountQueue.put(delayedStateVote.getHash(), delayedStateVote);
-						delayedStateVoteIterator.remove();
+						StatePool.this.votesToCountQueue.put(sv.getHash(), sv);
+						removals.add(h);
 					}
-				}
+				});
+				synchronized(StatePool.this.votesToCountDelayed) { StatePool.this.votesToCountDelayed.keySet().removeAll(removals); }
 				
 				synchronized(StatePool.this.voteProcessor)
 				{

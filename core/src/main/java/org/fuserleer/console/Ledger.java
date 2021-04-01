@@ -46,6 +46,9 @@ public class Ledger extends Function
 			printStream.println("State pool (S/A/R/V/C): "+context.getLedger().getStatePool().size()+" / "+context.getMetaData().get("ledger.pool.state.added", 0l)+" / "+context.getMetaData().get("ledger.pool.state.removed", 0l)+" / "+context.getMetaData().get("ledger.pool.state.votes", 0l)+" / "+context.getMetaData().get("ledger.pool.state.certificates", 0l));
 			printStream.println("Block pool: "+context.getLedger().getBlockHandler().size()+" / "+context.getMetaData().get("ledger.pool.blocks.added", 0l)+" / "+context.getMetaData().get("ledger.pool.blocks.removed", 0l));
 			printStream.println("Shard (G/A): "+context.getLedger().numShardGroups()+"/"+context.getMetaData().get("ledger.throughput.shards.touched", 0l));
+			printStream.println("Gossip Req (A/AV/SV/SC/BH/BV): "+context.getMetaData().get("gossip.requests.atom", 0l)+"/"+context.getMetaData().get("gossip.requests.atomvote", 0l)+"/"+
+															  	  context.getMetaData().get("gossip.requests.statevote", 0l)+"/"+context.getMetaData().get("gossip.requests.statecertificate", 0l)+"/"+
+															  	  context.getMetaData().get("gossip.requests.blockheader", 0l)+"/"+context.getMetaData().get("gossip.requests.blockvote", 0l)+"/"+context.getMetaData().get("gossip.requests.total", 0l));
 		}
 	}
 }

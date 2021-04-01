@@ -104,7 +104,6 @@ public final class AtomPool implements Service
 						Multimap<AtomVote, Long> atomVotesToBroadcast = HashMultimap.create();
 						if (AtomPool.this.votesToCountQueue.isEmpty() == false)
 						{
-							int votesCounted = 0;
 							do
 							{
 								final Entry<Hash, AtomVote> atomVote = AtomPool.this.votesToCountQueue.peek();
@@ -140,23 +139,20 @@ public final class AtomPool implements Service
 								}
 								finally
 								{
-									votesCounted++;
-									
 									if (AtomPool.this.votesToCountQueue.remove(atomVote.getKey(), atomVote.getValue()) == false)
 										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
 									
 									AtomPool.this.lock.readLock().unlock();
 								}
 							}
-							while(votesToCountQueue.isEmpty() == false && votesCounted < 64);
+							while(votesToCountQueue.isEmpty() == false);
 						}
 						
-						List<PendingAtom> atomVotesToCast = new ArrayList<PendingAtom>();
-						AtomPool.this.votesToCastQueue.drainTo(atomVotesToCast, 64);
-						if (atomVotesToCast.isEmpty() == false)
+						if (AtomPool.this.votesToCastQueue.isEmpty() == false)
 						{
-							for (PendingAtom pendingAtom : atomVotesToCast)
+							do
 							{
+								final PendingAtom pendingAtom = AtomPool.this.votesToCastQueue.peek();
 								AtomPool.this.lock.writeLock().lock();
 								try
 								{
@@ -188,9 +184,13 @@ public final class AtomPool implements Service
 								}
 								finally
 								{
+									if (pendingAtom.equals(AtomPool.this.votesToCastQueue.poll()) == false)
+										throw new IllegalStateException("Atom pool vote cast peek/pool failed for "+pendingAtom.getHash());
+									
 									AtomPool.this.lock.writeLock().unlock();
 								}
 							}
+							while(votesToCastQueue.isEmpty() == false);
 						}
 						
 						try

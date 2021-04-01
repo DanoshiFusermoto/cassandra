@@ -402,7 +402,7 @@ public final class StatePool implements Service
 								}
 								finally
 								{
-									if (pendingState != StatePool.this.votesToCastQueue.poll())
+									if (pendingState.equals(StatePool.this.votesToCastQueue.poll()) == false)
 										throw new IllegalStateException("State pool vote cast peek/pool failed for "+pendingState.getKey());
 
 									StatePool.this.lock.writeLock().unlock();
@@ -1047,7 +1047,7 @@ public final class StatePool implements Service
 							{
 								StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
 								Commit commit = StatePool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateVote.getAtom()));
-								if (commit == null || commit.getPath().get(Elements.CERTIFICATE) != null)
+								if (commit != null && commit.getPath().get(Elements.CERTIFICATE) != null)
 									continue;
 									
 								PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
@@ -1057,7 +1057,10 @@ public final class StatePool implements Service
 									StatePool.this.context.getLedger().getAtomHandler().submit(atom);
 								}
 								
-								StatePool.this.votesToSyncQueue.put(stateVote.getHash(), stateVote);
+								if (stateVote.getHeight() > StatePool.this.context.getLedger().getHead().getHeight())
+									StatePool.this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
+								else
+									StatePool.this.votesToSyncQueue.put(stateVote.getHash(), stateVote);
 							}
 						}
 						catch (Exception ex)

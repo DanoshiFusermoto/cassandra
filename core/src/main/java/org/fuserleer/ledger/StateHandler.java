@@ -1213,7 +1213,7 @@ public final class StateHandler implements Service
 							{
 								StateCertificate stateCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateCertificate.class);
 								Commit commit = StateHandler.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateCertificate.getAtom()));
-								if (commit == null || commit.getPath().get(Elements.CERTIFICATE) != null)
+								if (commit != null && commit.getPath().get(Elements.CERTIFICATE) != null)
 									continue;
 									
 								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(stateCertificate.getAtom());

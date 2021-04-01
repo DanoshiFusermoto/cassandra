@@ -748,7 +748,7 @@ public class BlockHandler implements Service
 			return false;
 		}
 
-		// If the block is already committed as state then just skip
+		// If the block is already committed as state then just skip and silently return true
 		final StateAddress blockStateAddress = new StateAddress(Block.class, blockVote.getBlock());
 		if (BlockHandler.this.context.getLedger().getLedgerStore().search(blockStateAddress) == null)
 		{
@@ -761,12 +761,14 @@ public class BlockHandler implements Service
 					blocksLog.debug(BlockHandler.this.context.getName()+": Block vote "+blockVote.getHash()+"/"+blockVote.getBlock()+" for "+blockVote.getOwner());
 
 				pendingBlock.vote(blockVote);
+
+				return true;
 			}
 			
-			return true;
+			return false;
 		}
 		
-		return false;
+		return true;
 	}
 	
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException

@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -16,8 +17,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -44,6 +45,7 @@ import org.fuserleer.serialization.Serialization;
 import org.fuserleer.utils.Numbers;
 
 import com.google.common.collect.HashMultimap;
+import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Multimaps;
 import com.google.common.eventbus.Subscribe;
@@ -56,7 +58,7 @@ public class GossipHandler implements Service
 	{
 		final Class<? extends Primitive> type;
 		final Map<Hash, Long> items;
-		private int remaining;
+		private AtomicInteger remaining;
 		
 		GossipPeerTask(final ConnectedPeer peer, final Map<Hash, Long> items, final Class<? extends Primitive> type)
 		{
@@ -64,7 +66,7 @@ public class GossipHandler implements Service
 			
 			this.type = type;
 			this.items = new HashMap<Hash, Long>(items);
-			this.remaining = this.items.size();
+			this.remaining = new AtomicInteger(this.items.size());
 		}
 		
 		public void received(final Hash item, final long nonce)
@@ -75,13 +77,23 @@ public class GossipHandler implements Service
 			if (this.items.containsValue(nonce) == false)
 				return;
 			
-			Numbers.isZero(this.remaining, "Remaining would be < 0 if decremented on "+item+":"+nonce);
-			this.remaining--;
+			int r = this.remaining.updateAndGet((v) -> {
+				Numbers.isZero(v, "Remaining would be < 0 if decremented on "+item+":"+nonce);
+				return v-1;
+			});
+			
+			if (r == 0)
+			{
+				synchronized(GossipHandler.this.requestProcessor)
+				{
+					GossipHandler.this.requestProcessor.notify();
+				}
+			}
 		}
 		
 		public int remaining()
 		{
-			return this.remaining;
+			return this.remaining.get();
 		}
 		
 		@Override
@@ -119,6 +131,11 @@ public class GossipHandler implements Service
 			}
 			finally
 			{
+				synchronized(GossipHandler.this.requestProcessor)
+				{
+					GossipHandler.this.requestProcessor.notify();
+				}
+
 				GossipHandler.this.lock.writeLock().unlock();
 			}
 		}
@@ -150,6 +167,11 @@ public class GossipHandler implements Service
 			}
 			finally
 			{
+				synchronized(GossipHandler.this.requestProcessor)
+				{
+					GossipHandler.this.requestProcessor.notify();
+				}
+
 				GossipHandler.this.lock.writeLock().unlock();
 			}
 		}
@@ -234,9 +256,6 @@ public class GossipHandler implements Service
 	
 	private Executable broadcastProcessor = new Executable()
 	{
-		private long lastHousekeeping = System.currentTimeMillis(); 
-		private boolean pendingWork = true;
-		
 		@Override
 		public void execute()
 		{
@@ -246,231 +265,26 @@ public class GossipHandler implements Service
 				{
 					try
 					{
-						if (this.pendingWork == false)
+						synchronized(GossipHandler.this.broadcastProcessor)
 						{
-							synchronized(GossipHandler.this.broadcastProcessor)
-							{
-								GossipHandler.this.broadcastProcessor.wait(TimeUnit.SECONDS.toMillis(1));
-							}
+							GossipHandler.this.broadcastProcessor.wait(TimeUnit.SECONDS.toMillis(1));
 						}
 						
-						GossipHandler.this.lock.writeLock().lock();
-						try
+						if (GossipHandler.this.context.getNode().isSynced() == false)
 						{
-							if (GossipHandler.this.context.getNode().isSynced() == false)
-							{
-								GossipHandler.this.toBroadcast.clear();
-								GossipHandler.this.toRequest.clear();
-								GossipHandler.this.broadcastQueue.clear();
-								this.pendingWork = false;
-								continue;
-							}
-
-							while(GossipHandler.this.broadcastQueue.isEmpty() == false)
-							{
-								Broadcast broadcast = GossipHandler.this.broadcastQueue.poll();
-								GossipHandler.this.toBroadcast.put(broadcast.getPrimitive().getClass(), broadcast);
-							}
-
-							if (GossipHandler.this.toBroadcast.isEmpty() == true && 
-								GossipHandler.this.toRequest.isEmpty() == true)
-								this.pendingWork = false;
-							else
-								this.pendingWork = true;
-						}
-						finally
-						{
-							GossipHandler.this.lock.writeLock().unlock();
-						}
-						
-						if (this.pendingWork == false)
+							GossipHandler.this.toBroadcast.clear();
+							GossipHandler.this.broadcastQueue.clear();
 							continue;
-						
+						}
+
+						while(GossipHandler.this.broadcastQueue.isEmpty() == false)
+						{
+							Broadcast broadcast = GossipHandler.this.broadcastQueue.poll();
+							GossipHandler.this.toBroadcast.put(broadcast.getPrimitive().getClass(), broadcast);
+						}
+
 						// Broadcast
-						final List<Class<? extends Primitive>> broadcastTypes = new ArrayList<>(GossipHandler.this.toBroadcast.keySet());
-						for (Class<? extends Primitive> type : broadcastTypes)
-						{
-							GossipFilter filter = GossipHandler.this.broadcastFilters.get(type);
-							if (filter != null)
-							{
-								Multimap<Long, Broadcast> toBroadcast = HashMultimap.create();
-								GossipHandler.this.lock.readLock().lock();
-								try
-								{
-									Collection<Broadcast> broadcastQueue = GossipHandler.this.toBroadcast.get(type).stream().collect(Collectors.toList());
-									if (broadcastQueue.isEmpty() == true)
-										continue;
-	
-									for (Broadcast broadcast : broadcastQueue)
-									{
-										try
-										{
-											if (broadcast.getShardGroups().isEmpty() == true)
-												broadcast.setShardGroups(filter.filter(broadcast.getPrimitive()));
-										}
-										catch (Exception ex)
-										{
-											gossipLog.error(GossipHandler.this.context.getName()+": Filter for "+type+" failed on "+broadcast.getPrimitive(), ex);
-											continue;
-										}
-												
-										for(long shardGroup : broadcast.getShardGroups())
-											toBroadcast.put(shardGroup, broadcast);
-									}
-								}
-								finally
-								{
-									GossipHandler.this.lock.readLock().unlock();
-								}
-								
-								for (long shardGroup : toBroadcast.keySet())
-								{
-									int offset = 0;
-									List<Hash> toBroadcastList = toBroadcast.get(shardGroup).stream().map(b -> b.getPrimitive().getHash()).collect(Collectors.toList());
-									while(offset < toBroadcastList.size())
-									{
-										BroadcastInventoryMessage broadcastInventoryMessage = new BroadcastInventoryMessage(toBroadcastList.subList(offset, Math.min(offset+BroadcastInventoryMessage.MAX_ITEMS, toBroadcastList.size())), type);
-										for (ConnectedPeer connectedPeer : GossipHandler.this.context.getNetwork().get(StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(shardGroup)))
-										{
-											if (connectedPeer.getNode().isSynced() == false)
-											{
-												if (gossipLog.hasLevel(Logging.DEBUG) == true)
-													gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) broadcast of inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
-
-												continue;
-											}
-											
-											try
-											{
-												if (gossipLog.hasLevel(Logging.DEBUG) == true)
-													gossipLog.debug(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems()+" to " + connectedPeer);
-
-												GossipHandler.this.context.getNetwork().getMessaging().send(broadcastInventoryMessage, connectedPeer);
-											}
-											catch (IOException ex)
-											{
-												gossipLog.error(GossipHandler.this.context.getName()+": Unable to send BroadcastInventoryMessage of "+toBroadcastList+" items in shard group "+shardGroup+" to "+connectedPeer, ex);
-											}
-										}
-										
-										offset += BroadcastInventoryMessage.MAX_ITEMS;
-									}
-								}
-								
-								GossipHandler.this.lock.writeLock().lock();
-								try
-								{
-									for (Entry<Long, Broadcast> broadcast : toBroadcast.entries())
-										GossipHandler.this.toBroadcast.remove(type, broadcast.getValue());
-								}
-								finally
-								{
-									GossipHandler.this.lock.writeLock().unlock();
-								}
-							}
-						}
-						
-						// Request
-						final List<Class<? extends Primitive>> requestTypes = new ArrayList<>(GossipHandler.this.toRequest.keySet());
-						Collections.shuffle(requestTypes);
-						for (Class<? extends Primitive> type : requestTypes)
-						{
-							GossipInventory inventoryProcessor = GossipHandler.this.inventoryProcessors.get(type);
-							if (inventoryProcessor == null)
-							{
-								gossipLog.error(GossipHandler.this.context.getName()+": Inventory processor for "+type+" is not found");
-								continue;
-							}
-
-							final List<ConnectedPeer> peersWithInventory = new ArrayList<ConnectedPeer>(GossipHandler.this.requestSources.keySet());
-							for (ConnectedPeer connectedPeer : peersWithInventory)
-							{
-								if (connectedPeer.getState().equals(PeerState.CONNECTED) == false)
-									continue;
-								
-								GossipPeerTask task = GossipHandler.this.requestTasks.get(connectedPeer);
-								if (task != null && task.remaining() > 0)
-									continue;
-	
-								final List<Hash> toRequest = new ArrayList<Hash>();
-								GossipHandler.this.lock.readLock().lock();
-								try
-								{
-									final Collection<Hash> requestQueue = GossipHandler.this.toRequest.get(type);
-									if (requestQueue.isEmpty() == true)
-										continue;
-									
-									for (Hash item : requestQueue)
-									{
-										if(GossipHandler.this.requestSources.containsEntry(connectedPeer, item) == false)
-											continue;
-										
-										toRequest.add(item);
-										
-										if (toRequest.size() == inventoryProcessor.requestLimit())
-											break;
-									}
-								}
-								finally
-								{
-									GossipHandler.this.lock.readLock().unlock();
-								}
-								
-								try
-								{
-									if (toRequest.isEmpty() == false)
-										GossipHandler.this.request(connectedPeer, toRequest, type);
-								}
-								catch (IOException ex)
-								{
-									gossipLog.error(GossipHandler.this.context.getName()+": Unable to send "+type+" request of "+toRequest+" items in shard group to "+connectedPeer, ex);
-								}
-							}
-						}
-						
-						// Housekeeping
-						if (System.currentTimeMillis() - this.lastHousekeeping > TimeUnit.MINUTES.toMillis(1))
-						{
-							GossipHandler.this.lock.writeLock().lock();
-							try
-							{
-								List<Class<? extends Primitive>> types = new ArrayList<Class<? extends Primitive>>(GossipHandler.this.toRequest.keySet());
-								for (Class<? extends Primitive> type : types)
-								{
-									Iterator<Hash> itemIterator = GossipHandler.this.toRequest.get(type).iterator();
-									while(itemIterator.hasNext() == true)
-									{
-										Hash item = itemIterator.next();
-
-										boolean hasSource = false;
-										for (ConnectedPeer peer : GossipHandler.this.requestSources.keySet())
-										{
-											if (peer.getState().equals(PeerState.CONNECTED) == false)
-												continue;
-											
-											if (GossipHandler.this.requestSources.containsEntry(peer, item) == false)
-												continue;
-											
-											hasSource = true;
-											break;
-										}
-										
-										if (hasSource == false)
-										{
-											itemIterator.remove();
-											gossipLog.warn(GossipHandler.this.context.getName()+": No sources available for "+item+" of type "+type);
-										}
-									}
-								}
-							}
-							finally
-							{
-								GossipHandler.this.lock.writeLock().unlock();
-							}
-							
-							this.lastHousekeeping = System.currentTimeMillis();
-						}
-						
+						doBroadcast();
 					} 
 					catch (InterruptedException e) 
 					{
@@ -483,6 +297,263 @@ public class GossipHandler implements Service
 			{
 				// TODO want to actually handle this?
 				gossipLog.fatal(GossipHandler.this.context.getName()+": Error processing gossip queue", throwable);
+			}
+		}
+		
+		private void doBroadcast() throws Throwable
+		{
+			final List<Class<? extends Primitive>> broadcastTypes = new ArrayList<>(GossipHandler.this.toBroadcast.keySet());
+			for (Class<? extends Primitive> type : broadcastTypes)
+			{
+				GossipFilter filter = GossipHandler.this.broadcastFilters.get(type);
+				if (filter != null)
+				{
+					Multimap<Long, Broadcast> toBroadcast = LinkedHashMultimap.create();
+					GossipHandler.this.lock.readLock().lock();
+					try
+					{
+						Collection<Broadcast> broadcastQueue = GossipHandler.this.toBroadcast.get(type); //.stream().collect(Collectors.toList());
+						if (broadcastQueue.isEmpty() == true)
+							continue;
+
+						for (Broadcast broadcast : broadcastQueue)
+						{
+							try
+							{
+								if (broadcast.getShardGroups().isEmpty() == true)
+									broadcast.setShardGroups(filter.filter(broadcast.getPrimitive()));
+							}
+							catch (Exception ex)
+							{
+								gossipLog.error(GossipHandler.this.context.getName()+": Filter for "+type+" failed on "+broadcast.getPrimitive(), ex);
+								continue;
+							}
+									
+							for(long shardGroup : broadcast.getShardGroups())
+								toBroadcast.put(shardGroup, broadcast);
+						}
+					}
+					finally
+					{
+						GossipHandler.this.lock.readLock().unlock();
+					}
+					
+					for (long shardGroup : toBroadcast.keySet())
+					{
+						final LinkedHashSet<Hash> toBroadcastList = new LinkedHashSet<Hash>();
+						toBroadcast.get(shardGroup).forEach(b -> toBroadcastList.add(b.primitive.getHash()));
+						while(toBroadcastList.isEmpty() == false)
+						{
+							BroadcastInventoryMessage broadcastInventoryMessage = new BroadcastInventoryMessage(toBroadcastList, 0, Math.min(BroadcastInventoryMessage.MAX_ITEMS, toBroadcastList.size()), type);
+							for (ConnectedPeer connectedPeer : GossipHandler.this.context.getNetwork().get(StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(shardGroup)))
+							{
+								if (connectedPeer.getNode().isSynced() == false)
+								{
+									if (gossipLog.hasLevel(Logging.DEBUG) == true)
+										gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) broadcast of inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
+
+									continue;
+								}
+								
+								try
+								{
+									if (gossipLog.hasLevel(Logging.DEBUG) == true)
+										gossipLog.debug(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems()+" to " + connectedPeer);
+
+									GossipHandler.this.context.getNetwork().getMessaging().send(broadcastInventoryMessage, connectedPeer);
+								}
+								catch (IOException ex)
+								{
+									gossipLog.error(GossipHandler.this.context.getName()+": Unable to send BroadcastInventoryMessage of "+toBroadcastList+" items in shard group "+shardGroup+" to "+connectedPeer, ex);
+								}
+							}
+							
+							toBroadcastList.removeAll(broadcastInventoryMessage.getItems());
+						}
+					}
+					
+					GossipHandler.this.lock.writeLock().lock();
+					try
+					{
+						for (Entry<Long, Broadcast> broadcast : toBroadcast.entries())
+							GossipHandler.this.toBroadcast.remove(type, broadcast.getValue());
+					}
+					finally
+					{
+						GossipHandler.this.lock.writeLock().unlock();
+					}
+				}
+			}
+		}
+	};
+
+	private Executable requestProcessor = new Executable()
+	{
+		private long lastHousekeeping = System.currentTimeMillis(); 
+
+		@Override
+		public void execute()
+		{
+			try 
+			{
+				while (this.isTerminated() == false)
+				{
+					try
+					{
+						synchronized(GossipHandler.this.requestProcessor)
+						{
+							GossipHandler.this.requestProcessor.wait(TimeUnit.SECONDS.toMillis(1));
+						}
+						
+						if (GossipHandler.this.context.getNode().isSynced() == false)
+						{
+							GossipHandler.this.toRequest.clear();
+							continue;
+						}
+
+						// Request
+						doRequests();
+						
+						// Housekeeping
+						doHousekeeping();
+					} 
+					catch (InterruptedException e) 
+					{
+						// DO NOTHING //
+						continue;
+					}
+				}
+			}
+			catch (Throwable throwable)
+			{
+				// TODO want to actually handle this?
+				gossipLog.fatal(GossipHandler.this.context.getName()+": Error processing gossip requests ", throwable);
+			}
+		}
+		
+		private boolean doRequests()
+		{
+			final List<Class<? extends Primitive>> requestTypes = new ArrayList<>(GossipHandler.this.toRequest.keySet());
+			Collections.shuffle(requestTypes);
+			
+			final List<ConnectedPeer> peersWithInventory = new ArrayList<ConnectedPeer>(GossipHandler.this.requestSources.keySet());
+			Iterator<ConnectedPeer> peersWithInventoryIterator = peersWithInventory.iterator();
+			while(peersWithInventoryIterator.hasNext() == true)
+			{
+				ConnectedPeer connectedPeer = peersWithInventoryIterator.next();
+				if (connectedPeer.getState().equals(PeerState.CONNECTED) == false)
+				{
+					peersWithInventoryIterator.remove();
+					continue;
+				}
+				
+				GossipPeerTask task = GossipHandler.this.requestTasks.get(connectedPeer);
+				if (task != null && task.remaining() > 0)
+				{
+					peersWithInventoryIterator.remove();
+					continue;
+				}
+			}
+			
+			if (peersWithInventory.isEmpty() == true)
+				return false;
+			
+			for (Class<? extends Primitive> type : requestTypes)
+			{
+				GossipInventory inventoryProcessor = GossipHandler.this.inventoryProcessors.get(type);
+				if (inventoryProcessor == null)
+				{
+					gossipLog.error(GossipHandler.this.context.getName()+": Inventory processor for "+type+" is not found");
+					continue;
+				}
+
+				for (ConnectedPeer connectedPeer : peersWithInventory)
+				{
+					final List<Hash> toRequest = new ArrayList<Hash>();
+					GossipHandler.this.lock.readLock().lock();
+					try
+					{
+						final Collection<Hash> requestQueue = GossipHandler.this.toRequest.get(type);
+						final Collection<Hash> requestable = GossipHandler.this.requestSources.get(connectedPeer);
+						if (requestQueue.isEmpty() == true)
+							continue;
+						
+						if (requestable.isEmpty() == true)
+							continue;
+
+						for (Hash item : requestQueue)
+						{
+							if(requestable.contains(item) == false)
+								continue;
+							
+							toRequest.add(item);
+							
+							if (toRequest.size() == inventoryProcessor.requestLimit())
+								break;
+						}
+					}
+					finally
+					{
+						GossipHandler.this.lock.readLock().unlock();
+					}
+					
+					try
+					{
+						if (toRequest.isEmpty() == false)
+							GossipHandler.this.request(connectedPeer, toRequest, type);
+					}
+					catch (IOException ex)
+					{
+						gossipLog.error(GossipHandler.this.context.getName()+": Unable to send "+type+" request of "+toRequest+" items in shard group to "+connectedPeer, ex);
+					}
+				}
+			}
+			
+			return true;
+		}
+		
+		private void doHousekeeping()
+		{
+			if (System.currentTimeMillis() - this.lastHousekeeping > TimeUnit.MINUTES.toMillis(1))
+			{
+				GossipHandler.this.lock.writeLock().lock();
+				try
+				{
+					List<Class<? extends Primitive>> types = new ArrayList<Class<? extends Primitive>>(GossipHandler.this.toRequest.keySet());
+					for (Class<? extends Primitive> type : types)
+					{
+						Iterator<Hash> itemIterator = GossipHandler.this.toRequest.get(type).iterator();
+						while(itemIterator.hasNext() == true)
+						{
+							Hash item = itemIterator.next();
+
+							boolean hasSource = false;
+							for (ConnectedPeer peer : GossipHandler.this.requestSources.keySet())
+							{
+								if (peer.getState().equals(PeerState.CONNECTED) == false)
+									continue;
+								
+								if (GossipHandler.this.requestSources.containsEntry(peer, item) == false)
+									continue;
+								
+								hasSource = true;
+								break;
+							}
+							
+							if (hasSource == false)
+							{
+								itemIterator.remove();
+								gossipLog.warn(GossipHandler.this.context.getName()+": No sources available for "+item+" of type "+type);
+							}
+						}
+					}
+				}
+				finally
+				{
+					GossipHandler.this.lock.writeLock().unlock();
+				}
+				
+				this.lastHousekeeping = System.currentTimeMillis();
 			}
 		}
 	};
@@ -759,11 +830,17 @@ public class GossipHandler implements Service
 		broadcastProcessorThread.setDaemon(true);
 		broadcastProcessorThread.setName(this.context.getName()+" Broadcast Processor");
 		broadcastProcessorThread.start();
+
+		Thread requestProcessorThread = new Thread(this.requestProcessor);
+		requestProcessorThread.setDaemon(true);
+		requestProcessorThread.setName(this.context.getName()+" Request Processor");
+		requestProcessorThread.start();
 	}
 
 	@Override
 	public void stop() throws TerminationException
 	{
+		this.requestProcessor.terminate(true);
 		this.broadcastProcessor.terminate(true);
 		this.context.getEvents().unregister(this.peerListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
@@ -947,13 +1024,16 @@ public class GossipHandler implements Service
 						this.toRequest.remove(type, i);
 					});
 					
-					GetInventoryItemsMessage getInventoryItemsMessage = new GetInventoryItemsMessage(itemsToRequest.keySet(), type); 
-					this.context.getNetwork().getMessaging().send(getInventoryItemsMessage, peer);
-					
 					gossipPeerTask = new GossipPeerTask(peer, itemsToRequest, type);
 					this.requestTasks.put(peer, gossipPeerTask);
 					Executor.getInstance().schedule(gossipPeerTask);
+
+					GetInventoryItemsMessage getInventoryItemsMessage = new GetInventoryItemsMessage(itemsToRequest.keySet(), type); 
+					this.context.getNetwork().getMessaging().send(getInventoryItemsMessage, peer);
 					
+					this.context.getMetaData().increment("gossip.requests."+type.getSimpleName().toLowerCase(), itemsToRequest.size());
+					this.context.getMetaData().increment("gossip.requests.total", itemsToRequest.size());
+
 					if (gossipLog.hasLevel(Logging.DEBUG))
 						gossipLog.debug(GossipHandler.this.context.getName()+": Requesting "+getInventoryItemsMessage.getItems().size()+" items of type "+getInventoryItemsMessage.getType()+" from "+peer);
 				}

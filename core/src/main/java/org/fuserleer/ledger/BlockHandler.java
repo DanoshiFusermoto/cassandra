@@ -55,9 +55,12 @@ import org.fuserleer.network.GossipReceiver;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
 import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messages.SyncInventoryMessage;
+import org.fuserleer.network.messaging.Message;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
+import org.fuserleer.serialization.Serialization;
+import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.MathUtils;
 
@@ -839,7 +842,6 @@ public class BlockHandler implements Service
 			List<Hash> certificateExclusions = new ArrayList<Hash>(branchCertificateExclusions);
 			final long timestamp = Time.getSystemTime();
 			final List<PendingAtom> seedAtoms = this.context.getLedger().getAtomPool().get(initialAtomTarget-Long.MIN_VALUE, initialAtomTarget, BlockRegulator.BASELINE_DISTANCE_TARGET, 8, atomExclusions);
-			final Collection<AtomCertificate> candidateCertificates = this.context.getLedger().getStateHandler().get(BlockHeader.MAX_ATOMS, certificateExclusions);
 			long nextAtomTarget = initialAtomTarget;
 			Hash stepHash = Hash.from(Hash.from(previous.getHeight()+1), previous.getHash(), this.context.getNode().getIdentity().asHash(), Hash.from(timestamp));
 
@@ -893,11 +895,30 @@ public class BlockHandler implements Service
 							// Try to build a block // TODO inefficient
 							if (blockStep >= blockTarget)
 							{
-								Block discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity(), 
-																  candidateAtoms.values().stream().map(pa -> pa.getAtom()).collect(Collectors.toList()), candidateCertificates);
+								Block discoveredBlock;
+								int blockSize = 0;
+								Collection<AtomCertificate> candidateCertificates;
+								int numCertificatesToInclude = BlockHeader.MAX_ATOMS;
+								do
+								{
+									candidateCertificates = this.context.getLedger().getStateHandler().get(numCertificatesToInclude, certificateExclusions);
+									discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity(), 
+																candidateAtoms.values().stream().map(pa -> pa.getAtom()).collect(Collectors.toList()), candidateCertificates);
 								
-								if (discoveredBlock.getHeader().getStep() != blockStep)
-									throw new IllegalStateException("Step of generated block is "+discoveredBlock.getHeader().getStep()+" expected "+blockStep);
+									if (discoveredBlock.getHeader().getStep() != blockStep)
+										throw new IllegalStateException("Step of generated block is "+discoveredBlock.getHeader().getStep()+" expected "+blockStep);
+									
+									// FIXME bit of hack to keep block sizes below message limit until compressed / threshold signatures are in
+									byte[] bytes = Serialization.getInstance().toDson(discoveredBlock, Output.WIRE);
+									blockSize = bytes.length;
+									if (blockSize > Message.MAX_MESSAGE_SIZE)
+									{
+										numCertificatesToInclude /= numCertificatesToInclude;
+										blockSize = 0;
+										blocksLog.warn(this.context.getName()+": Generated block with size "+bytes.length+" which exceeds maximum of "+Message.MAX_MESSAGE_SIZE+", adjusting included certificates");
+									}
+								}
+								while(blockSize == 0);
 								
 								if (strongestBlock == null || strongestBlock.getHeader().getInventory(InventoryType.ATOMS).size() < discoveredBlock.getHeader().getInventory(InventoryType.ATOMS).size())
 									strongestBlock = new PendingBlock(BlockHandler.this.context, discoveredBlock.getHeader(), candidateAtoms.values(), candidateCertificates);

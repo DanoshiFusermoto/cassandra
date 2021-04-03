@@ -1,5 +1,7 @@
 package org.fuserleer.crypto;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * Interface for signature and public key computation functions.
  * <p>
@@ -8,7 +10,8 @@ package org.fuserleer.crypto;
  * <p>
  * Note that all methods must be thread safe.
  */
-interface KeyHandler {
+interface KeyHandler 
+{
 	/**
 	 * Sign the specified hash with the specified private key.
 	 *

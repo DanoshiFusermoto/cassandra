@@ -39,7 +39,7 @@ class ECKeyUtils {
 	static final X9ECParameters	curve;
 	static final ECDomainParameters domain;
 	static final ECParameterSpec spec;
-
+	
 	static 
 	{
 	    Security.insertProviderAt(new BouncyCastleProvider(),1);

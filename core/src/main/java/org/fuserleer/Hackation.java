@@ -62,9 +62,10 @@ public class Hackation
 			{
 				if (Boolean.getBoolean("godix") == true)
 					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Contexts(),
+													   new org.fuserleer.console.System(),
 												   	   new org.fuserleer.console.Atoms(), new org.fuserleer.console.Spam(), new org.fuserleer.console.Twitter());
 				else
-					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Atoms());
+					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Atoms(), new org.fuserleer.console.System());
 			}
 
 		}

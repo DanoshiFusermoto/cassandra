@@ -1,6 +1,7 @@
 package org.fuserleer.console;
 
 import java.io.PrintStream;
+import java.lang.System;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;

@@ -1,5 +1,7 @@
 package org.fuserleer.crypto;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * Interface for abstract 256-bit and 512-bit cryptographic hash functions.
  * <p>
@@ -8,8 +10,8 @@ package org.fuserleer.crypto;
  * <p>
  * Note that all methods must be thread safe.
  */
-interface HashHandler {
-
+interface HashHandler 
+{
 	/**
 	 * Hashes the supplied array, returning a cryptographically secure 256-bit hash.
 	 *

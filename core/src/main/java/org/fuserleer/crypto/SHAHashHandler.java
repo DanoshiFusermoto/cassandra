@@ -24,6 +24,9 @@ class SHAHashHandler implements HashHandler {
 	@Override
 	public byte[] hash256(byte[] data, int offset, int length) 
 	{
+		CryptoUtils.hashed.incrementAndGet();
+		CryptoUtils.singles.incrementAndGet();
+
 		final MessageDigest hash256DigesterInnerLocal = hash256DigesterInner.get();
 		hash256DigesterInnerLocal.reset();
 		hash256DigesterInnerLocal.update(data, offset, length);
@@ -37,6 +40,9 @@ class SHAHashHandler implements HashHandler {
 	@Override
 	public byte[] hash256(byte[] data0, byte[] data1) 
 	{
+		CryptoUtils.hashed.incrementAndGet();
+		CryptoUtils.singles.incrementAndGet();
+
 		final MessageDigest hash256DigesterInnerLocal = hash256DigesterInner.get();
 		hash256DigesterInnerLocal.reset();
 		hash256DigesterInnerLocal.update(data0);
@@ -50,6 +56,9 @@ class SHAHashHandler implements HashHandler {
 	@Override
 	public byte[] hash512(byte[] data, int offset, int length) 
 	{
+		CryptoUtils.hashed.incrementAndGet();
+		CryptoUtils.singles.incrementAndGet();
+
 		final MessageDigest hash512DigesterInnerLocal = hash512DigesterInner.get();
 		hash512DigesterInnerLocal.reset();
 		hash512DigesterInnerLocal.update(data, offset, length);
@@ -65,6 +74,9 @@ class SHAHashHandler implements HashHandler {
 	@Override
 	public byte[] doubleHash256(byte[] data, int offset, int length) 
 	{
+		CryptoUtils.hashed.addAndGet(2);
+		CryptoUtils.doubles.incrementAndGet();
+		
 		// Here we use SHA-256(SHA-512(data)) to avoid length-extension attack
 		final MessageDigest hash256DigesterOuterLocal = hash256DigesterOuter.get();
 		final MessageDigest hash256DigesterInnerLocal = hash256DigesterInner.get();
@@ -80,6 +92,9 @@ class SHAHashHandler implements HashHandler {
 
 	@Override
 	public byte[] doubleHash256(byte[] data0, byte[] data1) {
+		CryptoUtils.hashed.addAndGet(2);
+		CryptoUtils.doubles.incrementAndGet();
+
 		// Here we use SHA-256(SHA-512(data0 || data1)) to avoid length-extension attack
 		final MessageDigest hash256DigesterOuterLocal = hash256DigesterOuter.get();
 		final MessageDigest hash256DigesterInnerLocal = hash256DigesterInner.get();
@@ -95,6 +110,9 @@ class SHAHashHandler implements HashHandler {
 	@Override
 	public byte[] doubleHash512(byte[] data, int offset, int length) 
 	{
+		CryptoUtils.hashed.addAndGet(2);
+		CryptoUtils.doubles.incrementAndGet();
+
 		// Here we use SHA-512(SHA-512(data0 || data1)) to avoid length-extension attack
 		final MessageDigest hash512DigesterInnerLocal = hash512DigesterInner.get();
 		final MessageDigest hash512DigesterOuterLocal = hash512DigesterOuter.get();

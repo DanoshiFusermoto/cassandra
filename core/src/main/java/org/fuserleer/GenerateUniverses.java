@@ -91,9 +91,9 @@ public final class GenerateUniverses
 		else
 		{
 			// TODO want to be able to specify multiple nodes to get the genesis mass as bootstrapping
-	//		String nodeKeys = this.configuration.get("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5");
+			String nodeKeys = this.commandLine.getOptionValue("node.keys", "A4CN2+9CuPoCLxf8Hahacl4vWof8eePjZiAKrZgTiRHw");
 	//		String nodeKeys = this.configuration.get("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5,A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf");
-			String nodeKeys = this.commandLine.getOptionValue("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5,A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf,AtOM21m9f9DxaR7i2zpM1HNfzazSziwJv9smNsg9JHsO,A8h8Em/ml6X5I5amEMg/Mdz0PgcBwAI3gTUTTPCcjDyU");
+	//		String nodeKeys = this.commandLine.getOptionValue("node.keys", "AihcVMYB7ndhmWCsfj0ll8U/CsUy9Kh/7Zb3J7g3dYv5,A4LUF3ravj4MwMtlYGc3+kiRDB7NcsB141xCgd8DhhBf,AtOM21m9f9DxaR7i2zpM1HNfzazSziwJv9smNsg9JHsO,A8h8Em/ml6X5I5amEMg/Mdz0PgcBwAI3gTUTTPCcjDyU");
 			StringTokenizer nodeKeysTokenizer = new StringTokenizer(nodeKeys, ",");
 			while (nodeKeysTokenizer.hasMoreTokens() == true)
 			{
@@ -165,7 +165,7 @@ public final class GenerateUniverses
 		transferParticle.sign(this.universeKey);
 
 		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
-		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 1024) * 1023), UInt256.ZERO, 0, timestamp, this.universeKey.getPublicKey(), atoms, Collections.emptyList());
+		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 4096) * 4095), UInt256.ZERO, 0, timestamp, this.universeKey.getPublicKey(), atoms, Collections.emptyList());
 		genesisBlock.getHeader().sign(this.universeKey);
 		return genesisBlock;
 	}

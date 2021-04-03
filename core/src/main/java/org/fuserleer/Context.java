@@ -146,7 +146,7 @@ public final class Context implements Service
 				contextConfig.set("network.seeds", String.join(",", seedSet));
 			}
 
-			LocalNode node = LocalNode.create(name.toLowerCase(), contextConfig);
+			LocalNode node = LocalNode.load(name.toLowerCase(), contextConfig, true);
 			for (Context context : contexts.values())
 				if (context.node.getIdentity().equals(node.getIdentity()) == true)
 					throw new IllegalStateException("Context "+name.toLowerCase()+":"+node+" already created");
@@ -268,9 +268,12 @@ public final class Context implements Service
 				
 				Node persisted = Serialization.getInstance().fromDson(nodeBytes, Node.class);
 
-				if (persisted.getIdentity().equals(Context.this.node.getIdentity()) == false) // TODO what happens if NODE_KEY has changed?  Dump loggables?  Dump DB?
-					log.warn("Node key has changed from "+persisted.getIdentity()+" to "+Context.this.node.getKey());
+				if (persisted.getIdentity().equals(Context.this.node.getIdentity()) == false) // TODO what happens if has changed?  Dump everything?
+					log.warn("Node key has changed from "+persisted.getIdentity()+" to "+Context.this.node.getIdentity());
 				
+				if (persisted.getBinding().equals(Context.this.node.getBinding()) == false) // TODO what happens if has changed?  Dump everything?
+					log.warn("Node key has changed from "+persisted.getBinding()+" to "+Context.this.node.getBinding());
+
 				Context.this.node.fromPersisted(persisted);
 			} 
 			catch (IOException ex) 

@@ -372,7 +372,7 @@ public final class StatePool implements Service
 										StateVote stateVote = new StateVote(pendingState.getKey(), pendingState.getAtom(), pendingState.getBlock(), 
 																  			input == null ? null : input.orElse(null), output == null ? null : output.orElse(null),
 																  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
-										stateVote.sign(StatePool.this.context.getNode().getKey());
+										stateVote.sign(StatePool.this.context.getNode().getIdentityKey());
 										
 										if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == true)
 										{

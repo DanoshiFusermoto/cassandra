@@ -795,7 +795,7 @@ public class BlockHandler implements Service
 					if (votePower > 0)
 					{
 						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity());
-						blockHeaderVote.sign(BlockHandler.this.context.getNode().getKey());
+						blockHeaderVote.sign(BlockHandler.this.context.getNode().getIdentityKey());
 						pendingBlock.vote(blockHeaderVote);
 						this.context.getLedger().getLedgerStore().store(blockHeaderVote);
 						this.context.getNetwork().getGossipHandler().broadcast(blockHeaderVote);
@@ -958,7 +958,12 @@ public class BlockHandler implements Service
 			if (committedBlocks.isEmpty() == false)
 			{
 				for (PendingBlock committedBlock : committedBlocks)
+				{
 					blocksLog.info(BlockHandler.this.context.getName()+": Committed block "+committedBlock.getHeader());
+					
+					// FIXME temporary for profiling BLS state certificates average size reduction on test baseline
+					this.context.getMetaData().increment("ledger.blocks.bytes", Serialization.getInstance().toDson(committedBlock.getBlock(), Output.WIRE).length);
+				}
 	
 				if (this.bestBranch != null && this.bestBranch.isEmpty() == true)
 					this.bestBranch = null;

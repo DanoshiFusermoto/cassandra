@@ -171,7 +171,7 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 		
 		try
 		{
-			byte[] bytes = Message.prepare(message, getContext().getNode().getKey());
+			byte[] bytes = Message.prepare(message, getContext().getNode().getIdentityKey());
 			if (bytes.length > Message.MAX_MESSAGE_SIZE)
 				throw new IOException("Message to "+this+" of size "+bytes.length+" is too large");
 	

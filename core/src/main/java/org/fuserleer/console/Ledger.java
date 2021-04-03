@@ -33,12 +33,13 @@ public class Ledger extends Function
 		else
 		{
 			printStream.println("Synced: "+context.getLedger().isSynced());
-			printStream.println("Identity: "+context.getNode().getIdentity());
+			printStream.println("Identity: "+context.getNode().getIdentity()+" -> "+context.getNode().getBinding().publicKey());
 			printStream.println("Current head: "+context.getLedger().getHead());
 			printStream.println("Ledger timestamp: "+Time.getLedgerTimeSeconds()+" / "+new Date(Time.getLedgerTimeMS())); // TODO only accurate for simulated time
 			printStream.println("Atoms (P/L/T): "+context.getLedger().getAtomHandler().numPending()+"/"+context.getMetaData().get("ledger.processed.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.processed.atoms.total", 0l));
 			printStream.println("Certificates (A/R/T): "+context.getMetaData().get("ledger.commits.certificates.accept", 0l)+"/"+context.getMetaData().get("ledger.commits.certificates.reject", 0l)+"/"+context.getMetaData().get("ledger.commits.certificates", 0l));
 			printStream.println("Accumulation (I/A/T): "+context.getMetaData().get("ledger.accumulator.iterations", 0l)+"/"+(context.getMetaData().get("ledger.accumulator.duration", 0l) / Math.max(1, context.getMetaData().get("ledger.accumulator.iterations", 0l)))+"/"+context.getMetaData().get("ledger.accumulator.duration", 0l));
+			printStream.println("Block size avg: "+(context.getMetaData().get("ledger.blocks.bytes", 0l)/(context.getLedger().getHead().getHeight()+1)));
 			printStream.println("Block throughput: "+context.getMetaData().get("ledger.throughput.blocks", 0l));
 			printStream.println("Atom throughput: "+context.getMetaData().get("ledger.throughput.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.throughput.atoms.total", 0l));
 			printStream.println("Commit latency: "+context.getMetaData().get("ledger.throughput.latency", 0l));

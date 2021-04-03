@@ -16,6 +16,8 @@ import org.fuserleer.utils.Numbers;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableMap;
 
+import net.consensys.mikuli.crypto.SignatureAndPublicKey;
+
 @SerializerId2("node")
 public class Node extends BasicObject
 {
@@ -51,7 +53,8 @@ public class Node extends BasicObject
 	@DsonOutput(value = {Output.API, Output.WIRE})
 	private boolean	synced;
 
-	private ECPublicKey		identity;
+	private ECPublicKey				identity;
+	private SignatureAndPublicKey	binding;
 	
 	public Node()
 	{
@@ -82,15 +85,17 @@ public class Node extends BasicObject
 		this.apiPort = node.getWebsocketPort();
 		this.websocketPort = node.getAPIPort();
 		this.identity = node.getIdentity();
+		this.binding = node.getBinding();
 		this.synced = node.isSynced();
 	}
 
-	public Node(final ECPublicKey identity, final BlockHeader head, final String agent, final int agentVersion, final int protocolVersion, 
+	public Node(final ECPublicKey identity, final SignatureAndPublicKey binding, final BlockHeader head, final String agent, final int agentVersion, final int protocolVersion, 
 				final int networkPort, final int apiPort, final int websocketPort, final boolean synced)
 	{
 		this();
 
 		this.identity = Objects.requireNonNull(identity, "Identity is null");
+		this.binding = Objects.requireNonNull(binding, "Binding is null");
 		this.agent = Objects.requireNonNull(agent, "Agent is null");
 		this.head = Objects.requireNonNull(head, "BlockHeader is null");
 		
@@ -211,6 +216,17 @@ public class Node extends BasicObject
 	public ECPublicKey getIdentity()
 	{
 		return this.identity;
+	}
+
+	public SignatureAndPublicKey getBinding()
+	{
+		return this.binding;
+	}
+
+	void setBinding(final SignatureAndPublicKey binding)
+	{
+		Objects.requireNonNull(binding, "Binding for BLS is null");
+		this.binding = binding;
 	}
 
 	// Property "agent" - 1 getter, 1 setter

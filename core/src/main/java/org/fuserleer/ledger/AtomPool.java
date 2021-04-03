@@ -164,7 +164,7 @@ public final class AtomPool implements Service
 											atomsLog.debug(AtomPool.this.context.getName()+": Voting on atom "+pendingAtom.getHash());
 	
 										AtomVote atomVote = new AtomVote(pendingAtom.getHash(), AtomPool.this.context.getNode().getIdentity());
-										atomVote.sign(AtomPool.this.context.getNode().getKey());
+										atomVote.sign(AtomPool.this.context.getNode().getIdentityKey());
 	
 										if (OperationStatus.KEYEXIST.equals(AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote)) == false)
 										{

@@ -44,7 +44,7 @@ public final class UDPPeer extends ConnectedPeer implements Polymorphic
 	{
 		try
 		{
-			byte[] bytes = Message.prepare(message, getContext().getNode().getKey());
+			byte[] bytes = Message.prepare(message, getContext().getNode().getIdentityKey());
 			if (bytes.length > 65535)
 				throw new IOException("Datagram packet to "+this+" of size "+bytes.length+" is too large");
 	

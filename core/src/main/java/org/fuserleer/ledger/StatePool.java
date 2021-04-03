@@ -934,14 +934,14 @@ public final class StatePool implements Service
 	
 	public int size()
 	{
-		this.lock.writeLock().lock();
+		this.lock.readLock().lock();
 		try
 		{
 			return this.states.size();
 		}
 		finally
 		{
-			this.lock.writeLock().unlock();
+			this.lock.readLock().unlock();
 		}
 	}
 

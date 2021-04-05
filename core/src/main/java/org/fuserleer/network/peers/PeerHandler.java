@@ -21,7 +21,6 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.executors.ScheduledExecutable;
-import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
@@ -80,7 +79,7 @@ public class PeerHandler implements Service
 		@Override
 		public int compare(Peer p1, Peer p2)
 		{
-			return compareXorDistances(p2.getNode().getIdentity(), p1.getNode().getIdentity());
+			return compareXorDistances(p2.getNode().getIdentity().getECPublicKey(), p1.getNode().getIdentity().getECPublicKey());
 		}
 		
 		public int compareXorDistances(ECPublicKey id1, ECPublicKey id2) 
@@ -241,14 +240,14 @@ public class PeerHandler implements Service
 						// Clean out aged peers with no activity
 						for (Peer peer : PeerHandler.this.context.getNetwork().getPeerStore().get(new AllPeersFilter())) 
 						{
-							if (PeerHandler.this.context.getNetwork().has(peer.getNode().getIdentity(), PeerState.CONNECTING, PeerState.CONNECTED) == false && 
+							if (PeerHandler.this.context.getNetwork().has(peer.getNode().getIdentity().getECPublicKey(), PeerState.CONNECTING, PeerState.CONNECTED) == false && 
 								(peer.getConnectingAt() > 0 && TimeUnit.MILLISECONDS.toSeconds(Time.getSystemTime() - peer.getConnectingAt()) >= PeerHandler.this.context.getConfiguration().get("network.peers.aged", 3600)) &&
 								(peer.getActiveAt() > 0 && TimeUnit.MILLISECONDS.toSeconds(Time.getSystemTime() - peer.getActiveAt()) >= PeerHandler.this.context.getConfiguration().get("network.peers.aged", 3600)))
 							{
 								if (peer.getNode() == null) 
 									PeerHandler.this.context.getNetwork().getPeerStore().delete(peer.getURI());
 								else
-									PeerHandler.this.context.getNetwork().getPeerStore().delete(peer.getNode().getIdentity());
+									PeerHandler.this.context.getNetwork().getPeerStore().delete(peer.getNode().getIdentity().getECPublicKey());
 							}
 						}
 	
@@ -272,11 +271,8 @@ public class PeerHandler implements Service
 						}
 
 						// Peer refresh
-						for (ConnectedPeer connectedPeer : PeerHandler.this.context.getNetwork().get(StandardPeerFilter.build(PeerHandler.this.context).setStates(PeerState.CONNECTED).
-							    																						setShardGroup(ShardMapper.toShardGroup(PeerHandler.this.context.getNode().getIdentity(), PeerHandler.this.context.getLedger().numShardGroups()))))
-						{
+						for (ConnectedPeer connectedPeer : PeerHandler.this.context.getNetwork().get(StandardPeerFilter.build(PeerHandler.this.context).setStates(PeerState.CONNECTED)))
 							PeerHandler.this.context.getNetwork().getMessaging().send(new GetPeersMessage(), connectedPeer);
-						}
 					}
 					catch (Throwable t)
 					{
@@ -399,7 +395,7 @@ public class PeerHandler implements Service
 				}
 	
 				if (event.getPeer().getNode() != null && 
-					PeerHandler.this.context.getNetwork().has(event.getPeer().getNode().getIdentity(), Protocol.UDP))
+					PeerHandler.this.context.getNetwork().has(event.getPeer().getNode().getIdentity().getECPublicKey(), Protocol.UDP))
 					return;
 	
 				PeerHandler.this.context.getNetwork().getPeerStore().store(event.getPeer());

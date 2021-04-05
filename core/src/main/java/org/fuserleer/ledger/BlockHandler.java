@@ -791,11 +791,11 @@ public class BlockHandler implements Service
 					BlockHandler.this.voteClock.set(pendingBlock.getHeader().getHeight());
 					BlockHandler.this.currentVote.set(pendingBlock.getHeader());
 					
-					long votePower = branch.getVotePower(pendingBlock.getHeader().getHeight(), BlockHandler.this.context.getNode().getIdentity());
+					long votePower = branch.getVotePower(pendingBlock.getHeader().getHeight(), BlockHandler.this.context.getNode().getIdentity().getECPublicKey());
 					if (votePower > 0)
 					{
-						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity());
-						blockHeaderVote.sign(BlockHandler.this.context.getNode().getIdentityKey());
+						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity().getECPublicKey());
+						blockHeaderVote.sign(BlockHandler.this.context.getNode().getECKey());
 						pendingBlock.vote(blockHeaderVote);
 						this.context.getLedger().getLedgerStore().store(blockHeaderVote);
 						this.context.getNetwork().getGossipHandler().broadcast(blockHeaderVote);
@@ -902,7 +902,7 @@ public class BlockHandler implements Service
 								do
 								{
 									candidateCertificates = this.context.getLedger().getStateHandler().get(numCertificatesToInclude, certificateExclusions);
-									discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity(), 
+									discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity().getECPublicKey(), 
 																candidateAtoms.values().stream().map(pa -> pa.getAtom()).collect(Collectors.toList()), candidateCertificates);
 								
 									if (discoveredBlock.getHeader().getStep() != blockStep)

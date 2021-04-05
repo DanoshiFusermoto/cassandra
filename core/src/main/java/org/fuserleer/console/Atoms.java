@@ -43,7 +43,7 @@ public class Atoms extends Function
 			for (int i = 0 ; i < Integer.parseInt(commandLine.getOptionValue("submit", "1")) ; i++)
 			{
 				Hash randomValue = Hash.random();
-				UniqueParticle particle = new UniqueParticle(randomValue, context.getNode().getIdentity());
+				UniqueParticle particle = new UniqueParticle(randomValue, context.getNode().getIdentity().getECPublicKey());
 				Atom atom = new Atom(particle);
 				context.getLedger().submit(atom);
 	

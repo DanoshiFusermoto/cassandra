@@ -361,7 +361,7 @@ public final class StatePool implements Service
 									}
 									
 									// Always vote locally even if no vote power so that can determine the accuracy of local execution
-									long localVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity());
+									long localVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity().getECPublicKey());
 									if (pendingAtom.thrown() == null && pendingAtom.getExecution() == null)
 										throw new IllegalStateException("Can not vote on state "+pendingState.getKey()+" when no decision made");
 									
@@ -371,8 +371,8 @@ public final class StatePool implements Service
 										Optional<UInt256> output = pendingAtom.getOutput(pendingState.getKey());
 										StateVote stateVote = new StateVote(pendingState.getKey(), pendingState.getAtom(), pendingState.getBlock(), 
 																  			input == null ? null : input.orElse(null), output == null ? null : output.orElse(null),
-																  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
-										stateVote.sign(StatePool.this.context.getNode().getIdentityKey());
+																  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity().getECPublicKey());
+										stateVote.sign(StatePool.this.context.getNode().getECKey(), StatePool.this.context.getNode().getBLSKey());
 										
 										if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == true)
 										{

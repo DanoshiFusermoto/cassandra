@@ -15,6 +15,9 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.node.NodeIdentity;
+import org.fuserleer.serialization.Serialization;
+import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.Numbers;
 
@@ -38,15 +41,16 @@ class VotePowerStore extends DatabaseStore
 	private static final Logger powerLog = Logging.getLogger("power");
 
 	private Context				context;
-	private Database 			votePowerDB;
-	private SecondaryDatabase 	voteIdentityDB;
+	private Database 			votePowerDatabase;
+	private SecondaryDatabase 	votePowerOwnersDatabase;
+	private Database 			identitiesDatabase;
 
 	private class IdentitySecondaryKeyCreator implements SecondaryKeyCreator
 	{
 		@Override
 		public boolean createSecondaryKey(SecondaryDatabase database, DatabaseEntry key, DatabaseEntry value, DatabaseEntry secondary)
 		{
-			if (database.getDatabaseName().equals("vote_identity") == true)
+			if (database.getDatabaseName().equals("vote_power_owners") == true)
 			{
 				// Get identity from value
 				secondary.setData(Arrays.copyOfRange(value.getData(), Long.BYTES, value.getSize()));
@@ -75,14 +79,20 @@ class VotePowerStore extends DatabaseStore
 			DatabaseConfig config = new DatabaseConfig();
 			config.setAllowCreate(true);
 			config.setTransactional(true);
-			this.votePowerDB = getEnvironment().openDatabase(null, "vote_powers", config);
+			this.votePowerDatabase = getEnvironment().openDatabase(null, "vote_powers", config);
 
 			SecondaryConfig identityConfig = new SecondaryConfig();
 			identityConfig.setAllowCreate(true);
 			identityConfig.setKeyCreator(new IdentitySecondaryKeyCreator());
 			identityConfig.setSortedDuplicates(true);
 			identityConfig.setTransactional(true);
-			this.voteIdentityDB = getEnvironment().openSecondaryDatabase(null, "vote_identity", this.votePowerDB, identityConfig);
+			this.votePowerOwnersDatabase = getEnvironment().openSecondaryDatabase(null, "vote_power_owners", this.votePowerDatabase, identityConfig);
+			
+			DatabaseConfig validatorConfig = new DatabaseConfig();
+			validatorConfig.setAllowCreate(true);
+			validatorConfig.setTransactional(false);
+			this.identitiesDatabase = getEnvironment().openDatabase(null, "identities", validatorConfig);
+
 		}
 		catch (Exception ex)
 		{
@@ -113,6 +123,7 @@ class VotePowerStore extends DatabaseStore
 			transaction = getEnvironment().beginTransaction(null, new TransactionConfig().setReadUncommitted(true));
 			getEnvironment().truncateDatabase(transaction, "vote_powers", false);
 			getEnvironment().truncateDatabase(transaction, "vote_identity", false);
+			getEnvironment().truncateDatabase(transaction, "identities", false);
 			transaction.commit();
 		}
 		catch (DatabaseNotFoundException dsnfex)
@@ -136,8 +147,9 @@ class VotePowerStore extends DatabaseStore
 	{
 		super.close();
 
-		if (this.voteIdentityDB != null) this.voteIdentityDB.close();
-		if (this.votePowerDB != null) this.votePowerDB.close();
+		if (this.identitiesDatabase != null) this.identitiesDatabase.close();
+		if (this.votePowerOwnersDatabase != null) this.votePowerOwnersDatabase.close();
+		if (this.votePowerDatabase != null) this.votePowerDatabase.close();
 	}
 
 	@Override
@@ -154,11 +166,11 @@ class VotePowerStore extends DatabaseStore
 		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
 	    DatabaseEntry value = new DatabaseEntry();
 	    
-		OperationStatus status = this.votePowerDB.get(null, key, value, LockMode.DEFAULT);
+		OperationStatus status = this.votePowerDatabase.get(null, key, value, LockMode.DEFAULT);
 		if(status.equals(OperationStatus.SUCCESS) == true)
 			return Longs.fromByteArray(value.getData());
 	    
-		try (SecondaryCursor cursor = this.voteIdentityDB.openCursor(null, null)) 
+		try (SecondaryCursor cursor = this.votePowerOwnersDatabase.openCursor(null, null)) 
 		{
 			status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
 			if (status.equals(OperationStatus.SUCCESS) == true)
@@ -203,14 +215,14 @@ class VotePowerStore extends DatabaseStore
 		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
 	    DatabaseEntry value = new DatabaseEntry();
 	    
-		Transaction transaction = this.votePowerDB.getEnvironment().beginTransaction(null, null);
+		Transaction transaction = this.votePowerDatabase.getEnvironment().beginTransaction(null, null);
 		try
 		{
 			long powerMaxHeight = 0;
 			long powerAtHeight = 0;
 			OperationStatus status;
 
-			try (SecondaryCursor cursor = this.voteIdentityDB.openCursor(transaction, null)) 
+			try (SecondaryCursor cursor = this.votePowerOwnersDatabase.openCursor(transaction, null)) 
 			{
 				status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -239,7 +251,7 @@ class VotePowerStore extends DatabaseStore
 			}
 			
 			key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
-			status = this.votePowerDB.get(transaction, key, value, LockMode.DEFAULT);
+			status = this.votePowerDatabase.get(transaction, key, value, LockMode.DEFAULT);
 			if(status.equals(OperationStatus.SUCCESS) == true)
 				powerAtHeight = Longs.fromByteArray(value.getData());
 			
@@ -249,7 +261,7 @@ class VotePowerStore extends DatabaseStore
 				{
 					key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
 					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.getBytes()));
-				    status = this.votePowerDB.put(transaction, key, value);
+				    status = this.votePowerDatabase.put(transaction, key, value);
 					if (status.equals(OperationStatus.SUCCESS) == false)
 						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
 				}	
@@ -258,7 +270,7 @@ class VotePowerStore extends DatabaseStore
 			for (long h = height ; h <= Math.max(height, powerMaxHeight) ; h++)
 			{
 				key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
-			    status = this.votePowerDB.get(transaction, key, value, LockMode.READ_UNCOMMITTED);
+			    status = this.votePowerDatabase.get(transaction, key, value, LockMode.READ_UNCOMMITTED);
 
 			    long current = 0;
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -268,7 +280,7 @@ class VotePowerStore extends DatabaseStore
 				
 				long incremented = current+1;
 				value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(incremented), identity.getBytes()));
-				status = this.votePowerDB.put(transaction, key, value);
+				status = this.votePowerDatabase.put(transaction, key, value);
 				if (status.equals(OperationStatus.SUCCESS) == false)
 					throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
 			}
@@ -303,14 +315,14 @@ class VotePowerStore extends DatabaseStore
 		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
 	    DatabaseEntry value = new DatabaseEntry();
 	    
-		Transaction transaction = this.votePowerDB.getEnvironment().beginTransaction(null, null);
+		Transaction transaction = this.votePowerDatabase.getEnvironment().beginTransaction(null, null);
 		try
 		{
 			long powerMaxHeight = 0;
 			long powerAtHeight = 0;
 			OperationStatus status;
 
-			try (SecondaryCursor cursor = this.voteIdentityDB.openCursor(transaction, null)) 
+			try (SecondaryCursor cursor = this.votePowerOwnersDatabase.openCursor(transaction, null)) 
 			{
 				status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -339,7 +351,7 @@ class VotePowerStore extends DatabaseStore
 			}
 			
 			key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
-			status = this.votePowerDB.get(transaction, key, value, LockMode.DEFAULT);
+			status = this.votePowerDatabase.get(transaction, key, value, LockMode.DEFAULT);
 			if(status.equals(OperationStatus.SUCCESS) == true)
 				powerAtHeight = Longs.fromByteArray(value.getData());
 			
@@ -355,7 +367,7 @@ class VotePowerStore extends DatabaseStore
 				{
 					key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
 					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.getBytes()));
-				    status = this.votePowerDB.put(transaction, key, value);
+				    status = this.votePowerDatabase.put(transaction, key, value);
 					if (status.equals(OperationStatus.SUCCESS) == false)
 						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
 				}	
@@ -364,7 +376,7 @@ class VotePowerStore extends DatabaseStore
 			for (long h = height ; h <= Math.max(height, powerMaxHeight) ; h++)
 			{
 				key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
-			    status = this.votePowerDB.get(transaction, key, value, LockMode.READ_UNCOMMITTED);
+			    status = this.votePowerDatabase.get(transaction, key, value, LockMode.READ_UNCOMMITTED);
 
 			    long current = 0;
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -375,7 +387,7 @@ class VotePowerStore extends DatabaseStore
 				if (current < power)
 				{
 					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(power), identity.getBytes()));
-					status = this.votePowerDB.put(transaction, key, value);
+					status = this.votePowerDatabase.put(transaction, key, value);
 					if (status.equals(OperationStatus.SUCCESS) == false)
 						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
 				}
@@ -391,13 +403,13 @@ class VotePowerStore extends DatabaseStore
 		}
 	}
 
-	public Collection<ECPublicKey> getIdentities() throws DatabaseException
+	public Collection<ECPublicKey> getWithPower() throws DatabaseException
 	{
 		Set<ECPublicKey> identities = new HashSet<ECPublicKey>();
 		DatabaseEntry key = new DatabaseEntry();
 	    DatabaseEntry value = new DatabaseEntry();
 	    
-		try (Cursor cursor = this.voteIdentityDB.openCursor(null, null)) 
+		try (Cursor cursor = this.votePowerOwnersDatabase.openCursor(null, null)) 
 		{
 			OperationStatus status = cursor.getFirst(key, value, LockMode.DEFAULT);
 			while (status.equals(OperationStatus.SUCCESS) == true)
@@ -407,6 +419,67 @@ class VotePowerStore extends DatabaseStore
 			}
 			
 			return identities;
+		}
+		catch (Exception e)
+		{
+			throw new DatabaseException(e);
+		}
+	}
+	
+	public Collection<NodeIdentity> getIdentities() throws DatabaseException
+	{
+		Set<NodeIdentity> identities = new HashSet<NodeIdentity>();
+		DatabaseEntry key = new DatabaseEntry();
+	    DatabaseEntry value = new DatabaseEntry();
+	    
+		try (Cursor cursor = this.identitiesDatabase.openCursor(null, null)) 
+		{
+			OperationStatus status = cursor.getFirst(key, value, LockMode.DEFAULT);
+			while (status.equals(OperationStatus.SUCCESS) == true)
+			{
+				identities.add(Serialization.getInstance().fromDson(value.getData(), NodeIdentity.class));
+				status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
+			}
+			
+			return identities;
+		}
+		catch (Exception e)
+		{
+			throw new DatabaseException(e);
+		}
+	}
+
+	// FIXME need to handle cases where the identity is known but the binding has changed
+	//		 attacker could present a changed binding to a single node, and BLS signatures
+	//		 will then fail ... causing that node to be unable to sync, or perform excessive
+	//		 work to resolve the issue.
+	public OperationStatus store(final NodeIdentity identity) throws DatabaseException
+	{
+		Objects.requireNonNull(identity, "Identity is null");
+		
+		try
+        {
+			DatabaseEntry key = new DatabaseEntry(identity.getECPublicKey().getBytes());
+			byte[] bytes = Serialization.getInstance().toDson(identity, Output.PERSIST);
+			DatabaseEntry value = new DatabaseEntry(bytes);
+			OperationStatus status = this.identitiesDatabase.putNoOverwrite(null, key, value);
+			
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    {
+		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    	{
+		    		powerLog.warn(this.context.getName()+": Identity "+identity+" is already present");
+		    		return status;
+		    	}
+		    	else 
+		    		throw new DatabaseException("Failed to store identity "+identity+" due to "+status.name());
+		    }
+		    
+		    return status;
+		}
+		catch (DatabaseException dbex)
+		{
+			throw dbex;
 		}
 		catch (Exception e)
 		{

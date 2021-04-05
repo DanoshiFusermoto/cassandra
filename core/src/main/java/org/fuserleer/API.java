@@ -423,7 +423,7 @@ public class API implements Service
 				try
 				{
 					Hash randomValue = Hash.random();
-					UniqueParticle particle = new UniqueParticle(randomValue, API.this.context.getNode().getIdentity());
+					UniqueParticle particle = new UniqueParticle(randomValue, API.this.context.getNode().getIdentity().getECPublicKey());
 					Atom atom = new Atom(particle);
 					
 					API.this.context.getLedger().submit(atom);

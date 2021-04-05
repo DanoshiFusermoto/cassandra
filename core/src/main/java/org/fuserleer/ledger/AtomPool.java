@@ -157,14 +157,14 @@ public final class AtomPool implements Service
 								try
 								{
 									// Dont vote if we have no power!
-									long localVotePower = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), AtomPool.this.context.getNode().getIdentity());
+									long localVotePower = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), AtomPool.this.context.getNode().getIdentity().getECPublicKey());
 									if (localVotePower > 0)
 									{
 										if (atomsLog.hasLevel(Logging.DEBUG))
 											atomsLog.debug(AtomPool.this.context.getName()+": Voting on atom "+pendingAtom.getHash());
 	
-										AtomVote atomVote = new AtomVote(pendingAtom.getHash(), AtomPool.this.context.getNode().getIdentity());
-										atomVote.sign(AtomPool.this.context.getNode().getIdentityKey());
+										AtomVote atomVote = new AtomVote(pendingAtom.getHash(), AtomPool.this.context.getNode().getIdentity().getECPublicKey());
+										atomVote.sign(AtomPool.this.context.getNode().getECKey());
 	
 										if (OperationStatus.KEYEXIST.equals(AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote)) == false)
 										{

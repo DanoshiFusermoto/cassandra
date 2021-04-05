@@ -249,7 +249,7 @@ public class PeerStore extends DatabaseStore
 		try
         {
 			// Ensure we only allow ONE instance of an identity //
-			Peer existingPeer = get(transaction, peer.getNode().getIdentity());
+			Peer existingPeer = get(transaction, peer.getNode().getIdentity().getECPublicKey());
 			if (existingPeer != null && existingPeer.getURI().equals(peer.getURI()) == false)
 			{
 				DatabaseEntry key = new DatabaseEntry(peer.getNode().getIdentity().asHash().toByteArray());

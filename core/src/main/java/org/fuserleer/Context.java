@@ -268,11 +268,11 @@ public final class Context implements Service
 				
 				Node persisted = Serialization.getInstance().fromDson(nodeBytes, Node.class);
 
-				if (persisted.getIdentity().equals(Context.this.node.getIdentity()) == false) // TODO what happens if has changed?  Dump everything?
-					log.warn("Node key has changed from "+persisted.getIdentity()+" to "+Context.this.node.getIdentity());
+				if (persisted.getIdentity().getECPublicKey().equals(Context.this.node.getIdentity().getECPublicKey()) == false) // TODO what happens if has changed?  Dump everything?
+					log.warn("Node key has changed from "+persisted.getIdentity().getECPublicKey()+" to "+Context.this.node.getIdentity().getECPublicKey());
 				
-				if (persisted.getBinding().equals(Context.this.node.getBinding()) == false) // TODO what happens if has changed?  Dump everything?
-					log.warn("Node key has changed from "+persisted.getBinding()+" to "+Context.this.node.getBinding());
+				if (persisted.getIdentity().getBLSPublicKey().equals(Context.this.node.getIdentity().getBLSPublicKey()) == false) // TODO what happens if has changed?  Dump everything?
+					log.warn("Node key has changed from "+persisted.getIdentity().getBLSPublicKey()+" to "+Context.this.node.getIdentity().getBLSPublicKey());
 
 				Context.this.node.fromPersisted(persisted);
 			} 

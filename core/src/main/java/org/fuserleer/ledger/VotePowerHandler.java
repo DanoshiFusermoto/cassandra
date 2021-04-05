@@ -6,6 +6,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.Objects;
 import java.util.Set;
@@ -17,20 +19,40 @@ import org.fuserleer.collections.LRUCacheMap;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.database.DatabaseException;
+import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
+import org.fuserleer.executors.Executor;
+import org.fuserleer.executors.ScheduledExecutable;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
+import org.fuserleer.ledger.messages.IdentitiesMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.messages.GetPeersMessage;
+import org.fuserleer.network.messages.PeerPingMessage;
+import org.fuserleer.network.messaging.MessageProcessor;
+import org.fuserleer.network.peers.ConnectedPeer;
+import org.fuserleer.network.peers.Peer;
+import org.fuserleer.network.peers.PeerHandler;
+import org.fuserleer.network.peers.PeerState;
+import org.fuserleer.network.peers.events.PeerConnectedEvent;
+import org.fuserleer.network.peers.filters.AllPeersFilter;
+import org.fuserleer.network.peers.filters.StandardPeerFilter;
+import org.fuserleer.node.NodeIdentity;
+import org.fuserleer.time.Time;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.Numbers;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.eventbus.Subscribe;
+import com.sleepycat.je.OperationStatus;
+
+import net.consensys.mikuli.crypto.BLSPublicKey;
+import net.consensys.mikuli.crypto.SignatureAndPublicKey;
 
 public final class VotePowerHandler implements Service
 {
@@ -44,12 +66,16 @@ public final class VotePowerHandler implements Service
 	private final Map<Long, VotePowerBloom> votePowerBloomCache;
 
 	/**
-	 * Holds a cache of the currently known identities.
+	 * Holds a cache of the currently known identities and those with power.
+	 * 
+	 * Two are held as we may know that an identity has power, but do not yet know the details of the identity.
 	 * 
 	 * TODO not a problem now, but may get large in super sized networks (1M+ validators), perhaps hold a subset 
 	 */
-	private final Set<ECPublicKey> identityCache;
+	private final Set<ECPublicKey> ownedPowerCache;
+	private final Set<NodeIdentity> identityCache;
 	
+	private Future<?> houseKeepingTaskFuture = null;
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
 	VotePowerHandler(final Context context)
@@ -57,7 +83,8 @@ public final class VotePowerHandler implements Service
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.votePowerBloomCache = Collections.synchronizedMap(new LRUCacheMap<Long, VotePowerBloom>(this.context.getConfiguration().get("ledger.vote.bloom.cache", 1<<10)));
 		this.votePowerStore = new VotePowerStore(context);
-		this.identityCache = Collections.synchronizedSet(new HashSet<ECPublicKey>());
+		this.ownedPowerCache = Collections.synchronizedSet(new HashSet<ECPublicKey>());
+		this.identityCache = Collections.synchronizedSet(new HashSet<NodeIdentity>());
 	}
 	
 	@Override
@@ -67,8 +94,8 @@ public final class VotePowerHandler implements Service
 		{
 			this.votePowerStore.start();
 			
-			Collection<ECPublicKey> identities = this.votePowerStore.getIdentities();
-			if (identities.isEmpty() == true)
+			Collection<ECPublicKey> powerOwners = this.votePowerStore.getWithPower();
+			if (powerOwners.isEmpty() == true)
 			{
 				long height = 0;
 				long power = 1;
@@ -81,7 +108,54 @@ public final class VotePowerHandler implements Service
 				}
 			}
 			
+			this.votePowerStore.store(this.context.getNode().getIdentity());
+			
+			this.context.getNetwork().getMessaging().register(IdentitiesMessage.class, this.getClass(), new MessageProcessor<IdentitiesMessage> ()
+			{
+				@Override
+				public void process (IdentitiesMessage identitiesMessage, ConnectedPeer peer)
+				{
+					for (NodeIdentity identity : identitiesMessage.getIdentities())
+					{
+						try
+						{
+							if (VotePowerHandler.this.votePowerStore.store(identity) == OperationStatus.SUCCESS)
+								powerLog.info(VotePowerHandler.this.context.getName()+": Stored identity "+identity);
+						}
+						catch(IOException ioex)
+						{
+							powerLog.error(VotePowerHandler.this.context.getName()+": Failed to store identity "+identity, ioex);
+						}
+					}
+					
+					identitiesAreDirty();
+				}
+			});
+			
+	        // IDENTITIES HOUSEKEEPING //
+			this.houseKeepingTaskFuture = Executor.getInstance().scheduleWithFixedDelay(new ScheduledExecutable(60, this.context.getConfiguration().get("network.peers.broadcast.interval", 30), TimeUnit.SECONDS)
+			{
+				@Override
+				public void execute()
+				{
+ 					try
+					{
+						// Identities refresh to all connected peers
+ 						IdentitiesMessage identitiesMessage = new IdentitiesMessage();
+ 						identitiesMessage.setIdentities(getIdentities());
+						for (ConnectedPeer connectedPeer : VotePowerHandler.this.context.getNetwork().get(StandardPeerFilter.build(VotePowerHandler.this.context).setStates(PeerState.CONNECTED)))
+							VotePowerHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, connectedPeer);
+					}
+					catch (Throwable t)
+					{
+						powerLog.error(VotePowerHandler.this.context.getName()+": Identities update failed", t);
+					}
+				}
+			});
+
+			
 			this.context.getEvents().register(this.syncBlockListener);
+			this.context.getEvents().register(this.peerListener);
 		}
 		catch (Exception ex)
 		{
@@ -92,8 +166,14 @@ public final class VotePowerHandler implements Service
 	@Override
 	public void stop() throws TerminationException
 	{
+		if (this.houseKeepingTaskFuture != null)
+			this.houseKeepingTaskFuture.cancel(false);
+
+		this.context.getEvents().unregister(this.peerListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
+		this.context.getNetwork().getMessaging().deregisterAll(getClass());
 		this.votePowerStore.stop();
+		this.ownedPowerCache.clear();
 		this.identityCache.clear();
 	}
 	
@@ -104,7 +184,25 @@ public final class VotePowerHandler implements Service
 	
 	// NOTE Can use the identity cache directly providing that access outside of this function
 	// wraps the returned set in a lock or a sync block
-	private Set<ECPublicKey> getIdentities() throws DatabaseException
+	private Set<ECPublicKey> getPowerOwners() throws DatabaseException
+	{
+		synchronized(this.ownedPowerCache)
+		{
+			if (this.ownedPowerCache.isEmpty())
+				this.ownedPowerCache.addAll(this.votePowerStore.getWithPower());
+			
+			return this.ownedPowerCache;
+		}
+	}
+	
+	private void powerOwnersCacheIsDirty()
+	{
+		this.ownedPowerCache.clear();
+	}
+	
+	// NOTE Can use the identity cache directly providing that access outside of this function
+	// wraps the returned set in a lock or a sync block
+	private Set<NodeIdentity> getIdentities() throws DatabaseException
 	{
 		synchronized(this.identityCache)
 		{
@@ -120,15 +218,15 @@ public final class VotePowerHandler implements Service
 		this.identityCache.clear();
 	}
 
-	public long getVotePower(final long height, final ECPublicKey identity) throws DatabaseException
+	public long getVotePower(final long height, final ECPublicKey owner) throws DatabaseException
 	{
-		Objects.requireNonNull(identity, "Identity is null");
+		Objects.requireNonNull(owner, "Identity is null");
 		Numbers.isNegative(height, "Height is negative");
 
 		this.lock.readLock().lock();
 		try
 		{
-			return this.votePowerStore.get(identity, height);
+			return this.votePowerStore.get(owner, height);
 		}
 		finally
 		{
@@ -142,12 +240,12 @@ public final class VotePowerHandler implements Service
 		try
 		{
 			long totalVotePower = 0;
-			for (ECPublicKey identity : getIdentities())
+			for (ECPublicKey powerOwner : getPowerOwners())
 			{
-				if (shardGroup != ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height)))
+				if (shardGroup != ShardMapper.toShardGroup(powerOwner, this.context.getLedger().numShardGroups(height)))
 					continue;
 
-				totalVotePower += getVotePower(height, identity); 
+				totalVotePower += getVotePower(height, powerOwner); 
 			}
 			return totalVotePower;
 		}
@@ -165,12 +263,12 @@ public final class VotePowerHandler implements Service
 		try
 		{
 			long totalVotePower = 0;
-			for (ECPublicKey identity : getIdentities())
+			for (ECPublicKey powerOwner : getPowerOwners())
 			{
-				if (shardGroups.contains(ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height))) == false)
+				if (shardGroups.contains(ShardMapper.toShardGroup(powerOwner, this.context.getLedger().numShardGroups(height))) == false)
 					continue;
 
-				totalVotePower += getVotePower(height, identity); 
+				totalVotePower += getVotePower(height, powerOwner); 
 			}
 			return totalVotePower;
 		}
@@ -195,19 +293,19 @@ public final class VotePowerHandler implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			final Collection<ECPublicKey> allIdentities = getIdentities();
-			final Collection<ECPublicKey> shardGroupIdentities = new HashSet<ECPublicKey>();
-			for (ECPublicKey identity : allIdentities)
+			final Collection<ECPublicKey> allPowerOwners = getPowerOwners();
+			final Collection<ECPublicKey> shardGroupPowerOwners = new HashSet<ECPublicKey>();
+			for (ECPublicKey powerOwner : allPowerOwners)
 			{
-				if (shardGroup != ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height)))
+				if (shardGroup != ShardMapper.toShardGroup(powerOwner, this.context.getLedger().numShardGroups(height)))
 					continue;
 
-				shardGroupIdentities.add(identity);
+				shardGroupPowerOwners.add(powerOwner);
 			}
 			
-			votePowerBloom = new VotePowerBloom(block, shardGroup, shardGroupIdentities.size());
-			for (ECPublicKey identity : shardGroupIdentities)
-				votePowerBloom.add(identity, getVotePower(height-1, identity));
+			votePowerBloom = new VotePowerBloom(block, shardGroup, shardGroupPowerOwners.size());
+			for (ECPublicKey powerOwner : shardGroupPowerOwners)
+				votePowerBloom.add(powerOwner, getVotePower(height-1, powerOwner));
 		}
 		finally
 		{
@@ -222,16 +320,16 @@ public final class VotePowerHandler implements Service
 		return votePowerBloom;
 	}
 
-	public long getVotePower(final long height, final Set<ECPublicKey> identities) throws DatabaseException
+	public long getVotePower(final long height, final Set<ECPublicKey> owners) throws DatabaseException
 	{
-		Objects.requireNonNull(identities, "Identities is null");
+		Objects.requireNonNull(owners, "Identities is null");
 
 		this.lock.readLock().lock();
 		try
 		{
 			long votePower = 0l;
-			for (ECPublicKey identity : getIdentities())
-				votePower += getVotePower(height, identity);
+			for (ECPublicKey powerOwner : getPowerOwners())
+				votePower += getVotePower(height, powerOwner);
 			
 			return votePower;
 		}
@@ -253,14 +351,14 @@ public final class VotePowerHandler implements Service
 		return twoFPlusOne(getTotalVotePower(height, shardGroups));
 	}
 	
-	void setVotePower(final long height, final ECPublicKey identity, final long power) throws DatabaseException
+	void setVotePower(final long height, final ECPublicKey owner, final long power) throws DatabaseException
 	{
-		Objects.requireNonNull(identity, "Identity is null");
+		Objects.requireNonNull(owner, "Owner is null");
 
 		this.lock.writeLock().lock();
 		try
 		{
-			this.votePowerStore.set(identity, height, power);
+			this.votePowerStore.set(owner, height, power);
 		}			
 		finally
 		{
@@ -268,16 +366,16 @@ public final class VotePowerHandler implements Service
 		}
 	}
 
-	long incrementVotePower(final long height, final ECPublicKey identity) throws DatabaseException
+	long incrementVotePower(final long height, final ECPublicKey owner) throws DatabaseException
 	{
-		Objects.requireNonNull(identity, "Identity is null");
+		Objects.requireNonNull(owner, "Power owner is null");
 
 		this.lock.writeLock().lock();
 		try
 		{
-			this.votePowerStore.increment(identity, height);
-			long power = this.votePowerStore.get(identity, height);
-			powerLog.info(this.context.getName()+": Incrementing vote power for "+identity+":"+ShardMapper.toShardGroup(identity, this.context.getLedger().numShardGroups(height))+" to "+power+" @ "+height);
+			this.votePowerStore.increment(owner, height);
+			long power = this.votePowerStore.get(owner, height);
+			powerLog.info(this.context.getName()+": Incrementing vote power for "+owner+":"+ShardMapper.toShardGroup(owner, this.context.getLedger().numShardGroups(height))+" to "+power+" @ "+height);
 			return power;
 		}			
 		finally
@@ -300,7 +398,7 @@ public final class VotePowerHandler implements Service
 		this.lock.writeLock().lock();
 		try
 		{
-			identitiesAreDirty();
+			powerOwnersCacheIsDirty();
 			
 			incrementVotePower(block.getHeader().getHeight(), block.getHeader().getOwner());
 
@@ -361,6 +459,38 @@ public final class VotePowerHandler implements Service
 		}
 	}
 	
+	// PEER LISTENER //
+	private EventListener peerListener = new EventListener()
+	{
+		@Subscribe
+		public void on(PeerConnectedEvent peerConnectedEvent) 
+		{
+			try
+			{
+				if (VotePowerHandler.this.votePowerStore.store(peerConnectedEvent.getPeer().getNode().getIdentity()).equals(OperationStatus.SUCCESS) == true)
+				{
+					powerLog.info(VotePowerHandler.this.context.getName()+": Stored identity "+peerConnectedEvent.getPeer().getNode().getIdentity());
+					VotePowerHandler.this.identityCache.add(peerConnectedEvent.getPeer().getNode().getIdentity());
+				}
+			}
+			catch (IOException ioex)
+			{
+				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to store node identity "+peerConnectedEvent.getPeer().getNode().getIdentity(), ioex);
+			}
+			
+			try
+			{
+				IdentitiesMessage identitiesMessage = new IdentitiesMessage();
+				identitiesMessage.setIdentities(getIdentities());
+				VotePowerHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, peerConnectedEvent.getPeer());
+			}
+			catch (IOException ioex)
+			{
+				powerLog.error(VotePowerHandler.this.context.getName()+": Failed to send node identities to "+peerConnectedEvent.getPeer(), ioex);
+			}
+		}
+	};
+
 	// BLOCK LISTENER //
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{

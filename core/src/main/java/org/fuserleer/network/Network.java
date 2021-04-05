@@ -178,7 +178,7 @@ public final class Network implements Service
 							NodeMessage nodeMessage = (NodeMessage)message;
 							URI uri = Agent.getURI(datagramPacket.getAddress().getHostAddress(), nodeMessage.getNode().getNetworkPort());
 							
-							Peer persistedPeer = Network.this.peerStore.get(nodeMessage.getNode().getIdentity());
+							Peer persistedPeer = Network.this.peerStore.get(nodeMessage.getNode().getIdentity().getECPublicKey());
 							if (persistedPeer == null)
 								persistedPeer = new Peer(uri, nodeMessage.getNode(), Protocol.UDP);
 							
@@ -218,13 +218,13 @@ public final class Network implements Service
     			Network.this.connecting.lock();
 
     			URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), node.getNetworkPort());
-				if (Network.this.has(node.getIdentity(), Protocol.TCP) == true)
+				if (Network.this.has(node.getIdentity().getECPublicKey(), Protocol.TCP) == true)
 				{
 					networkLog.error(Network.this.context.getName()+": "+node.getIdentity()+" already has a socked assigned");
 					return null;
 				}
 
-				Peer persistedPeer = Network.this.peerStore.get(node.getIdentity());
+				Peer persistedPeer = Network.this.peerStore.get(node.getIdentity().getECPublicKey());
 				ConnectedPeer connectedPeer = new TCPPeer(Network.this.context, socket, uri, Direction.INBOUND, persistedPeer);
 				connectedPeer.connect();
     			return (T) connectedPeer;
@@ -265,7 +265,7 @@ public final class Network implements Service
 						}
 						
 						NodeMessage nodeMessage = (NodeMessage)message;
-						if (nodeMessage.verify(nodeMessage.getNode().getIdentity()) == false)
+						if (nodeMessage.verify(nodeMessage.getNode().getIdentity().getECPublicKey()) == false)
 						{
 							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" NodeMessage failed verification");
 							socket.close();
@@ -520,7 +520,7 @@ public final class Network implements Service
 						{
 							for (Peer preferredPeer : preferred)
 							{
-								if (Network.this.get(preferredPeer.getNode().getIdentity(), Protocol.TCP) != null)
+								if (Network.this.get(preferredPeer.getNode().getIdentity().getECPublicKey(), Protocol.TCP) != null)
 									continue;
 								
 								Network.this.connecting.lock();

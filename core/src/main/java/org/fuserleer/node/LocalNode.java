@@ -9,6 +9,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.attribute.PosixFilePermission;
+import java.security.interfaces.ECPrivateKey;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 
@@ -42,7 +44,7 @@ public final class LocalNode extends Node implements Polymorphic
 	{
 		try
 		{
-			ECKeyPair identityKey;
+			ECKeyPair ECKey;
 			BLSKeyPair BLSKey;
 			SignatureAndPublicKey binding;
 	
@@ -67,15 +69,13 @@ public final class LocalNode extends Node implements Polymorphic
 					{
 						// probably windows
 					}
-	
-					identityKey = new ECKeyPair();
+
+					// TODO make this a proper KDF
 					BLSKey = new BLSKeyPair();
-					binding = BLS12381.sign(BLSKey, identityKey.getPublicKey().getBytes());
+					ECKey = new ECKeyPair(Arrays.copyOf(BLSKey.privateKey().toByteArray(), ECKeyPair.BYTES));
+					binding = BLS12381.sign(BLSKey, ECKey.getPublicKey().getBytes());
 					
 					DataOutputStream dos = new DataOutputStream(io);
-					dos.writeInt(identityKey.getPrivateKey().length);
-					dos.write(identityKey.getPrivateKey());
-					
 					dos.writeInt(BLSKey.privateKey().toByteArray().length);
 					dos.write(BLSKey.privateKey().toByteArray());
 					
@@ -91,13 +91,10 @@ public final class LocalNode extends Node implements Polymorphic
 				try (FileInputStream io = new FileInputStream(file)) 
 				{
 					DataInputStream dis = new DataInputStream(io);
-					byte[] identityKeyPairBytes = new byte[dis.readInt()];
-					dis.readFully(identityKeyPairBytes);
-					identityKey = new ECKeyPair(identityKeyPairBytes);
-					
-					byte[] BLSKeyPairBytes = new byte[dis.readInt()];
-					dis.readFully(BLSKeyPairBytes);
-					BLSKey = new BLSKeyPair(BLSKeyPairBytes);
+					byte[] privateKeyBytes = new byte[dis.readInt()];
+					dis.readFully(privateKeyBytes);
+					ECKey = new ECKeyPair(Arrays.copyOf(privateKeyBytes, ECKeyPair.BYTES));
+					BLSKey = new BLSKeyPair(privateKeyBytes);
 	
 					byte[] bindingPubKeyBytes = new byte[dis.readInt()];
 					dis.readFully(bindingPubKeyBytes);
@@ -105,12 +102,12 @@ public final class LocalNode extends Node implements Polymorphic
 					dis.readFully(bindingSignatureBytes);
 					binding = new SignatureAndPublicKey(BLSSignature.from(bindingSignatureBytes), BLSPublicKey.from(bindingPubKeyBytes));
 					
-					if (BLS12381.verify(binding, identityKey.getPublicKey().getBytes()) == false)
+					if (BLS12381.verify(binding, ECKey.getPublicKey().getBytes()) == false)
 						throw new CryptoException("BLS binding verification failed");
 				}
 			}
 			
-			return new LocalNode(identityKey, BLSKey, binding,
+			return new LocalNode(ECKey, BLSKey, binding.signature(),
 								 configuration.get("network.port", Universe.getDefault().getPort()), 
 								 configuration.get("api.port", API.DEFAULT_PORT),
 								 configuration.get("websocket.port", WebSocketImpl.DEFAULT_PORT),
@@ -154,32 +151,32 @@ public final class LocalNode extends Node implements Polymorphic
 	}
 
 	
-	private ECKeyPair identityKey;
+	private ECKeyPair ECKey;
 	private BLSKeyPair BLSKey;
 	
-	public LocalNode(ECKeyPair identityKey, BLSKeyPair BLSKey, SignatureAndPublicKey binding, int networkPort, int apiPort, int websocketPort, BlockHeader block)
+	public LocalNode(ECKeyPair ECKey, BLSKeyPair BLSKey, BLSSignature binding, int networkPort, int apiPort, int websocketPort, BlockHeader block)
 	{
-		this(identityKey, BLSKey, binding, networkPort, apiPort, websocketPort, block, Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
+		this(ECKey, BLSKey, binding, networkPort, apiPort, websocketPort, block, Agent.AGENT, Agent.AGENT_VERSION, Agent.PROTOCOL_VERSION);
 	}
 
-	public LocalNode(ECKeyPair identityKey, BLSKeyPair BLSKey, SignatureAndPublicKey binding, int networkPort, int apiPort, int websocketPort, BlockHeader block, String agent, int agentVersion, int protocolVersion)
+	public LocalNode(ECKeyPair ECKey, BLSKeyPair BLSKey, BLSSignature binding, int networkPort, int apiPort, int websocketPort, BlockHeader block, String agent, int agentVersion, int protocolVersion)
 	{
-		super(Objects.requireNonNull(identityKey, "Key is null").getPublicKey(), binding, block, agent, agentVersion, protocolVersion, networkPort, websocketPort, apiPort, false);
+		super(new NodeIdentity(Objects.requireNonNull(ECKey, "Key is null").getPublicKey(), Objects.requireNonNull(BLSKey, "Key is null").publicKey(), binding), 
+				 			   block, agent, agentVersion, protocolVersion, networkPort, websocketPort, apiPort, false);
 		
-		this.identityKey = identityKey;
+		this.ECKey = ECKey;
 		this.BLSKey = BLSKey;
 	}
 
 	public void fromPersisted(Node persisted)
 	{
 		Objects.requireNonNull(persisted, "Persisted local node is null");
-		if (persisted.getIdentity().equals(this.identityKey.getPublicKey()) == false)
-			throw new IllegalArgumentException("Persisted node identity key does not match "+this.identityKey.getPublicKey());
+		if (persisted.getIdentity().getECPublicKey().equals(this.ECKey.getPublicKey()) == false)
+			throw new IllegalArgumentException("Persisted node identity key does not match "+this.ECKey.getPublicKey());
 		
-		if (persisted.getBinding().publicKey().equals(this.BLSKey.publicKey()) == false)
-			throw new IllegalArgumentException("Persisted node BLS key does not match "+this.getBinding().publicKey());
+		if (persisted.getIdentity().getBLSPublicKey().equals(this.BLSKey.publicKey()) == false)
+			throw new IllegalArgumentException("Persisted node BLS key does not match "+this.BLSKey.publicKey());
 
-		setBinding(persisted.getBinding());
 		setHead(persisted.getHead());
 		setNetworkPort(persisted.getNetworkPort());
 		setAPIPort(persisted.getAPIPort());
@@ -187,9 +184,9 @@ public final class LocalNode extends Node implements Polymorphic
 		setSynced(false);
 	}
 
-	public ECKeyPair getIdentityKey() 
+	public ECKeyPair getECKey() 
 	{
-		return this.identityKey;
+		return this.ECKey;
 	}
 
 	public BLSKeyPair getBLSKey() 

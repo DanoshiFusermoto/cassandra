@@ -140,7 +140,7 @@ public class Messaging
 
 						if (inboundMessage.getPeer().getState().equals(PeerState.CONNECTED) == false)
 						{
-							Peer knownPeer = Messaging.this.context.getNetwork().getPeerStore().get(((NodeMessage)inboundMessage.getMessage()).getNode().getIdentity());
+							Peer knownPeer = Messaging.this.context.getNetwork().getPeerStore().get(((NodeMessage)inboundMessage.getMessage()).getNode().getIdentity().getECPublicKey());
 
 							if (knownPeer != null && knownPeer.getBannedUntil() > System.currentTimeMillis())
 							{

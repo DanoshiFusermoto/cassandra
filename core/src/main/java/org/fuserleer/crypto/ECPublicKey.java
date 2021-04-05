@@ -1,7 +1,6 @@
 package org.fuserleer.crypto;
 
 import com.fasterxml.jackson.annotation.JsonValue;
-import com.google.common.primitives.SignedBytes;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -12,22 +11,18 @@ import java.util.Objects;
 import org.bouncycastle.math.ec.ECPoint;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.utils.Bytes;
-import org.fuserleer.utils.Longs;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 
 /**
  * Asymmetric EC public key provider fixed to curve 'secp256k1'
  */
-public final class ECPublicKey implements Comparable<ECPublicKey>
+public final class ECPublicKey extends PublicKey
 {
 	public static final int	BYTES = 32;
 	
 	@JsonValue
 	private final byte[] publicKey;
-
-	private transient Hash hash;
-	private transient long hashCode = Long.MAX_VALUE;
 
 	@JsonCreator
 	public static ECPublicKey from(byte[] key) throws CryptoException 
@@ -77,57 +72,24 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 	}
 
 
-	public byte[] getBytes() 
+	public byte[] toByteArray() 
 	{
 		return this.publicKey;
 	}
 	
-    public int length() 
-    {
-        return this.publicKey.length;
-    }
-    
-    public synchronized Hash asHash()
-	{
-    	if (this.hash == null)
-    		// Trim off the type prefix and return the raw X coordinate
-    		this.hash = new Hash(this.publicKey, Mode.STANDARD);
-    	
-    	return this.hash;
-	}
-
-    public long asLong()
-	{
-    	// Create a long from offset 1 as the first byte is a type indicator
-    	return Longs.fromByteArray(this.publicKey, 1);
-	}
-
     ECPoint getPublicPoint()
 	{
 		return ECKeyUtils.spec.getCurve().decodePoint(this.publicKey);
 	}
 
-	public boolean verify(final Hash hash, final ECSignature signature) 
-	{
-		return verify(Objects.requireNonNull(hash, "Hash to verify is null").toByteArray(), signature);
-	}
-
-	public boolean verify(final byte[] hash, final ECSignature signature) 
+	public boolean verify(final byte[] hash, final Signature signature) throws CryptoException 
 	{
 		Objects.requireNonNull(hash, "Hash to verify is null");
 		if (hash.length == 0)
 			throw new IllegalArgumentException("Hash length is zero");
 
 		Objects.requireNonNull(signature, "Signature to verify is null");
-
-		try 
-		{
-			return ECKeyUtils.keyHandler.verify(hash, signature, this.publicKey);
-		} 
-		catch (CryptoException e) 
-		{
-			return false;
-		}
+		return ECKeyUtils.keyHandler.verify(hash, (ECSignature) signature, this.publicKey);
 	}
 
 	public byte[] encrypt(final byte[] data) throws CryptoException 
@@ -153,7 +115,7 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 			ECKeyPair ephemeral = new ECKeyPair();
 
 	        // 4. Do an EC point multiply with this.getPublicKey() and ephemeral private key. This gives you a point M.
-	        ECPoint m = getPublicPoint().multiply(new BigInteger(1, ephemeral.getPrivateKey())).normalize();
+	        ECPoint m = getPublicPoint().multiply(new BigInteger(1, ephemeral.getPrivateKey().toByteArray())).normalize();
 
 	        // 5. Use the X component of point M and calculate the SHA512 hash H.
 	        byte[] h = new Hash(m.getXCoord().getEncoded(), Mode.STANDARD).toByteArray();
@@ -174,7 +136,7 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 	     	DataOutputStream outputStream = new DataOutputStream(baos);
 	     	outputStream.write(iv);
 	     	outputStream.writeByte(ephemeral.getPublicKey().length());
-	     	outputStream.write(ephemeral.getPublicKey().getBytes());
+	     	outputStream.write(ephemeral.getPublicKey().toByteArray());
 	     	outputStream.writeInt(encrypted.length);
 	     	outputStream.write(encrypted);
 	     	outputStream.write(mac);
@@ -185,43 +147,5 @@ public final class ECPublicKey implements Comparable<ECPublicKey>
 		{
 			throw new CryptoException("Failed to encrypt", ex);
 		}
-	}
-
-	@Override
-	public int hashCode() 
-	{
-		if (this.hashCode == Long.MAX_VALUE)
-			this.hashCode = Arrays.hashCode(this.publicKey);
-		
-		return (int) this.hashCode;
-	}
-
-	@Override
-	public boolean equals(Object object) 
-	{
-		if (object == this)
-			return true;
-
-		if (object instanceof ECPublicKey) 
-		{
-			ECPublicKey other = (ECPublicKey) object;
-			return Arrays.equals(other.publicKey, this.publicKey);
-		}
-		
-		return false;
-	}
-
-	@Override
-	public String toString() 
-	{
-		return Bytes.toBase64String(this.publicKey);
-	}
-
-	@Override
-	public int compareTo(final ECPublicKey other)
-	{
-		Objects.requireNonNull(other, "ECPublicKey for compare is null");
-		
-		return SignedBytes.lexicographicalComparator().compare(this.publicKey, other.publicKey);
 	}
 }

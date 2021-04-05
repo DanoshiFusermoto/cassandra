@@ -21,7 +21,6 @@ import org.bouncycastle.crypto.params.ECPrivateKeyParameters;
 import org.bouncycastle.crypto.params.ECPublicKeyParameters;
 import org.bouncycastle.math.ec.ECPoint;
 import org.fuserleer.crypto.Hash.Mode;
-import org.fuserleer.utils.Bytes;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.io.ByteStreams;
@@ -29,10 +28,8 @@ import com.google.common.io.ByteStreams;
 /**
  * Asymmetric EC key pair provider fixed to curve 'secp256k1'.
  */
-public final class ECKeyPair 
+public final class ECKeyPair extends KeyPair<ECPrivateKey, ECPublicKey, ECSignature>
 {
-	public static final int	BYTES = 32;
-
 	/**
 	 * Load a private key from file, and compute the public key.
 	 *
@@ -66,7 +63,7 @@ public final class ECKeyPair
 				}
 
 				ECKeyPair key = new ECKeyPair();
-				io.write(key.getPrivateKey());
+				io.write(key.getPrivateKey().toByteArray());
 				return key;
 			}
 		} 
@@ -74,7 +71,7 @@ public final class ECKeyPair
 		{
 			try (FileInputStream io = new FileInputStream(file)) 
 			{
-				byte[] deploymentPriv = new byte[BYTES];
+				byte[] deploymentPriv = new byte[ECPrivateKey.BYTES];
 				ByteStreams.readFully(io, deploymentPriv);
 				return new ECKeyPair(deploymentPriv);
 			}
@@ -107,11 +104,11 @@ public final class ECKeyPair
 				// probably windows
 			}
 
-			io.write(key.getPrivateKey());
+			io.write(key.getPrivateKey().toByteArray());
 		}
 	}
 
-	private final byte[] privateKey;
+	private final ECPrivateKey privateKey;
 	private final ECPublicKey publicKey;
 
 	public ECKeyPair() throws CryptoException 
@@ -131,9 +128,7 @@ public final class ECKeyPair
 	        ECPublicKeyParameters pubParams = (ECPublicKeyParameters) keypair.getPublic();
 
 	        byte[] privateKeyBytes = privParams.getD().toByteArray();
-			validatePrivate(privateKeyBytes);
-
-	        this.privateKey = trimPrivateKey(privateKeyBytes);
+	        this.privateKey = ECPrivateKey.from(privateKeyBytes);
 	        this.publicKey = ECPublicKey.from(pubParams.getQ().getEncoded(true));
 		} 
 		catch (Exception ex) 
@@ -146,8 +141,7 @@ public final class ECKeyPair
 	{
 		try 
 		{
-			validatePrivate(key);
-			this.privateKey = Arrays.copyOf(key, key.length);
+			this.privateKey = ECPrivateKey.from(key);
 			this.publicKey = ECPublicKey.from(ECKeyUtils.keyHandler.computePublicKey(key));
 		} 
 		catch (Exception ex) 
@@ -156,48 +150,7 @@ public final class ECKeyPair
 		}
 	}
 	
-	private byte[] trimPrivateKey(byte[] privKey) 
-	{
-		if (privKey.length > BYTES && privKey[0] == 0) 
-		{
-			byte[] tmp = new byte[privKey.length - 1];
-			System.arraycopy(privKey, 1, tmp, 0, privKey.length - 1);
-			return tmp;
-		}
-		
-		if (privKey.length < BYTES) 
-		{
-			byte[] tmp = new byte[BYTES];
-			System.arraycopy(privKey, 0, tmp, BYTES - privKey.length, privKey.length);
-		}
-		
-		return privKey;
-	}
-
-	private void validatePrivate(byte[] privateKey) throws CryptoException 
-	{
-		if (privateKey == null || privateKey.length == 0)
-			throw new CryptoException("Private key is null");
-
-		int pklen = privateKey.length;
-		if (allZero(privateKey, 0, pklen))
-			throw new CryptoException("Private key is zero");
-
-		if (allZero(privateKey, 0, pklen - 1) && privateKey[pklen - 1] == 1)
-			throw new CryptoException("Private key is one");
-	}
-
-	private boolean allZero(byte[] bytes, int offset, int len) 
-	{
-		for (int i = 0; i < len; ++i) 
-		{
-			if (bytes[offset + i] != 0)
-				return false;
-		}
-		return true;
-	}
-
-	public byte[] getPrivateKey() 
+	public ECPrivateKey getPrivateKey() 
 	{
 		return this.privateKey;
 	}
@@ -207,14 +160,9 @@ public final class ECKeyPair
 		return this.publicKey;
 	}
 
-	public ECSignature sign(Hash hash) throws CryptoException
-	{
-		return sign(hash.toByteArray());
-	}
-
 	public ECSignature sign(byte[] hash) throws CryptoException 
 	{
-		return ECKeyUtils.keyHandler.sign(hash, this.privateKey);
+		return ECKeyUtils.keyHandler.sign(hash, this.privateKey.toByteArray());
 	}
 
 	public byte[] decrypt(byte[] data) throws CryptoException 
@@ -234,7 +182,7 @@ public final class ECKeyPair
 			ECPublicKey ephemeral = ECPublicKey.from(publicKeyRaw);
 
 			// 3. Do an EC point multiply with this.getPrivateKey() and ephemeral public key. This gives you a point M.
-			ECPoint m = ephemeral.getPublicPoint().multiply(new BigInteger(1, getPrivateKey())).normalize();
+			ECPoint m = ephemeral.getPublicPoint().multiply(new BigInteger(1, getPrivateKey().toByteArray())).normalize();
 
 			// 4. Use the X component of point M and calculate the SHA512 hash H.
 			byte[] h = new Hash(m.getXCoord().getEncoded(), Mode.STANDARD).toByteArray();
@@ -267,34 +215,5 @@ public final class ECKeyPair
 		{
 			throw new CryptoException("Failed to decrypt", e);
 		}
-	}
-
-	@Override
-	public boolean equals(Object object) 
-	{
-		if (this == object)
-			return true;
-
-		if (object instanceof ECKeyPair) 
-		{
-			ECKeyPair other = (ECKeyPair) object;
-			// Comparing private keys should be sufficient
-			return Arrays.equals(other.getPrivateKey(), this.getPrivateKey());
-		}
-		
-		return false;
-	}
-
-	@Override
-	public int hashCode() 
-	{
-		return Arrays.hashCode(this.getPrivateKey());
-	}
-
-	@Override
-	public String toString() 
-	{
-		// Not going to print the private key here DUH
-		return String.format("%s[%s]", getClass().getSimpleName(), Bytes.toBase64String(getPublicKey().getBytes()));
 	}
 }

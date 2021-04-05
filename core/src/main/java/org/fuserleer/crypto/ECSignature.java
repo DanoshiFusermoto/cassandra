@@ -2,6 +2,7 @@ package org.fuserleer.crypto;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.util.Objects;
 
 import org.bouncycastle.asn1.ASN1InputStream;
@@ -17,7 +18,7 @@ import org.fuserleer.serialization.SerializerConstants;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("crypto.ecdsa_signature")
-public final class ECSignature
+public final class ECSignature extends Signature
 {
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
@@ -58,27 +59,6 @@ public final class ECSignature
 		return this.s;
 	}
 
-    @Override
-    public boolean equals(Object o)
-    {
-        if (this == o)
-        	return true;
-
-        if (o instanceof ECSignature) 
-        {
-        	ECSignature signature = (ECSignature) o;
-        	return Objects.equals(this.r, signature.r) && Objects.equals(this.s, signature.s);
-        }
-        
-        return false;
-    }
-
-	@Override
-	public int hashCode() 
-	{
-		return Objects.hash(this.r, this.s);
-	}
-	
 	@JsonProperty("r")
 	@DsonOutput(Output.ALL)
 	private byte[] getJsonR() 
@@ -128,5 +108,18 @@ public final class ECSignature
 		{
 			throw new IllegalStateException("Failed to cast to ASN1Integer", e);
 		}
+	}
+
+	@Override
+	public byte[] toByteArray()
+	{
+		byte[] r = this.r.toByteArray();
+		byte[] s = this.s.toByteArray();
+		ByteBuffer buf = ByteBuffer.allocate(r.length+s.length+2);
+		buf.put((byte) r.length);
+		buf.put(r);
+		buf.put((byte) s.length);
+		buf.put(s);
+		return buf.array();
 	}
 }

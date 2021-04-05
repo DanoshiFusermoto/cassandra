@@ -57,7 +57,7 @@ class ECKeyUtils {
 
 	static byte[] calculateMAC(byte[] salt, byte[] iv, ECPublicKey ephemeral, byte[] encrypted) throws IOException 
 	{
-		byte[] ephemeralPubKey = ephemeral.getBytes();
+		byte[] ephemeralPubKey = ephemeral.toByteArray();
 		int bytesLen = iv.length + encrypted.length + ephemeralPubKey.length;
 		byte[] bytes = new byte[bytesLen];
 		System.arraycopy(iv, 0, bytes, 0, iv.length);

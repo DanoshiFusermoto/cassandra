@@ -1,7 +1,5 @@
 package org.fuserleer.crypto;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 /**
  * Interface for signature and public key computation functions.
  * <p>

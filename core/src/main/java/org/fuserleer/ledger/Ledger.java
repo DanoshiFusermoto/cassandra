@@ -59,7 +59,7 @@ public final class Ledger implements Service, LedgerInterface
 
 	private final LedgerStore 	ledgerStore;
 	private final LedgerSearch	ledgerSearch;
-	private final VotePowerHandler votePowerHandler;
+	private final ValidatorHandler validatorHandler;
 	
 	private final transient AtomicReference<BlockHeader> head;
 	
@@ -69,7 +69,7 @@ public final class Ledger implements Service, LedgerInterface
 
 		this.ledgerStore = new LedgerStore(this.context);
 
-		this.votePowerHandler = new VotePowerHandler(this.context);
+		this.validatorHandler = new ValidatorHandler(this.context);
 		this.blockHandler = new BlockHandler(this.context);
 		this.syncHandler = new SyncHandler(this.context);
 		this.atomPool = new AtomPool(this.context);
@@ -92,7 +92,7 @@ public final class Ledger implements Service, LedgerInterface
 		{
 			// Stuff required for integrity check
 			this.ledgerStore.start();
-			this.votePowerHandler.start();
+			this.validatorHandler.start();
 			
 			integrity();
 			
@@ -135,14 +135,14 @@ public final class Ledger implements Service, LedgerInterface
 		this.atomHandler.stop();
 		this.atomPool.stop();
 		this.blockHandler.stop();
-		this.votePowerHandler.stop();
+		this.validatorHandler.stop();
 		this.ledgerStore.stop();
 	}
 	
 	public void clean() throws IOException
 	{
 		this.ledgerStore.clean();
-		this.votePowerHandler.clean();
+		this.validatorHandler.clean();
 	}
 	
 	private void integrity() throws IOException, ValidationException, StateLockedException
@@ -201,9 +201,9 @@ public final class Ledger implements Service, LedgerInterface
 		return this.atomHandler;
 	}
 
-	VotePowerHandler getVotePowerHandler()
+	ValidatorHandler getValidatorHandler()
 	{
-		return this.votePowerHandler;
+		return this.validatorHandler;
 	}
 
 	public BlockHandler getBlockHandler()

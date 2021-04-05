@@ -299,8 +299,8 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
-								long blockVotePower = SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), block.getHeader().getCertificate().getSigners());
-								if (blockVotePower < SyncHandler.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, block.getHeader().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup)))
+								long blockVotePower = SyncHandler.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), block.getHeader().getCertificate().getSigners());
+								if (blockVotePower < SyncHandler.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup)))
 									continue;
 								
 								if (bestBlock == null || 

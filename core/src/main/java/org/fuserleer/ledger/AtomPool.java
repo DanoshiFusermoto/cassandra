@@ -157,7 +157,7 @@ public final class AtomPool implements Service
 								try
 								{
 									// Dont vote if we have no power!
-									long localVotePower = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), AtomPool.this.context.getNode().getIdentity().getECPublicKey());
+									long localVotePower = AtomPool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), AtomPool.this.context.getNode().getIdentity().getECPublicKey());
 									if (localVotePower > 0)
 									{
 										if (atomsLog.hasLevel(Logging.DEBUG))
@@ -424,11 +424,11 @@ public final class AtomPool implements Service
 				{
 					long currentWeight = pendingAtom.voteWeight();
 					Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), this.context.getLedger().numShardGroups());
-					long voteThresold = AtomPool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups);
+					long voteThresold = AtomPool.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroups);
 					if (currentWeight < voteThresold && pendingAtom.voteWeight() >= voteThresold)
 					{
 						if (atomsLog.hasLevel(Logging.DEBUG) == true)
-							atomsLog.debug(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups));
+							atomsLog.debug(AtomPool.this.context.getName()+": Atom "+pendingAtom.getHash()+" has agreement with "+pendingAtom.voteWeight()+"/"+AtomPool.this.context.getLedger().getValidatorHandler().getTotalVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroups));
 						
 						AtomPool.this.context.getMetaData().increment("ledger.pool.atoms.agreed");
 					}

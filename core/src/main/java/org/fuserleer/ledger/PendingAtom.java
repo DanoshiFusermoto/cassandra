@@ -229,7 +229,7 @@ public final class PendingAtom implements Hashable
 				
 				// FIXME needs to be a threshold per shard group for correctness.  A summed weight will suffice for testing.
 				Set<Long> shardGroups = ShardMapper.toShardGroups(this.stateMachine.getShards(), this.context.getLedger().numShardGroups());
-				this.voteThreshold = this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroups);
+				this.voteThreshold = this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroups);
 			}
 	
 			setStatus(CommitStatus.PREPARED);
@@ -585,7 +585,7 @@ public final class PendingAtom implements Hashable
 		this.lock.writeLock().lock();
 		try
 		{
-			long votePower = this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, this.context.getLedger().getHead().getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), vote.getOwner());
+			long votePower = this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), vote.getOwner());
 			if (this.voted.containsKey(vote.getOwner()) == false)
 			{
 				this.votes.add(vote);

@@ -765,14 +765,14 @@ public class PendingBranch
 		Objects.requireNonNull(identity, "Identity is null");
 		Numbers.isNegative(height, "Height is negative");
 		
-		long committedPower = this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, height - VotePowerHandler.VOTE_POWER_MATURITY), identity);
+		long committedPower = this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, height - ValidatorHandler.VOTE_POWER_MATURITY), identity);
 		long pendingPower = 0;
 		this.lock.lock();
 		try
 		{
 			for (PendingBlock vertex : this.blocks)
 			{
-				if (vertex.getHeight() <= height - VotePowerHandler.VOTE_POWER_MATURITY && vertex.getHeader().getOwner().equals(identity) == true)
+				if (vertex.getHeight() <= height - ValidatorHandler.VOTE_POWER_MATURITY && vertex.getHeader().getOwner().equals(identity) == true)
 					pendingPower++;
 			}
 		}
@@ -824,14 +824,14 @@ public class PendingBranch
 		Numbers.isNegative(height, "Height is negative");
 		
 		long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), this.context.getLedger().numShardGroups()); 
-		long committedPower = this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, height - VotePowerHandler.VOTE_POWER_MATURITY), localShardGroup);
+		long committedPower = this.context.getLedger().getValidatorHandler().getTotalVotePower(Math.max(0, height - ValidatorHandler.VOTE_POWER_MATURITY), localShardGroup);
 		long pendingPower = 0;
 		this.lock.lock();
 		try
 		{
 			for (PendingBlock vertex : this.blocks)
 			{
-				if (vertex.getHeight() <= height - VotePowerHandler.VOTE_POWER_MATURITY)
+				if (vertex.getHeight() <= height - ValidatorHandler.VOTE_POWER_MATURITY)
 					pendingPower++;
 			}
 		}

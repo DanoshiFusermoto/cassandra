@@ -121,8 +121,8 @@ public final class StatePool implements Service
 					throw new IllegalStateException("State certificate for "+this+" already exists");
 				
 				final long shardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups(getHeight()));
-				final long totalVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getTotalVotePower(Math.max(0, getHeight()  - VotePowerHandler.VOTE_POWER_MATURITY), shardGroup);
-				final long votePowerThreshold = StatePool.this.context.getLedger().getVotePowerHandler().getVotePowerThreshold(Math.max(0, getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), shardGroup);
+				final long totalVotePower = StatePool.this.context.getLedger().getValidatorHandler().getTotalVotePower(Math.max(0, getHeight()  - ValidatorHandler.VOTE_POWER_MATURITY), shardGroup);
+				final long votePowerThreshold = StatePool.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroup);
 
 				long executionWithMajorityWeight = 0;
 				Hash executionWithMajority = null;
@@ -150,7 +150,7 @@ public final class StatePool implements Service
 					signatureBag.add(vote.getOwner(), vote.getSignature());
 				}
 				
-				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getVotePowerHandler().getVotePowerBloom(getBlock(), shardGroup);
+				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getValidatorHandler().getVotePowerBloom(getBlock(), shardGroup);
 				// TODO need merkles
 				final StateCertificate certificate = new StateCertificate(votes.get(0).getState(), votes.get(0).getAtom(), votes.get(0).getBlock(), 
 																		  votes.get(0).getInput(), votes.get(0).getOutput(), votes.get(0).getExecution(), 
@@ -361,7 +361,7 @@ public final class StatePool implements Service
 									}
 									
 									// Always vote locally even if no vote power so that can determine the accuracy of local execution
-									long localVotePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity().getECPublicKey());
+									long localVotePower = StatePool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, pendingState.getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity().getECPublicKey());
 									if (pendingAtom.thrown() == null && pendingAtom.getExecution() == null)
 										throw new IllegalStateException("Can not vote on state "+pendingState.getKey()+" when no decision made");
 									
@@ -903,7 +903,7 @@ public final class StatePool implements Service
 				pendingState.getAtom().equals(stateVote.getAtom()) == false)
 				throw new IllegalStateException("State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
 					
-			long votePower = StatePool.this.context.getLedger().getVotePowerHandler().getVotePower(Math.max(0, pendingState.getHeight() - VotePowerHandler.VOTE_POWER_MATURITY), stateVote.getOwner());
+			long votePower = StatePool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, pendingState.getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), stateVote.getOwner());
 			if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
 			{
 				if (pendingState.getCertificate() == null && pendingAtom.getStatus().greaterThan(CommitStatus.PROVISIONED) == true)

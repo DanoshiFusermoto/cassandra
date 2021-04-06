@@ -10,8 +10,6 @@ import java.util.Objects;
 
 import org.fuserleer.crypto.Certificate;
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateCertificate;
@@ -84,7 +82,7 @@ public final class AtomCertificate extends Certificate
 			this.certificates.put(certificate.getState().get(), new StateCertificate(certificate.getState(), certificate.getAtom(), certificate.getBlock(), 
 																					 certificate.getInput(), certificate.getOutput(), certificate.getExecution(), 
 																					 certificate.getMerkle(), certificate.getAudit(),
-																					 certificate.getPowers(), certificate.getSignatures()));
+																					 certificate.getPowers(), certificate.getSigners(), certificate.getSignature()));
 		}
 
 		// TODO need to validate that we have a VotePowerBloom for all the shard groups referenced by the StateCertificates
@@ -109,19 +107,10 @@ public final class AtomCertificate extends Certificate
 		return (T) this.atom;
 	}
 	
-	public StateCertificate get(StateKey<?, ?> state)
+	public StateCertificate get(final StateKey<?, ?> state)
 	{
+		Objects.requireNonNull(state, "State key is null");
 		return this.certificates.get(state.get());
-	}
-
-	@Override
-	public boolean verify(final ECPublicKey signer, final ECSignature signature)
-	{
-		for (StateCertificate certificate : this.certificates.values())
-			if (certificate.getSignatures().getSigners().contains(signer) == true)
-				return certificate.verify(signer, signature);
-
-		return false;
 	}
 
 	public Collection<StateCertificate> getAll()

@@ -5,13 +5,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-import org.fuserleer.crypto.Certificate;
+import org.fuserleer.collections.Bloom;
+import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignature;
-import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleProof;
+import org.fuserleer.crypto.VoteCertificate;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.utils.Numbers;
@@ -22,7 +21,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.primitives.Longs;
 
 @SerializerId2("ledger.state.certificate")
-public final class StateCertificate extends Certificate
+public final class StateCertificate extends VoteCertificate
 {
 	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
@@ -73,9 +72,9 @@ public final class StateCertificate extends Certificate
 		// FOR SERIALIZER //
 	}
 
-	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final VotePowerBloom powers, final ECSignatureBag signatures) throws CryptoException
+	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final VotePowerBloom powers, final Bloom signers, final BLSSignature signature) throws CryptoException
 	{
-		this(state, atom, block, input, output, execution, merkle, audit, powers.getHash(), signatures);
+		this(state, atom, block, input, output, execution, merkle, audit, powers.getHash(), signers, signature);
 		
 		Objects.requireNonNull(powers, "Powers is null");
 		Numbers.isZero(powers.count(), "Powers is empty");
@@ -84,9 +83,9 @@ public final class StateCertificate extends Certificate
 		this.powerBloom = powers;
 	}
 
-	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final Hash powers, final ECSignatureBag signatures) throws CryptoException
+	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final Hash powers, final Bloom signers, final BLSSignature signature) throws CryptoException
 	{
-		super(Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, signatures);
+		super(Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, signers, signature);
 		
 		Objects.requireNonNull(state, "State is null");
 		Objects.requireNonNull(block, "Block is null");
@@ -101,8 +100,8 @@ public final class StateCertificate extends Certificate
 		Objects.requireNonNull(merkle, "Merkle is null");
 		Hash.notZero(merkle, "Merkle is ZERO");
 
-		if (Objects.requireNonNull(audit, "Audit is null").isEmpty() == true)
-			Objects.requireNonNull(merkle, "Audit is empty");
+		Objects.requireNonNull(audit, "Audit is null");
+		Numbers.isZero(audit.size(), "Audit is empty");
 
 		this.state = state;
 		this.atom = atom;
@@ -175,12 +174,5 @@ public final class StateCertificate extends Certificate
 	public VotePowerBloom getPowerBloom()
 	{
 		return this.powerBloom;
-	}
-
-	@Override
-	public boolean verify(final ECPublicKey signer, final ECSignature signature)
-	{
-		StateVote vote = new StateVote(getState(), getAtom(), getBlock(), getInput(), getOutput(), getExecution(), signer);
-		return signer.verify(vote.getHash(), signature);
 	}
 }

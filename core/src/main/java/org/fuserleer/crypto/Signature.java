@@ -23,9 +23,9 @@ public abstract class Signature
 		if (object == this)
 			return true;
 
-		if (object instanceof PublicKey) 
+		if (object instanceof Signature) 
 		{
-			PublicKey other = (PublicKey) object;
+			Signature other = (Signature) object;
 			return Arrays.equals(other.toByteArray(), toByteArray());
 		}
 		

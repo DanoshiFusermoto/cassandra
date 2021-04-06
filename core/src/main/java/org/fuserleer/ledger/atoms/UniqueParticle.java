@@ -3,8 +3,8 @@ package org.fuserleer.ledger.atoms;
 import java.io.IOException;
 import java.util.Objects;
 
-import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateAddress;
 import org.fuserleer.ledger.StateMachine;

@@ -33,7 +33,7 @@ public class Ledger extends Function
 		else
 		{
 			printStream.println("Synced: "+context.getLedger().isSynced());
-			printStream.println("Identity: "+context.getNode().getIdentity().getECPublicKey()+" -> "+context.getNode().getIdentity().getBLSPublicKey());
+			printStream.println("Identity: "+context.getNode().getIdentity());
 			printStream.println("Current head: "+context.getLedger().getHead());
 			printStream.println("Ledger timestamp: "+Time.getLedgerTimeSeconds()+" / "+new Date(Time.getLedgerTimeMS())); // TODO only accurate for simulated time
 			printStream.println("Atoms (P/L/T): "+context.getLedger().getAtomHandler().numPending()+"/"+context.getMetaData().get("ledger.processed.atoms.local", 0l)+"/"+context.getMetaData().get("ledger.processed.atoms.total", 0l));

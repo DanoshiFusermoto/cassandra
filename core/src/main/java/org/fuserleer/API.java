@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 import org.fuserleer.common.Agent;
 import org.fuserleer.common.Match;
 import org.fuserleer.common.Order;
+import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
@@ -423,10 +424,13 @@ public class API implements Service
 				try
 				{
 					Hash randomValue = Hash.random();
-					UniqueParticle particle = new UniqueParticle(randomValue, API.this.context.getNode().getIdentity().getECPublicKey());
+					ECKeyPair key = new ECKeyPair();
+					UniqueParticle particle = new UniqueParticle(randomValue, key.getPublicKey());
+					particle.sign(key);
+
 					Atom atom = new Atom(particle);
-					
 					API.this.context.getLedger().submit(atom);
+					
 					responseJSON.put("atom", Serialization.getInstance().toJsonObject(atom, Output.ALL));
 					status(responseJSON, 200);
 				}

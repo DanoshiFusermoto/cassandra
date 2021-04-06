@@ -5,21 +5,15 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
-import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.node.NodeIdentity;
+import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
 public final class ShardMapper 
 {
-	public static long toShardGroup(final NodeIdentity identity, final long numShardGroups)
-	{
-		return toShardGroup(Objects.requireNonNull(identity, "Identity is null").getECPublicKey().asLong(), numShardGroups);
-	}
-
-	public static long toShardGroup(final ECPublicKey publicKey, final long numShardGroups)
+	public static long toShardGroup(final PublicKey publicKey, final long numShardGroups)
 	{
 		return toShardGroup(Objects.requireNonNull(publicKey, "EC public key is null").asLong(), numShardGroups);
 	}

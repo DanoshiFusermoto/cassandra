@@ -81,13 +81,6 @@ public abstract class SignedParticle extends Particle
 		return this.signature;
 	}
 	
-/*	public Set<Identifier> getIdentifiers()
-	{
-		Set<Identifier> identifiers = new HashSet<Identifier>(); 
-		identifiers.add(Identifier.from(getOwner().asHash()));
-		return identifiers;
-	}*/
-	
 	public String toString()
 	{
 		return super.toString()+" "+this.owner;

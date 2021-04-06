@@ -11,8 +11,11 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignatureBag;
+import org.fuserleer.collections.Bloom;
+import org.fuserleer.crypto.BLS12381;
+import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.BLSSignature;
+import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
 import org.fuserleer.exceptions.ValidationException;
@@ -40,7 +43,7 @@ class PendingBlock implements Hashable
 	private boolean 	unbranched;
 	private Map<Hash, PendingAtom> atoms;
 	private Map<Hash, AtomCertificate> certificates;
-	private final Map<ECPublicKey, BlockVote> votes;
+	private final Map<BLSPublicKey, BlockVote> votes;
 	
 	private final ReentrantLock lock = new ReentrantLock();
 
@@ -50,17 +53,18 @@ class PendingBlock implements Hashable
 		this.hash = Objects.requireNonNull(block);
 		this.witnessed = Time.getLedgerTimeMS();
 		this.unbranched = true;
-		this.votes = new HashMap<ECPublicKey, BlockVote>();
+		this.votes = new HashMap<BLSPublicKey, BlockVote>();
 		this.atoms = new HashMap<Hash, PendingAtom>();
 		this.certificates = new HashMap<Hash, AtomCertificate>();
 	}
 
 	public PendingBlock(final Context context, final BlockHeader header, final Collection<PendingAtom> atoms, final Collection<AtomCertificate> certificates)
 	{
-		this(context, Objects.requireNonNull(header).getHash());
+		this(context, Objects.requireNonNull(header, "Block header is null").getHash());
 		
 		Objects.requireNonNull(certificates, "Certificates is null");
 		Objects.requireNonNull(atoms, "Pending atoms is null");
+		Numbers.isZero(atoms.size(), "Pending atoms is empty");
 
 		this.header = header;
 		this.atoms.putAll(atoms.stream().collect(Collectors.toMap(pa -> pa.getHash(), pa -> pa)));
@@ -323,9 +327,9 @@ class PendingBlock implements Hashable
 		return this.witnessed;
 	}
 	
-	public boolean voted(final ECPublicKey identity)
+	public boolean voted(final BLSPublicKey identity)
 	{
-		Objects.requireNonNull(identity, "Vote identity is null");
+		Objects.requireNonNull(identity, "Public key is null");
 		
 		this.lock.lock();
 		try
@@ -338,7 +342,7 @@ class PendingBlock implements Hashable
 		}
 	}
 	
-	public ECSignatureBag certificate()
+	public BlockCertificate buildCertificate() throws CryptoException
 	{
 		this.lock.lock();
 		try
@@ -349,14 +353,22 @@ class PendingBlock implements Hashable
 				return this.header.getCertificate();
 			}
 			
-			ECSignatureBag certificate;
+			BlockCertificate certificate;
 			if (this.votes.isEmpty() == true)
 			{
 				blocksLog.warn("Block header has no votes "+this.header);
-				certificate = new ECSignatureBag();
+				certificate = new BlockCertificate(this.hash);
 			}
 			else
-				certificate = new ECSignatureBag(this.votes.values().stream().collect(Collectors.toMap(v -> v.getOwner(), v -> v.getSignature())));
+			{
+				final Bloom signers = new Bloom(0.000001, this.votes.size());
+				BLSSignature signature = BLS12381.aggregateSignatures(this.votes.values().stream().map(v -> {
+					signers.add(v.getOwner().toByteArray());
+					return v.getSignature();
+				}).collect(Collectors.toList()));
+				
+				certificate = new BlockCertificate(this.hash, signers, signature);
+			}
 
 			this.header.setCertificate(certificate);
 			return certificate;
@@ -369,13 +381,10 @@ class PendingBlock implements Hashable
 
 	public boolean vote(final BlockVote vote) throws ValidationException
 	{
-		Objects.requireNonNull(vote, "Vote is null");
+		Objects.requireNonNull(vote, "Block vote is null");
 		
 		if (vote.getObject().equals(getHash()) == false)
 			throw new ValidationException("Vote from "+vote.getOwner()+" is not for "+getHash());
-		
-		if (vote.getOwner().verify(vote.getHash(), vote.getSignature()) == false)
-			throw new ValidationException("Signature from "+vote.getOwner()+" did not verify against "+getHash());
 		
 		this.lock.lock();
 		try

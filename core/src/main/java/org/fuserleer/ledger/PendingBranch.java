@@ -14,7 +14,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.atoms.AtomCertificate;
@@ -160,7 +161,8 @@ public class PendingBranch
 
 	boolean merge(final Collection<PendingBlock> blocks) throws StateLockedException, IOException
 	{
-		Objects.requireNonNull(blocks, "Blocks is null");
+		Objects.requireNonNull(blocks, "Pending blocks is null");
+		Numbers.isZero(blocks.size(), "Pending blocks is empty");
 
 		List<PendingBlock> sortedBlocks = new ArrayList<PendingBlock>(blocks);
 		List<PendingBlock> mergeBlocks = new ArrayList<PendingBlock>();
@@ -237,7 +239,8 @@ public class PendingBranch
 
 	boolean forks(final Collection<PendingBlock> blocks)
 	{
-		Objects.requireNonNull(blocks, "Blocks is null");
+		Objects.requireNonNull(blocks, "Pending blocks is null");
+		Numbers.isZero(blocks.size(), "Pending blocks is empty");
 
 		this.lock.lock();
 		try
@@ -312,7 +315,8 @@ public class PendingBranch
 
 	PendingBranch fork(final Collection<PendingBlock> blocks) throws StateLockedException, IOException
 	{
-		Objects.requireNonNull(blocks, "Blocks is null");
+		Objects.requireNonNull(blocks, "Pending blocks is null");
+		Numbers.isZero(blocks.size(), "Pending blocks is empty");
 
 		this.lock.lock();
 		try
@@ -471,7 +475,8 @@ public class PendingBranch
 	
 	boolean intersects(final Collection<PendingBlock> blocks)
 	{
-		Objects.requireNonNull(blocks, "Blocks is null");
+		Objects.requireNonNull(blocks, "Pending blocks is null");
+		Numbers.isZero(blocks.size(), "Pending blocks is empty");
 
 		this.lock.lock();
 		try
@@ -533,7 +538,7 @@ public class PendingBranch
 		}
 	}
 
-	LinkedList<PendingBlock> commit(final PendingBlock block) throws IOException, StateLockedException
+	LinkedList<PendingBlock> commit(final PendingBlock block) throws IOException, StateLockedException, CryptoException
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -549,7 +554,7 @@ public class PendingBranch
 				if (vertex.getBlock() == null)
 					break;
 				
-				vertex.certificate();
+				vertex.buildCertificate();
 				this.context.getLedger().getLedgerStore().commit(vertex.getBlock());
 				committed.add(vertex);
 				vertexIterator.remove();
@@ -760,7 +765,7 @@ public class PendingBranch
 	}
 	
 	// Vote power and weights //
-	long getVotePower(final long height, final ECPublicKey identity) throws IOException
+	long getVotePower(final long height, final BLSPublicKey identity) throws IOException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		Numbers.isNegative(height, "Height is negative");

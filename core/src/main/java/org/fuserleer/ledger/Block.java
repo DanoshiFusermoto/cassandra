@@ -11,7 +11,7 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.BasicObject;
 import org.fuserleer.common.Primitive;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleTree;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
@@ -21,6 +21,7 @@ import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.time.Time;
+import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -52,38 +53,41 @@ public final class Block extends BasicObject implements Primitive
 	{
 		super();
 
-		if (Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
-			throw new IllegalArgumentException("Atoms is empty");
-		
-		this.header = Objects.requireNonNull(header, "Header is null");
+		Objects.requireNonNull(atoms, "Certificates is null");
+		Objects.requireNonNull(header, "Header is null");
+		Objects.requireNonNull(atoms, "Atoms is null");
+		Numbers.isZero(atoms.size(), "Atoms is empty");
+
+		this.header = header;
 
 		// TODO prevent duplicate atoms
 		//		allowed currently to allow testing of duplicate atom injections which should fail during consensus
 		this.atoms = new LinkedList<Atom>(atoms);
 
 		this.certificates = new LinkedHashMap<Hash, AtomCertificate>();
-		for (AtomCertificate certificate : Objects.requireNonNull(certificates, "Certificates is null"))
+		for (AtomCertificate certificate : certificates)
 			this.certificates.put(certificate.getObject(), certificate);
 	}
 
-	public Block(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final ECPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
+	public Block(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final BLSPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
 	{
 		this(height, previous, target, stepped, index, Time.getLedgerTimeMS(), owner, atoms, certificates);
 	}
 	
-	public Block(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final long timestamp, final ECPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
+	public Block(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final long timestamp, final BLSPublicKey owner, final Collection<Atom> atoms, final Collection<AtomCertificate> certificates)
 	{
 		super();
 
-		if (Objects.requireNonNull(atoms, "Atoms is null").isEmpty() == true)
-			throw new IllegalArgumentException("Atoms is empty");
+		Objects.requireNonNull(atoms, "Certificates is null");
+		Objects.requireNonNull(atoms, "Atoms is null");
+		Numbers.isZero(atoms.size(), "Atoms is empty");
 		
 		// TODO prevent duplicate atoms
 		//		allowed currently to allow testing of duplicate atom injections which should fail during consensus
 		this.atoms = new LinkedList<Atom>(atoms);
 		
 		this.certificates = new LinkedHashMap<Hash, AtomCertificate>();
-		for (AtomCertificate certificate : Objects.requireNonNull(certificates, "Certificates is null"))
+		for (AtomCertificate certificate : certificates)
 			this.certificates.put(certificate.getObject(), certificate);
 		
 		final MerkleTree merkle = new MerkleTree();
@@ -102,8 +106,11 @@ public final class Block extends BasicObject implements Primitive
 		return this.header.getHash();
 	}
 	
-	public boolean contains(Hash hash)
+	public boolean contains(final Hash hash)
 	{
+		Objects.requireNonNull(hash, "Hash is null");
+		Hash.notZero(hash, "Hash is zero");
+		
 		for (Atom atom : this.atoms)
 		{
 			if (atom.getHash().equals(hash) == true)

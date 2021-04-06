@@ -9,11 +9,10 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.fuserleer.common.Primitive;
+import org.fuserleer.crypto.BLSKeyPair;
+import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECKeyPair;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignature;
-import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
 import org.fuserleer.crypto.Hash.Mode;
@@ -40,8 +39,21 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	public final static int	MAX_ATOMS = 2048;
 	
 	// TODO need index target and stepped in here?
-	public static long getStep(final long height, final Hash previous, final ECPublicKey owner, final long timestamp, final Collection<Hash> atoms)
+	public static long getStep(final long height, final Hash previous, final BLSPublicKey owner, final long timestamp, final Collection<Hash> atoms)
 	{
+		Numbers.isNegative(height, "Height is negative");
+		Objects.requireNonNull(previous, "Previous block is null");
+		if (height == 0 && previous.equals(Hash.ZERO) == false)
+			throw new IllegalArgumentException("Previous block hash must be ZERO for genesis");
+		if (height != 0)
+			Hash.notZero(previous, "Previous block hash is ZERO");
+		
+		Objects.requireNonNull(owner, "Owner public key is null");
+		Numbers.isNegative(timestamp, "Timestamp is negative");
+		
+		Objects.requireNonNull(atoms, "Atoms is null");
+		Numbers.isZero(atoms.size(), "Atoms is empty");
+
 		Hash stepHash = Hash.from(Hash.from(height), previous, owner.asHash(), Hash.from(timestamp));
 
 		for (Hash atom : atoms)
@@ -100,7 +112,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 
 	@JsonProperty("owner")
 	@DsonOutput(Output.ALL)
-	private ECPublicKey owner;
+	private BLSPublicKey owner;
 
 	// TODO inventory of atoms, certificates etc, inefficient, find a better method
 	@JsonProperty("inventory")
@@ -109,12 +121,11 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
-	private ECSignature signature;
+	private BLSSignature signature;
 	
-	// TODO BLS this later
 	@JsonProperty("certificate")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
-	private ECSignatureBag certificate;
+	private BlockCertificate certificate;
 
 	private transient Hash hash;
 	private transient long step = -1;
@@ -124,7 +135,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		super();
 	}
 	
-	BlockHeader(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final Map<InventoryType, List<Hash>> inventory, final Hash merkle, final long timestamp, final ECPublicKey owner)
+	BlockHeader(final long height, final Hash previous, final long target, final UInt256 stepped, final long index, final Map<InventoryType, List<Hash>> inventory, final Hash merkle, final long timestamp, final BLSPublicKey owner)
 	{
 		Numbers.isNegative(height, "Height is negative");
 		Numbers.isNegative(index, "Index is negative");
@@ -180,8 +191,12 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		return this.index + this.inventory.getOrDefault(InventoryType.ATOMS, Collections.emptyList()).size();
 	}
 
-	public long getIndexOf(InventoryType type, Hash hash)
+	public long getIndexOf(final InventoryType type, final Hash hash)
 	{
+		Objects.requireNonNull(type, "Inventory type is null");
+		Objects.requireNonNull(hash, "Hash is null");
+		Hash.notZero(hash, "Hash is ZERO");
+		
 		return this.index + this.inventory.getOrDefault(type, Collections.emptyList()).indexOf(hash);
 	}
 
@@ -254,9 +269,10 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	}
 
 	@JsonProperty("hash")
-	void setHash(Hash hash)
+	void setHash(final Hash hash)
 	{
-		Objects.requireNonNull(hash);
+		Objects.requireNonNull(hash, "Hash is null");
+		Hash.notZero(hash, "Hash is ZERO");
 		this.hash = hash;
 	}
 
@@ -265,8 +281,9 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		return this.merkle;
 	}
 
-	public List<Hash> getInventory(InventoryType primitive)
+	public List<Hash> getInventory(final InventoryType primitive)
 	{
+		Objects.requireNonNull(primitive, "Inventory type is null");
 		return Collections.unmodifiableList(this.inventory.getOrDefault(primitive, Collections.emptyList()));
 	}
 
@@ -308,21 +325,25 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		return Long.compare(getHeight(), other.getHeight());
 	}
 	
-	public ECPublicKey getOwner()
+	public BLSPublicKey getOwner()
 	{
 		return this.owner;
 	}
 
-	public synchronized void sign(ECKeyPair key) throws CryptoException
+	public synchronized void sign(final BLSKeyPair key) throws CryptoException
 	{
+		Objects.requireNonNull(key, "Key pair is null");
+		
 		if (key.getPublicKey().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign block header with key that doesn't match owner");
 
 		this.signature = key.sign(getHash());
 	}
 
-	public synchronized boolean verify(ECPublicKey key) throws CryptoException
+	public synchronized boolean verify(final BLSPublicKey key) throws CryptoException
 	{
+		Objects.requireNonNull(key, "Public key is null");
+
 		if (this.signature == null)
 			throw new CryptoException("Signature is not present");
 		
@@ -340,7 +361,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		return true;
 	}
 	
-	public synchronized ECSignature getSignature()
+	public synchronized BLSSignature getSignature()
 	{
 		return this.signature;
 	}
@@ -354,13 +375,17 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 		return blockHeader;
 	}
 	
-	public final ECSignatureBag getCertificate()
+	public final BlockCertificate getCertificate()
 	{
 		return this.certificate;
 	}
 
-	final void setCertificate(ECSignatureBag certificate)
+	final void setCertificate(final BlockCertificate certificate)
 	{
-		this.certificate = Objects.requireNonNull(certificate, "Certificate is null");
+		Objects.requireNonNull(certificate, "Certificate is null");
+		if (certificate.getBlock().equals(getHash()) == false)
+			throw new IllegalArgumentException("Certificate "+certificate.getHash()+" is not for block "+this.getHash());
+		
+		this.certificate = certificate;
 	}
 }

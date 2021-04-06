@@ -791,11 +791,11 @@ public class BlockHandler implements Service
 					BlockHandler.this.voteClock.set(pendingBlock.getHeader().getHeight());
 					BlockHandler.this.currentVote.set(pendingBlock.getHeader());
 					
-					long votePower = branch.getVotePower(pendingBlock.getHeader().getHeight(), BlockHandler.this.context.getNode().getIdentity().getECPublicKey());
+					long votePower = branch.getVotePower(pendingBlock.getHeader().getHeight(), BlockHandler.this.context.getNode().getIdentity());
 					if (votePower > 0)
 					{
-						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity().getECPublicKey());
-						blockHeaderVote.sign(BlockHandler.this.context.getNode().getECKey());
+						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity());
+						blockHeaderVote.sign(BlockHandler.this.context.getNode().getKeyPair());
 						pendingBlock.vote(blockHeaderVote);
 						this.context.getLedger().getLedgerStore().store(blockHeaderVote);
 						this.context.getNetwork().getGossipHandler().broadcast(blockHeaderVote);
@@ -902,7 +902,7 @@ public class BlockHandler implements Service
 								do
 								{
 									candidateCertificates = this.context.getLedger().getStateHandler().get(numCertificatesToInclude, certificateExclusions);
-									discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity().getECPublicKey(), 
+									discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity(), 
 																candidateAtoms.values().stream().map(pa -> pa.getAtom()).collect(Collectors.toList()), candidateCertificates);
 								
 									if (discoveredBlock.getHeader().getStep() != blockStep)
@@ -946,7 +946,7 @@ public class BlockHandler implements Service
 		return strongestBlock;
 	}
 	
-	private Collection<PendingBlock> commit(final PendingBlock block, final PendingBranch branch) throws IOException, StateLockedException
+	private Collection<PendingBlock> commit(final PendingBlock block, final PendingBranch branch) throws IOException, StateLockedException, CryptoException
 	{
 		Objects.requireNonNull(block, "Pending block is null");
 		Objects.requireNonNull(branch, "Pending branch is null");

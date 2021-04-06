@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.events.EventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
@@ -69,9 +69,9 @@ public class PeerHandler implements Service
 
 	public static final class PeerDistanceComparator implements Comparator<Peer>
 	{
-		private final ECPublicKey origin;
+		private final PublicKey origin;
 
-		public PeerDistanceComparator(ECPublicKey origin)
+		public PeerDistanceComparator(PublicKey origin)
 		{
 			this.origin = Objects.requireNonNull(origin);
 		}
@@ -79,13 +79,13 @@ public class PeerHandler implements Service
 		@Override
 		public int compare(Peer p1, Peer p2)
 		{
-			return compareXorDistances(p2.getNode().getIdentity().getECPublicKey(), p1.getNode().getIdentity().getECPublicKey());
+			return compareXorDistances(p2.getNode().getIdentity(), p1.getNode().getIdentity());
 		}
 		
-		public int compareXorDistances(ECPublicKey id1, ECPublicKey id2) 
+		public int compareXorDistances(PublicKey id1, PublicKey id2) 
 		{
-			UInt128 d1 = UInt128.from(this.origin.getBytes()).xor(UInt128.from(id1.getBytes()));
-			UInt128 d2 = UInt128.from(this.origin.getBytes()).xor(UInt128.from(id2.getBytes()));
+			UInt128 d1 = UInt128.from(this.origin.toByteArray()).xor(UInt128.from(id1.toByteArray()));
+			UInt128 d2 = UInt128.from(this.origin.toByteArray()).xor(UInt128.from(id2.toByteArray()));
 
 			int cmp = Integer.compare(d1.getLowestSetBit(), d2.getLowestSetBit());
 			return (cmp == 0) ? d1.compareTo(d2) : cmp;
@@ -240,14 +240,14 @@ public class PeerHandler implements Service
 						// Clean out aged peers with no activity
 						for (Peer peer : PeerHandler.this.context.getNetwork().getPeerStore().get(new AllPeersFilter())) 
 						{
-							if (PeerHandler.this.context.getNetwork().has(peer.getNode().getIdentity().getECPublicKey(), PeerState.CONNECTING, PeerState.CONNECTED) == false && 
+							if (PeerHandler.this.context.getNetwork().has(peer.getNode().getIdentity(), PeerState.CONNECTING, PeerState.CONNECTED) == false && 
 								(peer.getConnectingAt() > 0 && TimeUnit.MILLISECONDS.toSeconds(Time.getSystemTime() - peer.getConnectingAt()) >= PeerHandler.this.context.getConfiguration().get("network.peers.aged", 3600)) &&
 								(peer.getActiveAt() > 0 && TimeUnit.MILLISECONDS.toSeconds(Time.getSystemTime() - peer.getActiveAt()) >= PeerHandler.this.context.getConfiguration().get("network.peers.aged", 3600)))
 							{
 								if (peer.getNode() == null) 
 									PeerHandler.this.context.getNetwork().getPeerStore().delete(peer.getURI());
 								else
-									PeerHandler.this.context.getNetwork().getPeerStore().delete(peer.getNode().getIdentity().getECPublicKey());
+									PeerHandler.this.context.getNetwork().getPeerStore().delete(peer.getNode().getIdentity());
 							}
 						}
 	
@@ -313,7 +313,7 @@ public class PeerHandler implements Service
 		this.context.getEvents().unregister(this.peerListener);
 	}
 
-	public Peer getPeer(ECPublicKey identity) throws IOException
+	public Peer getPeer(PublicKey identity) throws IOException
 	{
 		return this.context.getNetwork().getPeerStore().get(identity);
 	}
@@ -334,21 +334,21 @@ public class PeerHandler implements Service
 		return Collections.unmodifiableList(peers);
 	}
 
-	public List<Peer> getPeers(Collection<ECPublicKey> identities) throws IOException
+	public List<Peer> getPeers(Collection<PublicKey> identities) throws IOException
 	{
 		return getPeers(identities, null, null);
 	}
 
-	public List<Peer> getPeers(Collection<ECPublicKey> identities, PeerFilter<Peer> filter) throws IOException
+	public List<Peer> getPeers(Collection<PublicKey> identities, PeerFilter<Peer> filter) throws IOException
 	{
 		return getPeers(identities, filter, null);
 	}
 
-	public List<Peer> getPeers(Collection<ECPublicKey> identities, PeerFilter<Peer> filter, Comparator<Peer> sorter) throws IOException
+	public List<Peer> getPeers(Collection<PublicKey> identities, PeerFilter<Peer> filter, Comparator<Peer> sorter) throws IOException
 	{
 		List<Peer> peers = new ArrayList<Peer>();
 
-		for (ECPublicKey identity : identities)
+		for (PublicKey identity : identities)
 		{
 			Peer peer = this.context.getNetwork().getPeerStore().get(identity);
 
@@ -395,7 +395,7 @@ public class PeerHandler implements Service
 				}
 	
 				if (event.getPeer().getNode() != null && 
-					PeerHandler.this.context.getNetwork().has(event.getPeer().getNode().getIdentity().getECPublicKey(), Protocol.UDP))
+					PeerHandler.this.context.getNetwork().has(event.getPeer().getNode().getIdentity(), Protocol.UDP))
 					return;
 	
 				PeerHandler.this.context.getNetwork().getPeerStore().store(event.getPeer());

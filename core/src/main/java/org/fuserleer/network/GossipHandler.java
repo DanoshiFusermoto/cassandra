@@ -256,6 +256,8 @@ public class GossipHandler implements Service
 	
 	private Executable broadcastProcessor = new Executable()
 	{
+		long lastBroadcast = System.currentTimeMillis();
+		
 		@Override
 		public void execute()
 		{
@@ -283,8 +285,12 @@ public class GossipHandler implements Service
 							GossipHandler.this.toBroadcast.put(broadcast.getPrimitive().getClass(), broadcast);
 						}
 
+						if (GossipHandler.this.toBroadcast.size() < 32 && System.currentTimeMillis() - this.lastBroadcast < 250)
+							continue;
+						
 						// Broadcast
 						doBroadcast();
+						this.lastBroadcast = System.currentTimeMillis();
 					} 
 					catch (InterruptedException e) 
 					{
@@ -389,6 +395,7 @@ public class GossipHandler implements Service
 
 	private Executable requestProcessor = new Executable()
 	{
+		private long lastRequest = System.currentTimeMillis(); 
 		private long lastHousekeeping = System.currentTimeMillis(); 
 
 		@Override
@@ -411,11 +418,15 @@ public class GossipHandler implements Service
 							continue;
 						}
 
+						if (GossipHandler.this.toRequest.size() < 32 && System.currentTimeMillis() - this.lastRequest < 250)
+							continue;
+
 						// Request
 						doRequests();
 						
 						// Housekeeping
 						doHousekeeping();
+						this.lastRequest = System.currentTimeMillis();
 					} 
 					catch (InterruptedException e) 
 					{

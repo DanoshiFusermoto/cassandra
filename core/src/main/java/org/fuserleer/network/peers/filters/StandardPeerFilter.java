@@ -9,7 +9,7 @@ import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.common.Direction;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.network.Protocol;
 import org.fuserleer.network.peers.ConnectedPeer;
@@ -22,7 +22,7 @@ public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 	private Direction		direction;
 	private Long 			shardGroup;
 	private Protocol 		protocol;
-	private ECPublicKey		identity;
+	private PublicKey		identity;
 	private URI				URI;
 	private Set<PeerState> 	states;
 	
@@ -43,7 +43,7 @@ public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 		return this;
 	}
 
-	public StandardPeerFilter setIdentity(final ECPublicKey identity)
+	public StandardPeerFilter setIdentity(final PublicKey identity)
 	{
 		this.identity = Objects.requireNonNull(identity, "Direction is null");
 		return this;

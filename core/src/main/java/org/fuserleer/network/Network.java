@@ -36,7 +36,7 @@ import org.fuserleer.Universe;
 import org.fuserleer.WebSocketService;
 import org.fuserleer.common.Agent;
 import org.fuserleer.common.Direction;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
@@ -178,7 +178,7 @@ public final class Network implements Service
 							NodeMessage nodeMessage = (NodeMessage)message;
 							URI uri = Agent.getURI(datagramPacket.getAddress().getHostAddress(), nodeMessage.getNode().getNetworkPort());
 							
-							Peer persistedPeer = Network.this.peerStore.get(nodeMessage.getNode().getIdentity().getECPublicKey());
+							Peer persistedPeer = Network.this.peerStore.get(nodeMessage.getNode().getIdentity());
 							if (persistedPeer == null)
 								persistedPeer = new Peer(uri, nodeMessage.getNode(), Protocol.UDP);
 							
@@ -218,13 +218,13 @@ public final class Network implements Service
     			Network.this.connecting.lock();
 
     			URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), node.getNetworkPort());
-				if (Network.this.has(node.getIdentity().getECPublicKey(), Protocol.TCP) == true)
+				if (Network.this.has(node.getIdentity(), Protocol.TCP) == true)
 				{
 					networkLog.error(Network.this.context.getName()+": "+node.getIdentity()+" already has a socked assigned");
 					return null;
 				}
 
-				Peer persistedPeer = Network.this.peerStore.get(node.getIdentity().getECPublicKey());
+				Peer persistedPeer = Network.this.peerStore.get(node.getIdentity());
 				ConnectedPeer connectedPeer = new TCPPeer(Network.this.context, socket, uri, Direction.INBOUND, persistedPeer);
 				connectedPeer.connect();
     			return (T) connectedPeer;
@@ -265,7 +265,7 @@ public final class Network implements Service
 						}
 						
 						NodeMessage nodeMessage = (NodeMessage)message;
-						if (nodeMessage.verify(nodeMessage.getNode().getIdentity().getECPublicKey()) == false)
+						if (nodeMessage.verify(nodeMessage.getNode().getIdentity()) == false)
 						{
 							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" NodeMessage failed verification");
 							socket.close();
@@ -520,7 +520,7 @@ public final class Network implements Service
 						{
 							for (Peer preferredPeer : preferred)
 							{
-								if (Network.this.get(preferredPeer.getNode().getIdentity().getECPublicKey(), Protocol.TCP) != null)
+								if (Network.this.get(preferredPeer.getNode().getIdentity(), Protocol.TCP) != null)
 									continue;
 								
 								Network.this.connecting.lock();
@@ -733,7 +733,7 @@ public final class Network implements Service
 	}
 
 	@SuppressWarnings("unchecked")
-	private <T extends ConnectedPeer> T get(ECPublicKey identity, Protocol protocol, PeerState ... states)
+	private <T extends ConnectedPeer> T get(PublicKey identity, Protocol protocol, PeerState ... states)
 	{
 		synchronized(this.peers)
 		{
@@ -749,7 +749,7 @@ public final class Network implements Service
 		return null;
 	}
 
-	public boolean has(ECPublicKey identity, PeerState ... states)
+	public boolean has(PublicKey identity, PeerState ... states)
 	{
 		synchronized(this.peers)
 		{
@@ -764,7 +764,7 @@ public final class Network implements Service
 		}
 	}
 
-	public boolean has(ECPublicKey identity, Protocol protocol, PeerState ... states)
+	public boolean has(PublicKey identity, Protocol protocol, PeerState ... states)
 	{
 		synchronized(this.peers)
 		{

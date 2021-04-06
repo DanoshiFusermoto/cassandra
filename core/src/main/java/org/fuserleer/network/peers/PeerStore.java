@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Objects;
 
 import org.fuserleer.Context;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.database.DatabaseException;
 import org.fuserleer.database.DatabaseStore;
 import org.fuserleer.exceptions.StartupException;
@@ -212,7 +212,7 @@ public class PeerStore extends DatabaseStore
 		}
 	}
 
-	public boolean delete(final ECPublicKey identity) throws IOException
+	public boolean delete(final PublicKey identity) throws IOException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 
@@ -249,7 +249,7 @@ public class PeerStore extends DatabaseStore
 		try
         {
 			// Ensure we only allow ONE instance of an identity //
-			Peer existingPeer = get(transaction, peer.getNode().getIdentity().getECPublicKey());
+			Peer existingPeer = get(transaction, peer.getNode().getIdentity());
 			if (existingPeer != null && existingPeer.getURI().equals(peer.getURI()) == false)
 			{
 				DatabaseEntry key = new DatabaseEntry(peer.getNode().getIdentity().asHash().toByteArray());
@@ -415,7 +415,7 @@ public class PeerStore extends DatabaseStore
 		return peers;
 	}
 
-	public boolean has(final ECPublicKey identity) throws IOException
+	public boolean has(final PublicKey identity) throws IOException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 
@@ -435,12 +435,12 @@ public class PeerStore extends DatabaseStore
 		return false;
 	}
 
-	public Peer get(final ECPublicKey identity) throws IOException
+	public Peer get(final PublicKey identity) throws IOException
 	{
 		return get(null, identity);
 	}
 	
-	private Peer get(final Transaction transaction, final ECPublicKey identity) throws IOException
+	private Peer get(final Transaction transaction, final PublicKey identity) throws IOException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		

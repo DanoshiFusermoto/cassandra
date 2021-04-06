@@ -1,6 +1,8 @@
 package org.fuserleer.ledger;
 
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.BLSKeyPair;
+import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -11,7 +13,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.block.vote")
-public final class BlockVote extends Vote<Hash>
+public final class BlockVote extends Vote<Hash, BLSKeyPair, BLSPublicKey, BLSSignature>
 {
 	@JsonProperty("clock")
 	@DsonOutput(Output.ALL)
@@ -23,7 +25,7 @@ public final class BlockVote extends Vote<Hash>
 		// SERIALIZER
 	}
 	
-	public BlockVote(final Hash object, final long clock, final ECPublicKey owner)
+	public BlockVote(final Hash object, final long clock, final BLSPublicKey owner)
 	{
 		super(object, StateDecision.POSITIVE, owner);
 		

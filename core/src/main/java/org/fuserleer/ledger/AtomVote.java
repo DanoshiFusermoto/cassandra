@@ -1,11 +1,13 @@
 package org.fuserleer.ledger;
 
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.BLSKeyPair;
+import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.SerializerId2;
 
 @SerializerId2("ledger.atom.vote")
-public final class AtomVote extends Vote<Hash>
+public final class AtomVote extends Vote<Hash, BLSKeyPair, BLSPublicKey, BLSSignature>
 {
 	@SuppressWarnings("unused")
 	private AtomVote()
@@ -13,7 +15,7 @@ public final class AtomVote extends Vote<Hash>
 		// SERIALIZER
 	}
 	
-	public AtomVote(final Hash atom, final ECPublicKey owner)
+	public AtomVote(final Hash atom, final BLSPublicKey owner)
 	{
 		super(atom, StateDecision.POSITIVE, owner);
 	}

@@ -2,26 +2,21 @@ package org.fuserleer.ledger;
 
 import java.util.Objects;
 
+import org.fuserleer.crypto.BLSKeyPair;
+import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECKeyPair;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
-import org.fuserleer.serialization.SerializationException;
 import org.fuserleer.utils.UInt256;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.primitives.Longs;
 
-import net.consensys.mikuli.crypto.BLS12381;
-import net.consensys.mikuli.crypto.BLSKeyPair;
-import net.consensys.mikuli.crypto.BLSSignature;
-
 @SerializerId2("ledger.state.vote")
-public final class StateVote extends Vote<StateKey<?, ?>>
+public final class StateVote extends Vote<StateKey<?, ?>, BLSKeyPair, BLSPublicKey, BLSSignature>
 {
 	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
@@ -42,10 +37,6 @@ public final class StateVote extends Vote<StateKey<?, ?>>
 	@JsonProperty("execution")
 	@DsonOutput(Output.ALL)
 	private Hash execution;
-	
-	@JsonProperty("aggregatable")
-	@DsonOutput(Output.ALL)
-	private BLSSignature aggregatable;
 
 	@SuppressWarnings("unused")
 	private StateVote()
@@ -53,7 +44,7 @@ public final class StateVote extends Vote<StateKey<?, ?>>
 		// SERIALIZER
 	}
 	
-	public StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final ECPublicKey owner)
+	public StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final BLSPublicKey owner)
 	{
 		super(state, Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, owner);
 
@@ -70,7 +61,7 @@ public final class StateVote extends Vote<StateKey<?, ?>>
 		this.execution = execution;
 	}
 
-	public StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final ECPublicKey owner, final ECSignature signature, BLSSignature aggregatable) throws CryptoException
+	public StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final BLSPublicKey owner, final BLSSignature signature, BLSSignature aggregatable) throws CryptoException
 	{
 		super(state, Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, owner, signature);
 
@@ -120,11 +111,5 @@ public final class StateVote extends Vote<StateKey<?, ?>>
 	public Hash getExecution()
 	{
 		return this.execution;
-	}
-
-	public void sign(ECKeyPair identityKey, BLSKeyPair blsKey) throws SerializationException, CryptoException
-	{
-		this.sign(identityKey);
-		this.aggregatable = BLS12381.sign(blsKey, getHash().toByteArray()).signature();
 	}
 }

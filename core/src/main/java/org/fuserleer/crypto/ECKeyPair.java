@@ -78,36 +78,6 @@ public final class ECKeyPair extends KeyPair<ECPrivateKey, ECPublicKey, ECSignat
 		}
 	}
 
-	/**
-	 * Write a private key to a file.
-	 *
-	 * @param file  The file to store the private key to.
-	 * @param key   The key to store.
-	 * 
-	 * @throws IOException If writing the file fails
-	 */
-	public static final void toFile(File file, ECKeyPair key) throws IOException 
-	{
-		File dir = file.getParentFile();
-		if (dir != null && dir.exists() == false && dir.mkdirs() == false)
-			throw new FileNotFoundException("Failed to create directory: " + dir.toString());
-
-		try (FileOutputStream io = new FileOutputStream(file)) 
-		{
-			try 
-			{
-				Set<PosixFilePermission> perms = ImmutableSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-				Files.setPosixFilePermissions(file.toPath(), perms);
-			} 
-			catch (UnsupportedOperationException ignoredException) 
-			{
-				// probably windows
-			}
-
-			io.write(key.getPrivateKey().toByteArray());
-		}
-	}
-
 	private final ECPrivateKey privateKey;
 	private final ECPublicKey publicKey;
 

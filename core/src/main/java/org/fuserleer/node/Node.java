@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.fuserleer.BasicObject;
+import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.ledger.BlockHeader;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
@@ -50,7 +51,7 @@ public class Node extends BasicObject
 
 	@JsonProperty("identity")
 	@DsonOutput(Output.ALL)
-	private NodeIdentity	identity;
+	private BLSPublicKey identity;
 	
 	public Node()
 	{
@@ -84,7 +85,7 @@ public class Node extends BasicObject
 		this.synced = node.isSynced();
 	}
 
-	public Node(final NodeIdentity identity, final BlockHeader head, final String agent, final int agentVersion, final int protocolVersion, 
+	public Node(final BLSPublicKey identity, final BlockHeader head, final String agent, final int agentVersion, final int protocolVersion, 
 				final int networkPort, final int apiPort, final int websocketPort, final boolean synced)
 	{
 		this();
@@ -207,7 +208,7 @@ public class Node extends BasicObject
 		return false;
 	}
 
-	public NodeIdentity getIdentity()
+	public BLSPublicKey getIdentity()
 	{
 		return this.identity;
 	}

@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 
+import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.database.DatabaseEnvironment;
 import org.fuserleer.database.SystemMetaData;
 import org.fuserleer.events.Events;
@@ -45,7 +46,7 @@ public final class Context implements Service
 	private static final AtomicInteger incrementer = new AtomicInteger(0);
 	private static Context _default = null;
 	
-	public final static Context create()
+	public final static Context create() throws StartupException
 	{
 		return Context.create("node-"+contexts.size(), Configuration.getDefault());
 	}
@@ -65,7 +66,7 @@ public final class Context implements Service
 		}
 	}
 
-	public final static Context create(final Configuration config)
+	public final static Context create(final Configuration config) throws StartupException
 	{
 		Objects.requireNonNull(config);
 		
@@ -121,7 +122,7 @@ public final class Context implements Service
 		}
 	}
 	
-	public final static Context create(final String name, final Configuration configuration)
+	public final static Context create(final String name, final Configuration configuration) throws StartupException
 	{
 		Objects.requireNonNull(name);
 		Objects.requireNonNull(configuration);
@@ -146,7 +147,16 @@ public final class Context implements Service
 				contextConfig.set("network.seeds", String.join(",", seedSet));
 			}
 
-			LocalNode node = LocalNode.load(name.toLowerCase(), contextConfig, true);
+			LocalNode node;
+			try
+			{
+				node = LocalNode.load(name.toLowerCase(), contextConfig, true);
+			}
+			catch (CryptoException e)
+			{
+				throw new StartupException(e);
+			}
+			
 			for (Context context : contexts.values())
 				if (context.node.getIdentity().equals(node.getIdentity()) == true)
 					throw new IllegalStateException("Context "+name.toLowerCase()+":"+node+" already created");
@@ -268,12 +278,9 @@ public final class Context implements Service
 				
 				Node persisted = Serialization.getInstance().fromDson(nodeBytes, Node.class);
 
-				if (persisted.getIdentity().getECPublicKey().equals(Context.this.node.getIdentity().getECPublicKey()) == false) // TODO what happens if has changed?  Dump everything?
-					log.warn("Node key has changed from "+persisted.getIdentity().getECPublicKey()+" to "+Context.this.node.getIdentity().getECPublicKey());
+				if (persisted.getIdentity().equals(Context.this.node.getIdentity()) == false) // TODO what happens if has changed?  Dump everything?
+					log.warn("Node key has changed from "+persisted.getIdentity()+" to "+Context.this.node.getIdentity());
 				
-				if (persisted.getIdentity().getBLSPublicKey().equals(Context.this.node.getIdentity().getBLSPublicKey()) == false) // TODO what happens if has changed?  Dump everything?
-					log.warn("Node key has changed from "+persisted.getIdentity().getBLSPublicKey()+" to "+Context.this.node.getIdentity().getBLSPublicKey());
-
 				Context.this.node.fromPersisted(persisted);
 			} 
 			catch (IOException ex) 

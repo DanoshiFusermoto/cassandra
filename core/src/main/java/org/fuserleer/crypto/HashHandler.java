@@ -1,7 +1,5 @@
 package org.fuserleer.crypto;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 /**
  * Interface for abstract 256-bit and 512-bit cryptographic hash functions.
  * <p>

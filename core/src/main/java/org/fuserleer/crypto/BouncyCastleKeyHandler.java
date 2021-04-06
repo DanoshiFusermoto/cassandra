@@ -32,7 +32,7 @@ class BouncyCastleKeyHandler implements KeyHandler {
 
 	@Override
 	public ECSignature sign(byte[] hash, byte[] privateKey) throws CryptoException {
-		CryptoUtils.signed.incrementAndGet();
+		CryptoUtils.ECCSigned.incrementAndGet();
 		ECDSASigner signer = new ECDSASigner();
 		signer.init(true, new ParametersWithRandom(
 			new ECPrivateKeyParameters(new BigInteger(1, privateKey), domain), secureRandom));
@@ -46,7 +46,7 @@ class BouncyCastleKeyHandler implements KeyHandler {
 
 	@Override
 	public boolean verify(byte[] hash, ECSignature signature, byte[] publicKey) throws CryptoException {
-		CryptoUtils.verified.incrementAndGet();
+		CryptoUtils.ECCVerified.incrementAndGet();
 		ECDSASigner verifier = new ECDSASigner();
 		verifier.init(false, new ECPublicKeyParameters(spec.getCurve().decodePoint(publicKey), domain));
 		return verifier.verifySignature(hash, signature.getR(), signature.getS());

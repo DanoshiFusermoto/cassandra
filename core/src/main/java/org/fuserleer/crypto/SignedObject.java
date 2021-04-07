@@ -27,11 +27,11 @@ public final class SignedObject<T>
 	
 	@JsonProperty("owner")
 	@DsonOutput(Output.ALL)
-	private ECPublicKey owner;
+	private PublicKey owner;
 
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
-	private ECSignature signature;
+	private Signature signature;
 	
 	@SuppressWarnings("unused")
 	private SignedObject()
@@ -39,7 +39,7 @@ public final class SignedObject<T>
 		// For serializer
 	}
 	
-	public SignedObject(final T object, final ECPublicKey owner)
+	public SignedObject(final T object, final PublicKey owner)
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
 		
@@ -48,7 +48,7 @@ public final class SignedObject<T>
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
 	}
 
-	public SignedObject(final T object, final ECPublicKey owner, final ECSignature signature) throws CryptoException
+	public SignedObject(final T object, final PublicKey owner, final Signature signature) throws CryptoException
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
@@ -72,12 +72,12 @@ public final class SignedObject<T>
 		return this.object;
 	}
 
-	public final ECPublicKey getOwner()
+	public final PublicKey getOwner()
 	{
 		return this.owner;
 	}
 
-	public final synchronized void sign(final ECKeyPair key) throws CryptoException, SerializationException
+	public final synchronized void sign(final KeyPair<?, ?, ?> key) throws CryptoException, SerializationException
 	{
 		Objects.requireNonNull(key, "Signing key is null");
 
@@ -93,7 +93,7 @@ public final class SignedObject<T>
 		this.signature = key.sign(objectHash);
 	}
 
-	public final synchronized boolean verify(final ECPublicKey key) throws CryptoException, SerializationException
+	public final synchronized boolean verify(final PublicKey key) throws CryptoException, SerializationException
 	{
 		Objects.requireNonNull(key, "Verification key is null");
 		
@@ -120,7 +120,7 @@ public final class SignedObject<T>
 		return true;
 	}
 	
-	public final synchronized ECSignature getSignature()
+	public final synchronized Signature getSignature()
 	{
 		return this.signature;
 	}

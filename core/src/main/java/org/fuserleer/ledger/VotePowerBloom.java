@@ -5,7 +5,7 @@ import java.util.Objects;
 import org.bouncycastle.util.Arrays;
 import org.fuserleer.BasicObject;
 import org.fuserleer.collections.Bloom;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -54,7 +54,7 @@ public final class VotePowerBloom extends BasicObject
 		this.shardGroup = shardGroup;
 	}
 	
-	void add(final ECPublicKey identity, final long power)
+	void add(final PublicKey identity, final long power)
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		Numbers.isNegative(power, "Power is negative");
@@ -64,18 +64,18 @@ public final class VotePowerBloom extends BasicObject
 		
 		for (int shift = 0 ; shift < MAX_VOTE_POWER_SHIFTS ; shift++)
 			if (((power >> shift) & 1) == 1)
-				this.bloom.add(Arrays.concatenate(identity.getBytes(), Ints.toByteArray(shift)));
+				this.bloom.add(Arrays.concatenate(identity.toByteArray(), Ints.toByteArray(shift)));
 		
 		this.totalPower += power;
 	}
 	
-	public long power(final ECPublicKey identity)
+	public long power(final PublicKey identity)
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		
 		int power = 0;
 		for (int shift = 0 ; shift < MAX_VOTE_POWER_SHIFTS ; shift++)
-			if (this.bloom.contains(Arrays.concatenate(identity.getBytes(), Ints.toByteArray(shift))) == true)
+			if (this.bloom.contains(Arrays.concatenate(identity.toByteArray(), Ints.toByteArray(shift))) == true)
 				power += (1 << shift);
 		
 		return power;

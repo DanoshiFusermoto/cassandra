@@ -12,6 +12,7 @@ import java.util.Set;
 
 import org.json.JSONObject;
 import org.fuserleer.BasicObject;
+import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
@@ -79,7 +80,7 @@ public class Universe extends BasicObject
 		private Integer shardGroups;
 		private ECPublicKey creator;
 		private Block genesis;
-		private LinkedHashSet<ECPublicKey> genodes;
+		private LinkedHashSet<BLSPublicKey> genodes;
 
 		private Builder() 
 		{
@@ -207,10 +208,10 @@ public class Universe extends BasicObject
 		 * @param genodes The genesis nodes.
 		 * @return A reference to {@code this} to allow method chaining.
 		 */
-		public Builder setGenodes(Set<ECPublicKey> genodes) 
+		public Builder setGenodes(Set<BLSPublicKey> genodes) 
 		{
 			Objects.requireNonNull(genodes);
-			this.genodes = new LinkedHashSet<ECPublicKey>(genodes);
+			this.genodes = new LinkedHashSet<BLSPublicKey>(genodes);
 			return this;
 		}
 		
@@ -313,7 +314,7 @@ public class Universe extends BasicObject
 	@JsonProperty("genodes")
 	@DsonOutput(Output.ALL)
 	@JsonDeserialize(as=LinkedHashSet.class)
-	private Set<ECPublicKey> genodes;
+	private Set<BLSPublicKey> genodes;
 
 	private ECPublicKey creator;
 
@@ -463,7 +464,7 @@ public class Universe extends BasicObject
 	 *
 	 * @return
 	 */
-	public Set<ECPublicKey> getGenodes()
+	public Set<BLSPublicKey> getGenodes()
 	{
 		return this.genodes;
 	}
@@ -493,15 +494,16 @@ public class Universe extends BasicObject
 		this.signature = key.sign(getHash());
 	}
 
-	public boolean verify(ECPublicKey key)
+	public boolean verify(ECPublicKey key) throws CryptoException
 	{
 		return key.verify(getHash(), this.signature);
 	}
 	
 	/**
 	 * Check whether a given universe is valid
+	 * @throws CryptoException 
 	 */
-	public void validate() 
+	public void validate() throws CryptoException 
 	{
 		// Check signature
 		if (this.creator.verify(getHash(), this.signature) == false)
@@ -518,7 +520,7 @@ public class Universe extends BasicObject
 	@DsonOutput(Output.ALL)
 	private byte[] getJsonCreator() 
 	{
-		return this.creator.getBytes();
+		return this.creator.toByteArray();
 	}
 
 	@JsonProperty("creator")

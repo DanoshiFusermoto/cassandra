@@ -5,8 +5,11 @@ import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Options;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.fuserleer.crypto.KeyPair;
+import org.fuserleer.crypto.PublicKey;
+import org.fuserleer.crypto.BLSKeyPair;
+import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.ECKeyPair;
-import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.Universe;
@@ -50,7 +53,7 @@ public final class GenerateUniverses
 	private final ECKeyPair universeKey;
 	private final int numNodes;
 	private final int shardGroups;
-	private final Set<ECPublicKey> nodeKeys;
+	private final Set<BLSPublicKey> nodeKeys;
 	private final CommandLine commandLine;
 //	private final Configuration configuration;
 
@@ -61,7 +64,7 @@ public final class GenerateUniverses
 
 		this.universeKey = ECKeyPair.fromFile(new File("universe.key"), true);
 		
-		this.nodeKeys = new LinkedHashSet<ECPublicKey>();
+		this.nodeKeys = new LinkedHashSet<BLSPublicKey>();
 		if (this.commandLine.hasOption("nodes") && this.commandLine.hasOption("shardgroups"))
 		{
 			this.numNodes = Integer.parseInt(this.commandLine.getOptionValue("nodes"));
@@ -71,18 +74,18 @@ public final class GenerateUniverses
 			
 			for (int sg = 0 ; sg < this.shardGroups ; sg++)
 			{
-				Set<ECKeyPair> shardNodeKeys = new HashSet<ECKeyPair>();
+				Set<BLSKeyPair> shardNodeKeys = new HashSet<BLSKeyPair>();
 				while(shardNodeKeys.size() < nodesPerShardGroup)
 				{
-					ECKeyPair nodeKey = new ECKeyPair();
+					BLSKeyPair nodeKey = new BLSKeyPair();
 					long shardGroup = ShardMapper.toShardGroup(nodeKey.getPublicKey(), this.shardGroups);
 					if (shardGroup == sg)
 						shardNodeKeys.add(nodeKey);
 				}
 
-				for (ECKeyPair shardNodeKey : shardNodeKeys)
+				for (BLSKeyPair shardNodeKey : shardNodeKeys)
 				{
-					ECKeyPair.toFile(new File("node-"+nodeID+".key"), shardNodeKey);
+					KeyPair.toFile(new File("node-"+nodeID+".key"), shardNodeKey);
 					nodeID++;
 					this.nodeKeys.add(shardNodeKey.getPublicKey());
 				}
@@ -98,7 +101,7 @@ public final class GenerateUniverses
 			while (nodeKeysTokenizer.hasMoreTokens() == true)
 			{
 				String nodeKeyToken = nodeKeysTokenizer.nextToken();
-				this.nodeKeys.add(ECPublicKey.from(nodeKeyToken));
+				this.nodeKeys.add(BLSPublicKey.from(nodeKeyToken));
 			}
 			
 			this.shardGroups = 1;
@@ -113,8 +116,8 @@ public final class GenerateUniverses
 
 	public List<Universe> generateDeployments() throws Exception 
 	{
-		LOGGER.info("UNIVERSE KEY PRIVATE:  "+Bytes.toHexString(this.universeKey.getPrivateKey()));
-		LOGGER.info("UNIVERSE KEY PUBLIC:   "+Bytes.toHexString(this.universeKey.getPublicKey().getBytes()));
+		LOGGER.info("UNIVERSE KEY PRIVATE:  "+Bytes.toHexString(this.universeKey.getPrivateKey().toByteArray()));
+		LOGGER.info("UNIVERSE KEY PUBLIC:   "+Bytes.toHexString(this.universeKey.getPublicKey().toByteArray()));
 
 		List<Universe> universes = new ArrayList<>();
 
@@ -164,9 +167,11 @@ public final class GenerateUniverses
 		final TransferParticle transferParticle = new TransferParticle(UInt256.from(UInt128.HIGH_BIT), tokenParticle.getHash(), Spin.UP, this.universeKey.getPublicKey());
 		transferParticle.sign(this.universeKey);
 
+		// TODo want to actually save this or something?
+		final BLSKeyPair ephemeralValidator = new BLSKeyPair();
 		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
-		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 4096) * 4095), UInt256.ZERO, 0, timestamp, this.universeKey.getPublicKey(), atoms, Collections.emptyList());
-		genesisBlock.getHeader().sign(this.universeKey);
+		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 4096) * 4095), UInt256.ZERO, 0, timestamp, ephemeralValidator.getPublicKey(), atoms, Collections.emptyList());
+		genesisBlock.getHeader().sign(ephemeralValidator);
 		return genesisBlock;
 	}
 

@@ -15,8 +15,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.fuserleer.Context;
+import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
 import org.fuserleer.exceptions.ValidationException;
@@ -73,7 +73,7 @@ public final class PendingAtom implements Hashable
 	private long			voteWeight;
 	private long			voteThreshold;
 	private final Set<AtomVote> votes;
-	private final Map<ECPublicKey, Long> voted;
+	private final Map<BLSPublicKey, Long> voted;
 	
 	private AtomCertificate certificate;
 	private final Map<StateKey<?, ?>, StateCertificate> certificates;
@@ -102,7 +102,7 @@ public final class PendingAtom implements Hashable
 		this.voteWeight = 0l;
 		this.voteThreshold = 0l;
 		this.votes = new HashSet<AtomVote>();
-		this.voted = new HashMap<ECPublicKey, Long>();
+		this.voted = new HashMap<BLSPublicKey, Long>();
 		this.certificates = new HashMap<StateKey<?, ?>, StateCertificate>();
 		this.status = new AtomicReference<CommitStatus>(CommitStatus.NONE);
 		this.locks = new AtomicInteger(0);
@@ -554,7 +554,7 @@ public final class PendingAtom implements Hashable
 		return this.hash+" @ "+this.witnessedAt;
 	}
 	
-	boolean voted(final ECPublicKey identity)
+	boolean voted(final BLSPublicKey identity)
 	{
 		this.lock.readLock().lock();
 		try

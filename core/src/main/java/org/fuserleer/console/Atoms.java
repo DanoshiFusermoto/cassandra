@@ -4,7 +4,9 @@ import java.io.PrintStream;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
+import org.fuserleer.API;
 import org.fuserleer.Context;
+import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.UniqueParticle;
@@ -43,10 +45,13 @@ public class Atoms extends Function
 			for (int i = 0 ; i < Integer.parseInt(commandLine.getOptionValue("submit", "1")) ; i++)
 			{
 				Hash randomValue = Hash.random();
-				UniqueParticle particle = new UniqueParticle(randomValue, context.getNode().getIdentity().getECPublicKey());
+				ECKeyPair key = new ECKeyPair();
+				UniqueParticle particle = new UniqueParticle(randomValue, key.getPublicKey());
+				particle.sign(key);
+
 				Atom atom = new Atom(particle);
 				context.getLedger().submit(atom);
-	
+
 				JSONObject atomJSONObject = Serialization.getInstance().toJsonObject(atom, Output.PERSIST);
 				printStream.println("Submitted "+atom.getHash());
 				printStream.println(atomJSONObject.toString(4));

@@ -8,14 +8,13 @@ import java.util.Set;
 
 import org.bouncycastle.util.Arrays;
 import org.fuserleer.Context;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.database.DatabaseException;
 import org.fuserleer.database.DatabaseStore;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
-import org.fuserleer.node.NodeIdentity;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.utils.Longs;
@@ -155,12 +154,12 @@ class VotePowerStore extends DatabaseStore
 	@Override
 	public void flush() throws DatabaseException  { /* Not used */ }
 
-	public long get(final ECPublicKey identity, final long height) throws DatabaseException
+	public long get(final BLSPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		Numbers.isNegative(height, "Height is negative");
 
-		byte[] identityBytes = identity.getBytes();
+		byte[] identityBytes = identity.toByteArray();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
 		DatabaseEntry search = new DatabaseEntry(identityBytes);
 		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
@@ -175,7 +174,7 @@ class VotePowerStore extends DatabaseStore
 			status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
 			if (status.equals(OperationStatus.SUCCESS) == true)
 			{
-				if (Arrays.areEqual(identity.getBytes(), search.getData()) == true)
+				if (Arrays.areEqual(identity.toByteArray(), search.getData()) == true)
 				{
 					status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
 					if (status.equals(OperationStatus.SUCCESS) == false)
@@ -204,12 +203,12 @@ class VotePowerStore extends DatabaseStore
 		}
 	}
 	
-	public long increment(final ECPublicKey identity, final long height) throws DatabaseException
+	public long increment(final BLSPublicKey identity, final long height) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		Numbers.isNegative(height, "Height is negative");
 
-		byte[] identityBytes = identity.getBytes();
+		byte[] identityBytes = identity.toByteArray();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
 		DatabaseEntry search = new DatabaseEntry(identityBytes);
 		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
@@ -227,7 +226,7 @@ class VotePowerStore extends DatabaseStore
 				status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
 				{
-					if (Arrays.areEqual(identity.getBytes(), search.getData()) == true)
+					if (Arrays.areEqual(identity.toByteArray(), search.getData()) == true)
 					{
 						status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
 						if (status.equals(OperationStatus.SUCCESS) == false)
@@ -260,7 +259,7 @@ class VotePowerStore extends DatabaseStore
 				for (long h = powerMaxHeight ; h <= height ; h++)
 				{
 					key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
-					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.getBytes()));
+					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.toByteArray()));
 				    status = this.votePowerDatabase.put(transaction, key, value);
 					if (status.equals(OperationStatus.SUCCESS) == false)
 						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
@@ -279,7 +278,7 @@ class VotePowerStore extends DatabaseStore
 					throw new DatabaseException("Vote power state for "+identity+" @ "+height+" may be corrupted");
 				
 				long incremented = current+1;
-				value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(incremented), identity.getBytes()));
+				value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(incremented), identity.toByteArray()));
 				status = this.votePowerDatabase.put(transaction, key, value);
 				if (status.equals(OperationStatus.SUCCESS) == false)
 					throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
@@ -304,12 +303,12 @@ class VotePowerStore extends DatabaseStore
 	 * @return
 	 * @throws DatabaseException
 	 */
-	public long set(final ECPublicKey identity, final long height, final long power) throws DatabaseException
+	public long set(final BLSPublicKey identity, final long height, final long power) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		Numbers.isNegative(height, "Height is negative");
 
-		byte[] identityBytes = identity.getBytes();
+		byte[] identityBytes = identity.toByteArray();
 		byte[] identityKeyPrefix = Arrays.copyOf(identityBytes, Long.BYTES);
 		DatabaseEntry search = new DatabaseEntry(identityBytes);
 		DatabaseEntry key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(height)));
@@ -327,7 +326,7 @@ class VotePowerStore extends DatabaseStore
 				status = cursor.getSearchKeyRange(search, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
 				{
-					if (Arrays.areEqual(identity.getBytes(), search.getData()) == true)
+					if (Arrays.areEqual(identity.toByteArray(), search.getData()) == true)
 					{
 						status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
 						if (status.equals(OperationStatus.SUCCESS) == false)
@@ -366,7 +365,7 @@ class VotePowerStore extends DatabaseStore
 				for (long h = powerMaxHeight ; h <= height ; h++)
 				{
 					key = new DatabaseEntry(Bytes.concat(identityKeyPrefix, Longs.toByteArray(h)));
-					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.getBytes()));
+					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(powerAtHeight), identity.toByteArray()));
 				    status = this.votePowerDatabase.put(transaction, key, value);
 					if (status.equals(OperationStatus.SUCCESS) == false)
 						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
@@ -386,7 +385,7 @@ class VotePowerStore extends DatabaseStore
 				
 				if (current < power)
 				{
-					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(power), identity.getBytes()));
+					value = new DatabaseEntry(Arrays.concatenate(Longs.toByteArray(power), identity.toByteArray()));
 					status = this.votePowerDatabase.put(transaction, key, value);
 					if (status.equals(OperationStatus.SUCCESS) == false)
 						throw new DatabaseException("Failed to set vote power for "+identity+" @ "+h);
@@ -403,9 +402,9 @@ class VotePowerStore extends DatabaseStore
 		}
 	}
 
-	public Collection<ECPublicKey> getWithPower() throws DatabaseException
+	public Collection<BLSPublicKey> getWithPower() throws DatabaseException
 	{
-		Set<ECPublicKey> identities = new HashSet<ECPublicKey>();
+		Set<BLSPublicKey> identities = new HashSet<BLSPublicKey>();
 		DatabaseEntry key = new DatabaseEntry();
 	    DatabaseEntry value = new DatabaseEntry();
 	    
@@ -414,7 +413,33 @@ class VotePowerStore extends DatabaseStore
 			OperationStatus status = cursor.getFirst(key, value, LockMode.DEFAULT);
 			while (status.equals(OperationStatus.SUCCESS) == true)
 			{
-				identities.add(ECPublicKey.from(key.getData()));
+				identities.add(BLSPublicKey.from(key.getData()));
+				status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
+			}
+			
+			return identities;
+		}
+		catch (Exception e)
+		{
+			throw new DatabaseException(e);
+		}
+	}
+
+	public Collection<BLSPublicKey> get(long shardGroup, long numShardGroups) throws DatabaseException
+	{
+		Set<BLSPublicKey> identities = new HashSet<BLSPublicKey>();
+		DatabaseEntry key = new DatabaseEntry();
+	    DatabaseEntry value = new DatabaseEntry();
+	    
+		try (Cursor cursor = this.identitiesDatabase.openCursor(null, null)) 
+		{
+			OperationStatus status = cursor.getFirst(key, value, LockMode.DEFAULT);
+			while (status.equals(OperationStatus.SUCCESS) == true)
+			{
+				BLSPublicKey identity = Serialization.getInstance().fromDson(value.getData(), BLSPublicKey.class);
+				if (ShardMapper.toShardGroup(identity, numShardGroups) == shardGroup)
+					identities.add(identity);
+				
 				status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
 			}
 			
@@ -426,9 +451,9 @@ class VotePowerStore extends DatabaseStore
 		}
 	}
 	
-	public Collection<NodeIdentity> getIdentities() throws DatabaseException
+	public Collection<BLSPublicKey> getIdentities() throws DatabaseException
 	{
-		Set<NodeIdentity> identities = new HashSet<NodeIdentity>();
+		Set<BLSPublicKey> identities = new HashSet<BLSPublicKey>();
 		DatabaseEntry key = new DatabaseEntry();
 	    DatabaseEntry value = new DatabaseEntry();
 	    
@@ -437,7 +462,7 @@ class VotePowerStore extends DatabaseStore
 			OperationStatus status = cursor.getFirst(key, value, LockMode.DEFAULT);
 			while (status.equals(OperationStatus.SUCCESS) == true)
 			{
-				identities.add(Serialization.getInstance().fromDson(value.getData(), NodeIdentity.class));
+				identities.add(Serialization.getInstance().fromDson(value.getData(), BLSPublicKey.class));
 				status = cursor.getNextNoDup(key, value, LockMode.DEFAULT);
 			}
 			
@@ -453,13 +478,13 @@ class VotePowerStore extends DatabaseStore
 	//		 attacker could present a changed binding to a single node, and BLS signatures
 	//		 will then fail ... causing that node to be unable to sync, or perform excessive
 	//		 work to resolve the issue.
-	public OperationStatus store(final NodeIdentity identity) throws DatabaseException
+	public OperationStatus store(final BLSPublicKey identity) throws DatabaseException
 	{
 		Objects.requireNonNull(identity, "Identity is null");
 		
 		try
         {
-			DatabaseEntry key = new DatabaseEntry(identity.getECPublicKey().getBytes());
+			DatabaseEntry key = new DatabaseEntry(identity.toByteArray());
 			byte[] bytes = Serialization.getInstance().toDson(identity, Output.PERSIST);
 			DatabaseEntry value = new DatabaseEntry(bytes);
 			OperationStatus status = this.identitiesDatabase.putNoOverwrite(null, key, value);

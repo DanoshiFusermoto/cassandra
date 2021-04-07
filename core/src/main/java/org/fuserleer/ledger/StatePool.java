@@ -18,14 +18,17 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
+import org.fuserleer.collections.Bloom;
 import org.fuserleer.collections.MappedBlockingQueue;
 import org.fuserleer.common.Primitive;
+import org.fuserleer.crypto.BLS12381;
+import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignatureBag;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.crypto.MerkleProof.Branch;
@@ -79,7 +82,7 @@ public final class StatePool implements Service
 		private final StateKey<?, ?> key;
 		private final ReentrantLock lock = new ReentrantLock();
 
-		private final Map<ECPublicKey, StateVote> votes;
+		private final Map<BLSPublicKey, StateVote> votes;
 		private final Map<Hash, Long> weights;
 		private StateCertificate certificate;
 
@@ -88,7 +91,7 @@ public final class StatePool implements Service
 			this.key = Objects.requireNonNull(key);
 			this.atom = Objects.requireNonNull(atom);
 			this.block = Objects.requireNonNull(block);
-			this.votes = new HashMap<ECPublicKey, StateVote>();
+			this.votes = new HashMap<BLSPublicKey, StateVote>();
 			this.weights = new HashMap<Hash, Long>();
 		}
 
@@ -139,7 +142,6 @@ public final class StatePool implements Service
 				if (executionWithMajority == null)
 					return null;
 				
-				final ECSignatureBag signatureBag = new ECSignatureBag();
 				final List<StateVote> votes = new ArrayList<StateVote>();
 				for (StateVote vote : this.votes.values())
 				{
@@ -147,14 +149,19 @@ public final class StatePool implements Service
 						continue;
 					
 					votes.add(vote);
-					signatureBag.add(vote.getOwner(), vote.getSignature());
 				}
+				
+				final Bloom signers = new Bloom(0.000001, this.votes.size());
+				BLSSignature signature = BLS12381.aggregateSignatures(votes.stream().map(v -> {
+					signers.add(v.getOwner().toByteArray());
+					return v.getSignature();
+				}).collect(Collectors.toList()));
 				
 				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getValidatorHandler().getVotePowerBloom(getBlock(), shardGroup);
 				// TODO need merkles
 				final StateCertificate certificate = new StateCertificate(votes.get(0).getState(), votes.get(0).getAtom(), votes.get(0).getBlock(), 
 																		  votes.get(0).getInput(), votes.get(0).getOutput(), votes.get(0).getExecution(), 
-																	      Hash.random(), Collections.singletonList(new MerkleProof(Hash.random(), Branch.OLD_ROOT)), votePowers, signatureBag);
+																	      Hash.random(), Collections.singletonList(new MerkleProof(Hash.random(), Branch.OLD_ROOT)), votePowers, signers, signature);
 				this.certificate = certificate;
 				statePoolLog.info(StatePool.this.context.getName()+": State certificate "+certificate.getHash()+" for state "+votes.get(0).getState()+" in atom "+votes.get(0).getAtom()+" has "+votes.get(0).getDecision()+" agreement with "+executionWithMajorityWeight+"/"+totalVotePower);
 				
@@ -166,7 +173,7 @@ public final class StatePool implements Service
 			}
 		}
 		
-		public StateVote vote(ECPublicKey identity)
+		public StateVote vote(BLSPublicKey identity)
 		{
 			this.lock.lock();
 			try
@@ -179,7 +186,7 @@ public final class StatePool implements Service
 			}
 		}
 		
-		boolean voted(ECPublicKey identity)
+		boolean voted(BLSPublicKey identity)
 		{
 			this.lock.lock();
 			try
@@ -361,7 +368,7 @@ public final class StatePool implements Service
 									}
 									
 									// Always vote locally even if no vote power so that can determine the accuracy of local execution
-									long localVotePower = StatePool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, pendingState.getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity().getECPublicKey());
+									long localVotePower = StatePool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, pendingState.getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity());
 									if (pendingAtom.thrown() == null && pendingAtom.getExecution() == null)
 										throw new IllegalStateException("Can not vote on state "+pendingState.getKey()+" when no decision made");
 									
@@ -371,8 +378,8 @@ public final class StatePool implements Service
 										Optional<UInt256> output = pendingAtom.getOutput(pendingState.getKey());
 										StateVote stateVote = new StateVote(pendingState.getKey(), pendingState.getAtom(), pendingState.getBlock(), 
 																  			input == null ? null : input.orElse(null), output == null ? null : output.orElse(null),
-																  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity().getECPublicKey());
-										stateVote.sign(StatePool.this.context.getNode().getECKey(), StatePool.this.context.getNode().getBLSKey());
+																  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
+										stateVote.sign(StatePool.this.context.getNode().getKeyPair());
 										
 										if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == true)
 										{

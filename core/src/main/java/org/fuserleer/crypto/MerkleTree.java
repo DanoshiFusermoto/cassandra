@@ -1,6 +1,7 @@
 package org.fuserleer.crypto;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 public class MerkleTree
@@ -49,6 +50,15 @@ public class MerkleTree
     }
 
     public List<MerkleNode> appendLeaves(Hash[] hashes) 
+    {
+        List<MerkleNode> nodes = new ArrayList<>();
+        for (Hash hash : hashes)
+            nodes.add(this.appendLeaf(hash));
+
+        return nodes;
+    }
+
+    public List<MerkleNode> appendLeaves(Collection<Hash> hashes) 
     {
         List<MerkleNode> nodes = new ArrayList<>();
         for (Hash hash : hashes)

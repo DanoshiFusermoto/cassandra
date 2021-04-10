@@ -158,6 +158,9 @@ public abstract class Message extends BasicObject
 
 	public final void sign(BLSKeyPair key) throws CryptoException
 	{
+		if (this.signature != null)
+			throw new IllegalStateException("Message "+this+" is already signed");
+		
 		this.sender = key.getPublicKey();
 		this.signature = (BLSSignature) key.sign(getHash());
 	}

@@ -299,6 +299,12 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
+								if (block.getHeader().getCertificate().getSigners().count() == 0)
+								{
+									syncLog.warn(SyncHandler.this.context.getName()+": Block "+block.getHeader()+" has an empty certificate!");
+									continue;
+								}
+
 								long blockVotePower = SyncHandler.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), block.getHeader().getCertificate().getSigners());
 								if (blockVotePower < SyncHandler.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup)))
 									continue;

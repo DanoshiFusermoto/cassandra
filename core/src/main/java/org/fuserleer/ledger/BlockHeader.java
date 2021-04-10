@@ -334,6 +334,9 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	{
 		Objects.requireNonNull(key, "Key pair is null");
 		
+		if (this.signature != null)
+			throw new IllegalStateException("Block header already signed "+this);
+		
 		if (key.getPublicKey().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign block header with key that doesn't match owner");
 

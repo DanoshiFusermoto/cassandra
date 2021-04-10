@@ -1,5 +1,7 @@
 package org.fuserleer.ledger;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -47,12 +49,14 @@ public final class StateCertificate extends VoteCertificate
 	@DsonOutput(Output.ALL)
 	private Hash execution;
 
+	// FIXME merkle and audit are for remote block proofing
+	//		 not included in certificate hash currently so that aggregated state vote signatures can be verified
 	@JsonProperty("merkle")
-	@DsonOutput(Output.ALL)
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private Hash merkle;
 
 	@JsonProperty("audit")
-	@DsonOutput(Output.ALL)
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private List<MerkleProof> audit;
 
 	// FIXME need to implement some way to have agreement on powers as weakly-subjective and dishonest actors can attempt to inject vote power
@@ -174,5 +178,30 @@ public final class StateCertificate extends VoteCertificate
 	public VotePowerBloom getPowerBloom()
 	{
 		return this.powerBloom;
+	}
+
+	@Override
+	protected Hash getTarget() throws CryptoException
+	{
+		try
+		{
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			baos.write(this.getState().toByteArray());
+			baos.write(this.atom.toByteArray());
+			baos.write(this.block.toByteArray());
+			baos.write(this.execution.toByteArray());
+			
+			// TODO input AND output can be null??
+			if (this.output != null)
+				baos.write(this.output.toByteArray());
+			if (this.input != null)
+				baos.write(this.input.toByteArray());
+			
+			return Hash.from(baos.toByteArray());
+		}
+		catch (IOException ioex)
+		{
+			throw new CryptoException(ioex);
+		}
 	}
 }

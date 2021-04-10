@@ -106,7 +106,7 @@ public final class RUDPPeer extends ConnectedPeer implements Polymorphic
 	private final AtomicLong lastSequencesAck = new AtomicLong(0);
 	private final AtomicLong lastBufferMaintenance = new AtomicLong(0);
 
-	public RUDPPeer(Context context, DatagramChannel socket, URI host, Direction direction, Peer peer) throws IOException
+	public RUDPPeer(Context context, DatagramChannel socket, URI host, Direction direction, Peer peer) throws IOException, CryptoException
 	{
 		super(context, host, direction, peer);
 
@@ -174,7 +174,7 @@ public final class RUDPPeer extends ConnectedPeer implements Polymorphic
 	{
 		try
 		{
-			byte[] bytes = Message.prepare(message, getContext().getNode().getKeyPair());
+			byte[] bytes = Message.prepare(message, getEphemeralLocalKeyPair());
 			if (bytes.length > 65535)
 				throw new IOException("Datagram packet to "+this+" of size "+bytes.length+" is too large");
 	

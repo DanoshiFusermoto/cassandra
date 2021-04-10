@@ -10,10 +10,14 @@ import java.util.concurrent.TimeUnit;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.Protocol;
-import org.fuserleer.network.messages.NodeMessage;
+import org.fuserleer.network.messages.HandshakeMessage;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.Context;
 import org.fuserleer.common.Direction;
+import org.fuserleer.crypto.BLSSignature;
+import org.fuserleer.crypto.CryptoException;
+import org.fuserleer.crypto.ECKeyPair;
+import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.network.peers.events.PeerBannedEvent;
 import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerConnectingEvent;
@@ -30,14 +34,21 @@ public abstract class ConnectedPeer extends Peer
 	private transient Semaphore	handshake = new Semaphore(1);
 	private transient PeerState	state = PeerState.DISCONNECTED;
 
+	private transient final ECKeyPair ephemeralLocalKeyPair;
+	private transient final BLSSignature ephemeralKeyBinding;
+	private transient volatile ECPublicKey ephemeralRemotePublicKey;
+
 	private transient final Context context;
 
-	ConnectedPeer(Context context, URI host, Direction direction, Peer peer) 
+	ConnectedPeer(Context context, URI host, Direction direction, Peer peer) throws CryptoException 
 	{
 		super(host, peer);
 		
 		this.context = Objects.requireNonNull(context);
 		this.direction = Objects.requireNonNull(direction);
+		
+		this.ephemeralLocalKeyPair = new ECKeyPair();
+		this.ephemeralKeyBinding = context.getNode().getKeyPair().sign(this.ephemeralLocalKeyPair.getPublicKey().toByteArray());
 	}
 
 	Context getContext()
@@ -73,7 +84,7 @@ public abstract class ConnectedPeer extends Peer
 		
 		this.context.getEvents().post(new PeerConnectingEvent(this));
 		
-		send(new NodeMessage(this.context.getNode()));
+		send(new HandshakeMessage(this.context.getNode(), this.ephemeralLocalKeyPair.getPublicKey(), this.ephemeralKeyBinding));
 	}
 
 	synchronized void onConnected()
@@ -96,14 +107,17 @@ public abstract class ConnectedPeer extends Peer
 		return this.handshake.availablePermits() == 0;
 	}
 
-	public final boolean handshake()
+	public final boolean handshake(final ECPublicKey ephemeralRemotePublicKey)
 	{
+		Objects.requireNonNull(ephemeralRemotePublicKey, "Ephemeral remote public key is null");
+		
 		if (this.handshake.tryAcquire() == false)
 			throw new IllegalStateException("Handshake already performed!");
 
 		// Handshake achieved
 		if (this.handshake.availablePermits() == 0)
 		{
+			this.ephemeralRemotePublicKey = ephemeralRemotePublicKey;
 			onConnected();
 			return true;
 		}
@@ -172,6 +186,21 @@ public abstract class ConnectedPeer extends Peer
 		setState(PeerState.DISCONNECTED);
 		setDisconnectedAt(Time.getSystemTime());
 		this.context.getEvents().post(new PeerDisconnectedEvent(this));
+	}
+
+	final ECKeyPair getEphemeralLocalKeyPair()
+	{
+		return this.ephemeralLocalKeyPair;
+	}
+	
+	final BLSSignature getEphemeralKeyBinding()
+	{
+		return this.ephemeralKeyBinding;
+	}
+
+	public final ECPublicKey getEphemeralRemotePublicKey()
+	{
+		return this.ephemeralRemotePublicKey;
 	}
 
 	public abstract void send(Message message) throws IOException;

@@ -23,12 +23,16 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.network.messages.HandshakeMessage;
 import org.fuserleer.network.messages.NodeMessage;
 import org.fuserleer.common.Agent;
 import org.fuserleer.common.Direction;
+import org.fuserleer.crypto.BLSSignature;
+import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.network.peers.Peer;
 import org.fuserleer.network.peers.PeerState;
+import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 
 public class Messaging
@@ -115,29 +119,65 @@ public class Messaging
 						continue;
 					}
 					
-					// MUST send a NodeMessage first to establish handshake //
-					if (inboundMessage.getPeer().isHandshaked() == false && 
-						(inboundMessage.getMessage() instanceof NodeMessage) == false)
+					Node node = null;
+					// MUST send a HandshakeMessage first to establish handshake //
+					if (inboundMessage.getPeer().isHandshaked() == false)
 					{
-						inboundMessage.getPeer().disconnect("Did not send handshake NodeMessage");
-						continue;
+						if(inboundMessage.getMessage() instanceof HandshakeMessage == false)
+						{
+							inboundMessage.getPeer().disconnect("Did not send HandshakeMessage");
+							continue;
+						}
+						
+						node = ((HandshakeMessage)inboundMessage.getMessage()).getNode();
+						if (node == null)
+						{
+							inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": Didn't send node object in handshake");
+							continue;
+						}
+
+						ECPublicKey ephemeralRemotePublicKey = ((HandshakeMessage)inboundMessage.getMessage()).getEphemeralKey();
+						if (ephemeralRemotePublicKey == null)
+						{
+							inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": Didn't send ephemeral public key in handshake");
+							continue;
+						}
+
+						BLSSignature ephemeralBindingSignature = ((HandshakeMessage)inboundMessage.getMessage()).getBinding();
+						if (ephemeralBindingSignature == null)
+						{
+							inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": Didn't send BLS signature binding ephemeral public key to identity in handshake");
+							continue;
+						}
+
+						if (node.getIdentity().verify(ephemeralRemotePublicKey.toByteArray(), ephemeralBindingSignature) == false)
+						{
+							inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": BLS signature binding ephemeral public key to identity failed");
+							continue;
+						}
+						
+						inboundMessage.getPeer().handshake(ephemeralRemotePublicKey);
 					}
 
 					if (inboundMessage.getMessage() instanceof NodeMessage)
+						node = ((NodeMessage)inboundMessage.getMessage()).getNode();
+					
+					// Remote node update?
+					if (node != null)
 					{
-						if (((NodeMessage)inboundMessage.getMessage()).getNode().getIdentity() == null)
+						if (node.getIdentity() == null)
 						{
 							inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": Gave null identity");
 							continue;
 						}
 
-						if (((NodeMessage)inboundMessage.getMessage()).getNode().getAgentVersion() <= Agent.REFUSE_AGENT_VERSION)
+						if (node.getAgentVersion() <= Agent.REFUSE_AGENT_VERSION)
 						{
-							inboundMessage.getPeer().disconnect("Old peer "+inboundMessage.getPeer().getURI()+" "+((NodeMessage)inboundMessage.getMessage()).getNode().getAgent()+":"+((NodeMessage)inboundMessage.getMessage()).getNode().getProtocolVersion());
+							inboundMessage.getPeer().disconnect("Old peer "+inboundMessage.getPeer().getURI()+" "+node.getAgent()+":"+node.getProtocolVersion());
 							continue;
 						}
 
-						if (((NodeMessage)inboundMessage.getMessage()).getNode().getIdentity().equals(Messaging.this.context.getNode().getIdentity()))
+						if (node.getIdentity().equals(Messaging.this.context.getNode().getIdentity()))
 						{
 							inboundMessage.getPeer().ban("Message from self");
 							continue;
@@ -145,24 +185,22 @@ public class Messaging
 
 						if (inboundMessage.getPeer().getState().equals(PeerState.CONNECTED) == false)
 						{
-							Peer knownPeer = Messaging.this.context.getNetwork().getPeerStore().get(((NodeMessage)inboundMessage.getMessage()).getNode().getIdentity());
+							Peer knownPeer = Messaging.this.context.getNetwork().getPeerStore().get(node.getIdentity());
 
 							if (knownPeer != null && knownPeer.getBannedUntil() > System.currentTimeMillis())
 							{
-								inboundMessage.getPeer().ban("Banned peer "+((NodeMessage)inboundMessage.getMessage()).getNode().getIdentity()+" at "+inboundMessage.getPeer().toString());
+								inboundMessage.getPeer().ban("Banned peer "+node.getIdentity()+" at "+inboundMessage.getPeer().toString());
 								continue;
 							}
 							
-							inboundMessage.getPeer().setNode(((NodeMessage)inboundMessage.getMessage()).getNode());
+							inboundMessage.getPeer().setNode(node);
 						}
-						
-						if (inboundMessage.getPeer().isHandshaked() == false)
-						{
-//							if (inboundMessage.getPeer().getProtocol().isConnectionless() == false)
-//								Messaging.this.send(new NodeMessage(Messaging.this.context.getNode()), inboundMessage.getPeer());
-							
-							inboundMessage.getPeer().handshake();
-						}
+					}
+					
+					if (inboundMessage.getMessage().verify(inboundMessage.getPeer().getEphemeralRemotePublicKey()) == false)
+					{
+						inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": Did not validate against ephemeral key");
+						continue;
 					}
 					
 					Messaging.this.receivedTotal.incrementAndGet();

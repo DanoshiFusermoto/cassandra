@@ -9,9 +9,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.fuserleer.BasicObject;
 import org.fuserleer.common.Direction;
-import org.fuserleer.crypto.BLSKeyPair;
-import org.fuserleer.crypto.BLSPublicKey;
-import org.fuserleer.crypto.BLSSignature;
+import org.fuserleer.crypto.ECKeyPair;
+import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.ECSignature;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.Universe;
 import org.fuserleer.logging.Logger;
@@ -65,7 +65,7 @@ public abstract class Message extends BasicObject
 		return message;
 	}
 	
-	public static byte[] prepare(Message message, BLSKeyPair identity) throws CryptoException, IOException
+	public static byte[] prepare(Message message, ECKeyPair identity) throws CryptoException, IOException
 	{
 		if (message.getSignature() == null || message.getSender() == null)
 			message.sign(identity);
@@ -84,11 +84,11 @@ public abstract class Message extends BasicObject
 	@JsonProperty("sender")
 	@DsonOutput(Output.ALL)
 	// TODO can possibly remove this field as nodes should know who the message is coming from
-	private BLSPublicKey	sender;
+	private ECPublicKey	sender;
 
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
-	private BLSSignature signature;
+	private ECSignature signature;
 
 	@JsonProperty("timestamp")
 	@DsonOutput(Output.ALL)
@@ -140,32 +140,32 @@ public abstract class Message extends BasicObject
 		return this.timestamp;
 	}
 
-	public BLSPublicKey getSender()
+	public ECPublicKey getSender()
 	{
 		return this.sender;
 	}
 
 	// SIGNABLE //
-	public final BLSSignature getSignature()
+	public final ECSignature getSignature()
 	{
 		return this.signature;
 	}
 
-	public final void setSignature(BLSSignature signature)
+	public final void setSignature(ECSignature signature)
 	{
 		this.signature = signature;
 	}
 
-	public final void sign(BLSKeyPair key) throws CryptoException
+	public final void sign(ECKeyPair key) throws CryptoException
 	{
 		if (this.signature != null)
 			throw new IllegalStateException("Message "+this+" is already signed");
 		
 		this.sender = key.getPublicKey();
-		this.signature = (BLSSignature) key.sign(getHash());
+		this.signature = (ECSignature) key.sign(getHash());
 	}
 
-	public final boolean verify(BLSPublicKey key) throws CryptoException 
+	public final boolean verify(ECPublicKey key) throws CryptoException 
 	{
 		return key.verify(getHash(), this.signature);
 	}

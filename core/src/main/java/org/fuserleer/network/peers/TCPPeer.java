@@ -84,7 +84,7 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 	private transient Socket	socket = null;
 	private transient Thread 	TCPThread = null;
 	
-	public TCPPeer(Context context, Socket socket, URI host, Direction direction, Peer peer) throws IOException
+	public TCPPeer(Context context, Socket socket, URI host, Direction direction, Peer peer) throws IOException, CryptoException
 	{
 		super(context, host, direction, peer);
 		
@@ -171,7 +171,7 @@ public final class TCPPeer extends ConnectedPeer implements Polymorphic
 		
 		try
 		{
-			byte[] bytes = Message.prepare(message, getContext().getNode().getKeyPair());
+			byte[] bytes = Message.prepare(message, getEphemeralLocalKeyPair());
 			if (bytes.length > Message.MAX_MESSAGE_SIZE)
 				throw new IOException("Message to "+this+" of size "+bytes.length+" is too large");
 	

@@ -36,6 +36,7 @@ import org.fuserleer.Universe;
 import org.fuserleer.WebSocketService;
 import org.fuserleer.common.Agent;
 import org.fuserleer.common.Direction;
+import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
@@ -50,6 +51,7 @@ import org.fuserleer.network.discovery.OutboundShardDiscoveryFilter;
 import org.fuserleer.network.discovery.OutboundSyncDiscoveryFilter;
 import org.fuserleer.network.discovery.RemoteLedgerDiscovery;
 import org.fuserleer.network.discovery.Whitelist;
+import org.fuserleer.network.messages.HandshakeMessage;
 import org.fuserleer.network.messages.NodeMessage;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.network.messaging.MessageProcessor;
@@ -169,18 +171,18 @@ public final class Network implements Service
 						ConnectedPeer connectedPeer = Network.this.get(message.getSender(), Protocol.UDP, PeerState.CONNECTING, PeerState.CONNECTED);
 						if (connectedPeer == null)
 						{
-							if ((message instanceof NodeMessage) == false)
+							if ((message instanceof HandshakeMessage) == false)
 							{
-								networkLog.error(Network.this.context.getName()+": "+datagramPacket.getSocketAddress().toString()+" did not send NodeMessage on connect");
+								networkLog.error(Network.this.context.getName()+": "+datagramPacket.getSocketAddress().toString()+" did not send HandshakeMessage on connect");
 								continue;
 							}
 
-							NodeMessage nodeMessage = (NodeMessage)message;
-							URI uri = Agent.getURI(datagramPacket.getAddress().getHostAddress(), nodeMessage.getNode().getNetworkPort());
+							HandshakeMessage handshakeMessage = (HandshakeMessage)message;
+							URI uri = Agent.getURI(datagramPacket.getAddress().getHostAddress(), handshakeMessage.getNode().getNetworkPort());
 							
-							Peer persistedPeer = Network.this.peerStore.get(nodeMessage.getNode().getIdentity());
+							Peer persistedPeer = Network.this.peerStore.get(handshakeMessage.getNode().getIdentity());
 							if (persistedPeer == null)
-								persistedPeer = new Peer(uri, nodeMessage.getNode(), Protocol.UDP);
+								persistedPeer = new Peer(uri, handshakeMessage.getNode(), Protocol.UDP);
 							
 							connectedPeer = new RUDPPeer(Network.this.context, Network.this.datagramChannel, uri, Direction.INBOUND, persistedPeer);
 							connectedPeer.connect();
@@ -211,7 +213,7 @@ public final class Network implements Service
     private Executable TCPListener = new Executable()
     {
         @SuppressWarnings("unchecked")
-    	private <T extends ConnectedPeer> T connect(Socket socket, Node node) throws IOException
+    	private <T extends ConnectedPeer> T connect(Socket socket, Node node) throws IOException, CryptoException
         {
     		try
     		{
@@ -257,25 +259,28 @@ public final class Network implements Service
 					try
 					{
 						Message message = Message.parse(socket.getInputStream());
-						if ((message instanceof NodeMessage) == false)
+						
+						// Need to intercept the handhsake here for some stuff.  Take its validity on faith here as it will
+						// be properly validated later in the Messaging module.
+						if ((message instanceof HandshakeMessage) == false)
 						{
-							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" did not send NodeMessage on connect");
+							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" did not send HandshakeMessage on connect");
 							socket.close();
 							continue;
 						}
 						
-						NodeMessage nodeMessage = (NodeMessage)message;
-						if (nodeMessage.verify(nodeMessage.getNode().getIdentity()) == false)
+						HandshakeMessage handshakeMessage = (HandshakeMessage) message;
+						if (handshakeMessage.getNode() == null)
 						{
-							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" NodeMessage failed verification");
+							networkLog.error(Network.this.context.getName()+": "+socket.toString()+" HandshakeMessage does not contain a Node");
 							socket.close();
 							continue;
 						}
 						
-						URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), nodeMessage.getNode().getNetworkPort());
+						URI uri = Agent.getURI(socket.getInetAddress().getHostAddress(), handshakeMessage.getNode().getNetworkPort());
 						
 						// Store the node in the peer store even if can not connect due to whitelists or available connections as it may be a preferred peer
-						Peer connectingPeer = new Peer(uri, nodeMessage.getNode(), Protocol.TCP);
+						Peer connectingPeer = new Peer(uri, handshakeMessage.getNode(), Protocol.TCP);
 						Network.this.context.getNetwork().getPeerStore().store(connectingPeer);
 						
 						if (Network.this.isWhitelisted(uri) == false)
@@ -294,11 +299,11 @@ public final class Network implements Service
 							continue;
 						}*/
 						
-						ConnectedPeer connectedPeer = connect(socket, nodeMessage.getNode());
+						ConnectedPeer connectedPeer = connect(socket, handshakeMessage.getNode());
 						if (connectedPeer == null)
 							socket.close();
 						else
-							Network.this.context.getNetwork().getMessaging().received(nodeMessage, connectedPeer);
+							Network.this.context.getNetwork().getMessaging().received(handshakeMessage, connectedPeer);
 					}
 					catch (Exception ex)
 					{
@@ -622,7 +627,7 @@ public final class Network implements Service
 	}
 
     @SuppressWarnings("unchecked")
-	public <T extends ConnectedPeer> T connect(URI uri, Direction direction, Protocol protocol) throws IOException
+	public <T extends ConnectedPeer> T connect(URI uri, Direction direction, Protocol protocol) throws IOException, CryptoException
     {
 		try
 		{

@@ -24,4 +24,10 @@ public final class AtomVote extends Vote<Hash, BLSKeyPair, BLSPublicKey, BLSSign
 	{
 		return getObject();
 	}
+
+	@Override
+	Hash getTarget()
+	{
+		return getObject();
+	}
 }

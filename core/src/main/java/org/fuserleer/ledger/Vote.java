@@ -5,6 +5,7 @@ import java.util.Objects;
 import org.fuserleer.BasicObject;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.CryptoException;
+import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.KeyPair;
 import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.crypto.Signature;
@@ -37,6 +38,15 @@ abstract class Vote<T, KP extends KeyPair<?, K, S>, K extends PublicKey, S exten
 		// For serializer
 	}
 	
+	Vote(final T object, final StateDecision decision)
+	{
+		this.object = Objects.requireNonNull(object, "Object is null");
+		
+		// TODO check object is serializable
+		
+		this.decision = Objects.requireNonNull(decision, "Decision is null");
+	}
+
 	public Vote(final T object, final StateDecision decision, final K owner)
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
@@ -47,7 +57,7 @@ abstract class Vote<T, KP extends KeyPair<?, K, S>, K extends PublicKey, S exten
 		this.decision = Objects.requireNonNull(decision, "Decision is null");
 	}
 
-	public Vote(final T object, final StateDecision decision, final K owner, final S signature) throws CryptoException
+	Vote(final T object, final StateDecision decision, final K owner, final S signature) throws CryptoException
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
@@ -55,17 +65,10 @@ abstract class Vote<T, KP extends KeyPair<?, K, S>, K extends PublicKey, S exten
 		this.decision = Objects.requireNonNull(decision, "Decision is null");
 		
 		// TODO check object is serializable
-		try
-		{
-			if (verify(owner) == false)
-				throw new CryptoException("Vote invalid / not verified");
-		}
-		catch (SerializationException ex)
-		{
-			throw new CryptoException("Vote invalid / not verified", ex);
-		}
 	}
 
+	abstract Hash getTarget() throws CryptoException;
+	
 	final T getObject()
 	{
 		return this.object;
@@ -85,10 +88,13 @@ abstract class Vote<T, KP extends KeyPair<?, K, S>, K extends PublicKey, S exten
 	{
 		Objects.requireNonNull(key, "Key pair is null");
 		
+		if (this.signature != null)
+			throw new IllegalStateException("Vote "+getClass()+" is already signed "+this);
+
 		if (key.getPublicKey().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign with key that doesn't match owner");
 		
-		this.signature = (S) key.sign(getHash());
+		this.signature = (S) key.sign(getTarget());
 	}
 
 	public final synchronized boolean verify(final K key) throws CryptoException, SerializationException
@@ -103,10 +109,10 @@ abstract class Vote<T, KP extends KeyPair<?, K, S>, K extends PublicKey, S exten
 
 		if (key.equals(getOwner()) == false)
 			return false;
-
-		return key.verify(getHash(), this.signature);
+		
+		return key.verify(getTarget(), this.signature);
 	}
-
+	
 	boolean requiresSignature()
 	{
 		return true;

@@ -1,5 +1,7 @@
 package org.fuserleer.ledger;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.Objects;
 
 import org.fuserleer.crypto.BLSKeyPair;
@@ -44,6 +46,24 @@ public final class StateVote extends Vote<StateKey<?, ?>, BLSKeyPair, BLSPublicK
 		// SERIALIZER
 	}
 	
+	StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution)
+	{
+		super(state, Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE);
+
+		Objects.requireNonNull(atom, "Block is null");
+		Hash.notZero(block, "Block is ZERO");
+
+		Objects.requireNonNull(atom, "Atom is null");
+		Hash.notZero(atom, "Atom is ZERO");
+		
+		this.atom = atom;
+		this.block = block;
+		this.input = input;
+		this.output = output;
+		this.execution = execution;
+	}
+
+
 	public StateVote(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final BLSPublicKey owner)
 	{
 		super(state, Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, owner);
@@ -111,5 +131,29 @@ public final class StateVote extends Vote<StateKey<?, ?>, BLSKeyPair, BLSPublicK
 	public Hash getExecution()
 	{
 		return this.execution;
+	}
+
+	@Override
+	Hash getTarget() throws CryptoException
+	{
+		try
+		{
+			ByteArrayOutputStream baos = new ByteArrayOutputStream();
+			baos.write(this.getState().toByteArray());
+			baos.write(this.atom.toByteArray());
+			baos.write(this.block.toByteArray());
+			baos.write(this.execution.toByteArray());
+			
+			// TODO input AND output can be null??
+			if (this.output != null)
+				baos.write(this.output.toByteArray());
+			if (this.input != null)
+				baos.write(this.input.toByteArray());
+			return Hash.from(baos.toByteArray());
+		}
+		catch (IOException ioex)
+		{
+			throw new CryptoException(ioex);
+		}
 	}
 }

@@ -3,6 +3,7 @@ package org.fuserleer.ledger;
 import org.fuserleer.crypto.BLSKeyPair;
 import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.BLSSignature;
+import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerId2;
@@ -28,9 +29,9 @@ public final class BlockVote extends Vote<Hash, BLSKeyPair, BLSPublicKey, BLSSig
 	public BlockVote(final Hash object, final long clock, final BLSPublicKey owner)
 	{
 		super(object, StateDecision.POSITIVE, owner);
-		
+
+		// FIXME clock is unguarded due to signing getTarget and not vote hash for BLS
 		Numbers.isNegative(clock, "Clock is negative");
-		
 		this.clock = clock;
 	}
 
@@ -47,5 +48,11 @@ public final class BlockVote extends Vote<Hash, BLSKeyPair, BLSPublicKey, BLSSig
 	public long getHeight()
 	{
 		return Longs.fromByteArray(getObject().toByteArray());
+	}
+
+	@Override
+	Hash getTarget() throws CryptoException
+	{
+		return getObject();
 	}
 }

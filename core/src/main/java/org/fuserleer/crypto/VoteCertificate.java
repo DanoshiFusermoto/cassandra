@@ -49,14 +49,14 @@ public abstract class VoteCertificate extends Certificate
 		return this.signature;
 	}
 	
-	final boolean verify(final Hash hash, final List<BLSPublicKey> identities)
+	protected abstract Hash getTarget() throws CryptoException;
+	
+	final boolean verify(final List<BLSPublicKey> identities) throws CryptoException
 	{
 		Objects.requireNonNull(identities, "Identity is null");
 		Numbers.isZero(identities.size(), "Identities is empty");
-		Objects.requireNonNull(hash, "Hash is null");
-		Hash.notZero(hash, "Hash is ZERO");
 
 		BLSPublicKey aggregated = BLS12381.aggregatePublicKey(identities);
-		return BLS12381.verify(aggregated, this.signature, hash.toByteArray());
+		return BLS12381.verify(aggregated, this.signature, getTarget().toByteArray());
 	}
 }

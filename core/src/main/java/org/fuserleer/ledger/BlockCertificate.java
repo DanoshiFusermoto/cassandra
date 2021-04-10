@@ -62,4 +62,10 @@ public final class BlockCertificate extends VoteCertificate
 	{
 		return (T) this.block;
 	}
+
+	@Override
+	protected Hash getTarget() throws CryptoException
+	{
+		return this.block;
+	}
 }

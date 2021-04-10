@@ -21,7 +21,7 @@ import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.Universe;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.events.SynchronousEventListener;
+import org.fuserleer.events.EventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
@@ -987,7 +987,7 @@ public class SyncHandler implements Service
 	}
 
 	// PEER LISTENER //
-    private SynchronousEventListener peerListener = new SynchronousEventListener()
+    private EventListener peerListener = new EventListener()
     {
     	@Subscribe
 		public void on(PeerConnectedEvent event)

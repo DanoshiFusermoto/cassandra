@@ -76,6 +76,17 @@ public class Numbers
 		}
 	}
 	
+	public static void equals(int value, int other, String message)
+	{
+		if (value != other)
+		{
+			if (message == null)
+				throw new IllegalArgumentException();
+			else
+				throw new IllegalArgumentException(message);
+		}
+	}
+
 	// LONGS //
 	public static void inRange(long value, long low, long high, String message)
 	{
@@ -150,4 +161,14 @@ public class Numbers
 		}
 	}
 
+	public static void equals(long value, long other, String message)
+	{
+		if (value != other)
+		{
+			if (message == null)
+				throw new IllegalArgumentException();
+			else
+				throw new IllegalArgumentException(message);
+		}
+	}
 }

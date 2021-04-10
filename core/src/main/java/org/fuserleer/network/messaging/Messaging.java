@@ -2,14 +2,19 @@ package org.fuserleer.network.messaging;
 
 import java.io.IOException;
 import java.net.SocketException;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.AbstractMap;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.exceptions.QueueFullException;
@@ -59,7 +64,7 @@ public class Messaging
 
 	private final BlockingQueue<QueuedMessage>	inboundQueue;
 	private final BlockingQueue<QueuedMessage>	outboundQueue;
-
+	
 	private final Executable inboundExecutable = new Executable()
 	{
 		@Override
@@ -160,6 +165,14 @@ public class Messaging
 						}
 					}
 					
+					Messaging.this.receivedTotal.incrementAndGet();
+					Messaging.this.received.compute(inboundMessage.getMessage().getClass(), (c, ai) -> {
+						if (ai == null)
+							return new AtomicLong(1);
+						
+						ai.incrementAndGet();
+						return ai;
+					});
 					inboundMessage.getPeer().receive(inboundMessage.getMessage());
 				}
 				catch (Exception ex)
@@ -226,6 +239,14 @@ public class Messaging
 
 				try
 				{
+					Messaging.this.sentTotal.incrementAndGet();
+					Messaging.this.sent.compute(outboundMessage.getMessage().getClass(), (c, ai) -> {
+						if (ai == null)
+							return new AtomicLong(1);
+						
+						ai.incrementAndGet();
+						return ai;
+					});
 					outboundMessage.getPeer().send(outboundMessage.getMessage());
 					Messaging.this.bytesOut.addAndGet(outboundMessage.getMessage().getSize());
 				}
@@ -244,6 +265,10 @@ public class Messaging
 	
 	private AtomicLong bytesIn = new AtomicLong(0l);
 	private AtomicLong bytesOut = new AtomicLong(0l);
+	private AtomicLong sentTotal = new AtomicLong(0l);
+	private AtomicLong receivedTotal = new AtomicLong(0l);
+	private final Map<Class<?>, AtomicLong> received;
+	private final Map<Class<?>, AtomicLong> sent;
 
 	public Messaging(final Context context)
 	{ 
@@ -251,6 +276,8 @@ public class Messaging
 		
 		this.inboundQueue = new LinkedBlockingQueue<QueuedMessage>(this.context.getConfiguration().get("messaging.inbound.queue_max", 16384));
 		this.outboundQueue = new LinkedBlockingQueue<QueuedMessage>(this.context.getConfiguration().get("messaging.outbound.queue_max", 32768));
+		this.received = Collections.synchronizedMap(new HashMap<Class<?>, AtomicLong>());
+		this.sent = Collections.synchronizedMap(new HashMap<Class<?>, AtomicLong>());
 
 		// GOT IT!
 		messagingLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
@@ -392,6 +419,32 @@ public class Messaging
 		return this.bytesOut.get();
 	}
 	
+	public long getTotalSent()
+	{
+		return this.sentTotal.get();
+	}
+
+	public long getTotalReceived()
+	{
+		return this.receivedTotal.get();
+	}
+	
+	public Collection<Entry<Class<?>, Long>> getReceivedByType()
+	{
+		synchronized(this.received)
+		{
+			return this.received.entrySet().stream().map(e -> new AbstractMap.SimpleEntry<Class<?>, Long>(e.getKey(), e.getValue().get())).collect(Collectors.toList());
+		}
+	}
+
+	public Collection<Entry<Class<?>, Long>> getSentByType()
+	{
+		synchronized(this.sent)
+		{
+			return this.sent.entrySet().stream().map(e -> new AbstractMap.SimpleEntry<Class<?>, Long>(e.getKey(), e.getValue().get())).collect(Collectors.toList());
+		}
+	}
+
 	public void resetBytesInOut()
 	{
 		this.bytesIn.set(0);

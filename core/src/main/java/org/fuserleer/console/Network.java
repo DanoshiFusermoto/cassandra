@@ -3,6 +3,7 @@ package org.fuserleer.console;
 import java.io.PrintStream;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Map.Entry;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -103,6 +104,14 @@ public class Network extends Function
 			printStream.println("Bandwidth:");
 			printStream.println("In bytes: "+context.getNetwork().getMessaging().getBytesIn());
 			printStream.println("Out bytes: "+context.getNetwork().getMessaging().getBytesOut());
+
+			printStream.println("Sent messages: "+context.getNetwork().getMessaging().getTotalSent());
+			for (Entry<Class<?>, Long> sent : context.getNetwork().getMessaging().getSentByType())
+				printStream.println(sent.getKey()+": "+sent.getValue());
+
+			printStream.println("Received messages: "+context.getNetwork().getMessaging().getTotalReceived());
+			for (Entry<Class<?>, Long> received : context.getNetwork().getMessaging().getReceivedByType())
+				printStream.println(received.getKey()+": "+received.getValue());
 		}
 	}
 }

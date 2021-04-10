@@ -53,7 +53,7 @@ public final class ValidatorHandler implements Service
 	public static long VOTE_POWER_MATURITY = 60;	 
 	
 	private final Context context;
-	private final VotePowerStore votePowerStore;
+	private final ValidatorStore validatorStore;
 	private final Map<Long, VotePowerBloom> votePowerBloomCache;
 
 	/**
@@ -73,7 +73,7 @@ public final class ValidatorHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.votePowerBloomCache = Collections.synchronizedMap(new LRUCacheMap<Long, VotePowerBloom>(this.context.getConfiguration().get("ledger.vote.bloom.cache", 1<<10)));
-		this.votePowerStore = new VotePowerStore(context);
+		this.validatorStore = new ValidatorStore(context);
 		this.ownedPowerCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
 		this.identityCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
 	}
@@ -83,9 +83,9 @@ public final class ValidatorHandler implements Service
 	{
 		try
 		{
-			this.votePowerStore.start();
+			this.validatorStore.start();
 			
-			Collection<BLSPublicKey> powerOwners = this.votePowerStore.getWithPower();
+			Collection<BLSPublicKey> powerOwners = this.validatorStore.getWithPower();
 			if (powerOwners.isEmpty() == true)
 			{
 				long height = 0;
@@ -93,13 +93,13 @@ public final class ValidatorHandler implements Service
 				for (BLSPublicKey genode : Universe.getDefault().getGenodes())
 				{
 					powerLog.info(this.context.getName()+": Setting vote power for genesis node "+genode+":"+ShardMapper.toShardGroup(genode, Universe.getDefault().shardGroupCount())+" to "+1);
-					this.votePowerStore.set(genode, height, power);
-					if (this.votePowerStore.get(genode, height) != power)
+					this.validatorStore.set(genode, height, power);
+					if (this.validatorStore.get(genode, height) != power)
 						throw new IllegalStateException("Genesis node "+genode+" should have vote power of "+power+" @ "+height);
 				}
 			}
 			
-			this.votePowerStore.store(this.context.getNode().getIdentity());
+			this.validatorStore.store(this.context.getNode().getIdentity());
 			
 			this.context.getNetwork().getMessaging().register(IdentitiesMessage.class, this.getClass(), new MessageProcessor<IdentitiesMessage> ()
 			{
@@ -110,7 +110,7 @@ public final class ValidatorHandler implements Service
 					{
 						try
 						{
-							if (ValidatorHandler.this.votePowerStore.store(identity) == OperationStatus.SUCCESS)
+							if (ValidatorHandler.this.validatorStore.store(identity) == OperationStatus.SUCCESS)
 								powerLog.info(ValidatorHandler.this.context.getName()+": Stored identity "+identity);
 						}
 						catch(IOException ioex)
@@ -163,14 +163,14 @@ public final class ValidatorHandler implements Service
 		this.context.getEvents().unregister(this.peerListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
 		this.context.getNetwork().getMessaging().deregisterAll(getClass());
-		this.votePowerStore.stop();
+		this.validatorStore.stop();
 		this.ownedPowerCache.clear();
 		this.identityCache.clear();
 	}
 	
 	void clean() throws DatabaseException
 	{
-		this.votePowerStore.clean();
+		this.validatorStore.clean();
 	}
 	
 	// NOTE Can use the identity cache directly providing that access outside of this function
@@ -180,7 +180,7 @@ public final class ValidatorHandler implements Service
 		synchronized(this.ownedPowerCache)
 		{
 			if (this.ownedPowerCache.isEmpty())
-				this.ownedPowerCache.addAll(this.votePowerStore.getWithPower());
+				this.ownedPowerCache.addAll(this.validatorStore.getWithPower());
 			
 			return this.ownedPowerCache;
 		}
@@ -198,7 +198,7 @@ public final class ValidatorHandler implements Service
 		synchronized(this.identityCache)
 		{
 			if (this.identityCache.isEmpty())
-				this.identityCache.addAll(this.votePowerStore.getIdentities());
+				this.identityCache.addAll(this.validatorStore.getIdentities());
 			
 			return this.identityCache;
 		}
@@ -217,7 +217,7 @@ public final class ValidatorHandler implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			return this.votePowerStore.get(owner, height);
+			return this.validatorStore.get(owner, height);
 		}
 		finally
 		{
@@ -371,7 +371,7 @@ public final class ValidatorHandler implements Service
 		this.lock.writeLock().lock();
 		try
 		{
-			this.votePowerStore.set(owner, height, power);
+			this.validatorStore.set(owner, height, power);
 		}			
 		finally
 		{
@@ -386,8 +386,8 @@ public final class ValidatorHandler implements Service
 		this.lock.writeLock().lock();
 		try
 		{
-			this.votePowerStore.increment(owner, height);
-			long power = this.votePowerStore.get(owner, height);
+			this.validatorStore.increment(owner, height);
+			long power = this.validatorStore.get(owner, height);
 			powerLog.info(this.context.getName()+": Incrementing vote power for "+owner+":"+ShardMapper.toShardGroup(owner, this.context.getLedger().numShardGroups(height))+" to "+power+" @ "+height);
 			return power;
 		}			
@@ -427,7 +427,7 @@ public final class ValidatorHandler implements Service
 				{
 					long numRemoteShardGroups = this.context.getLedger().numShardGroups(stateCertificate.getHeight());
 					long stateShardGroup = ShardMapper.toShardGroup(stateCertificate.getState().get(), numRemoteShardGroups);
-					shardGroupNodes.putAll(stateShardGroup, this.votePowerStore.get(stateShardGroup, numRemoteShardGroups));
+					shardGroupNodes.putAll(stateShardGroup, this.validatorStore.get(stateShardGroup, numRemoteShardGroups));
 				}
 				
 				for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())
@@ -461,7 +461,7 @@ public final class ValidatorHandler implements Service
 							if (updates.containsKey(key) == true)
 							{
 								long power = updates.remove(key);
-								if (this.votePowerStore.set(identity, height, power) != power)
+								if (this.validatorStore.set(identity, height, power) != power)
 									powerLog.info(this.context.getName()+": Setting vote power for "+identity+":"+votePowerBloom.getShardGroup()+" to "+power+" @ "+height);
 							}
 						}
@@ -484,7 +484,7 @@ public final class ValidatorHandler implements Service
 		{
 			try
 			{
-				if (ValidatorHandler.this.votePowerStore.store(peerConnectedEvent.getPeer().getNode().getIdentity()).equals(OperationStatus.SUCCESS) == true)
+				if (ValidatorHandler.this.validatorStore.store(peerConnectedEvent.getPeer().getNode().getIdentity()).equals(OperationStatus.SUCCESS) == true)
 				{
 					powerLog.info(ValidatorHandler.this.context.getName()+": Stored identity "+peerConnectedEvent.getPeer().getNode().getIdentity());
 					ValidatorHandler.this.identityCache.add(peerConnectedEvent.getPeer().getNode().getIdentity());

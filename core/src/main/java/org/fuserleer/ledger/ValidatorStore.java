@@ -35,7 +35,7 @@ import com.sleepycat.je.SecondaryKeyCreator;
 import com.sleepycat.je.Transaction;
 import com.sleepycat.je.TransactionConfig;
 
-class VotePowerStore extends DatabaseStore
+class ValidatorStore extends DatabaseStore
 {
 	private static final Logger powerLog = Logging.getLogger("power");
 
@@ -60,7 +60,7 @@ class VotePowerStore extends DatabaseStore
 		}
 	}
 
-	public VotePowerStore(Context context) 
+	public ValidatorStore(Context context) 
 	{ 
 		super(Objects.requireNonNull(context).getDatabaseEnvironment());
 		
@@ -493,7 +493,9 @@ class VotePowerStore extends DatabaseStore
 		    {
 		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
 		    	{
-		    		powerLog.warn(this.context.getName()+": Identity "+identity+" is already present");
+		    		if (powerLog.hasLevel(Logging.DEBUG) == true)
+		    			powerLog.debug(this.context.getName()+": Identity "+identity+" is already present");
+		    		
 		    		return status;
 		    	}
 		    	else 

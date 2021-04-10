@@ -22,6 +22,7 @@ import org.fuserleer.network.peers.filters.StandardPeerFilter;
 public class Network extends Function
 {
 	private final static Options options = new Options().addOption(Option.builder("disconnect").desc("Disconnect a peer").optionalArg(true).build())
+														.addOption("stats", false, "Outputs network statistics")
 														.addOption("known", false, "Lists all known peers (can be very large)") // TODO pagination for this?
 														.addOption("best", false, "Lists all known peers by XOR ranking (can be very large)"); // TODO pagination for this?
 
@@ -84,6 +85,20 @@ public class Network extends Function
 			for (Peer knownPeer : knownPeers)
 				printStream.println(knownPeer.toString());
 		}
+		else if (commandLine.hasOption("known") == true)
+		{
+			printStream.println("Bandwidth:");
+			printStream.println("In bytes: "+context.getNetwork().getMessaging().getBytesIn());
+			printStream.println("Out bytes: "+context.getNetwork().getMessaging().getBytesOut());
+
+			printStream.println("Sent messages: "+context.getNetwork().getMessaging().getTotalSent());
+			for (Entry<Class<?>, Long> sent : context.getNetwork().getMessaging().getSentByType())
+				printStream.println(sent.getKey()+": "+sent.getValue());
+
+			printStream.println("Received messages: "+context.getNetwork().getMessaging().getTotalReceived());
+			for (Entry<Class<?>, Long> received : context.getNetwork().getMessaging().getReceivedByType())
+				printStream.println(received.getKey()+": "+received.getValue());
+		}
 		else
 		{
 			long shardGroup = ShardMapper.toShardGroup(context.getNode().getIdentity(), context.getLedger().numShardGroups());
@@ -100,18 +115,6 @@ public class Network extends Function
 				if (ShardMapper.toShardGroup(peer.getNode().getIdentity(), context.getLedger().numShardGroups()) != shardGroup)
 					printStream.println(ShardMapper.toShardGroup(peer.getNode().getIdentity(), context.getLedger().numShardGroups())+" "+peer.toString()+": "+peer.getNode().getHead().toString());
 			}
-
-			printStream.println("Bandwidth:");
-			printStream.println("In bytes: "+context.getNetwork().getMessaging().getBytesIn());
-			printStream.println("Out bytes: "+context.getNetwork().getMessaging().getBytesOut());
-
-			printStream.println("Sent messages: "+context.getNetwork().getMessaging().getTotalSent());
-			for (Entry<Class<?>, Long> sent : context.getNetwork().getMessaging().getSentByType())
-				printStream.println(sent.getKey()+": "+sent.getValue());
-
-			printStream.println("Received messages: "+context.getNetwork().getMessaging().getTotalReceived());
-			for (Entry<Class<?>, Long> received : context.getNetwork().getMessaging().getReceivedByType())
-				printStream.println(received.getKey()+": "+received.getValue());
 		}
 	}
 }

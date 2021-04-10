@@ -1,6 +1,7 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -133,9 +134,14 @@ public final class ValidatorHandler implements Service
 					{
 						// Identities refresh to all connected peers
  						IdentitiesMessage identitiesMessage = new IdentitiesMessage();
- 						identitiesMessage.setIdentities(getIdentities());
-						for (ConnectedPeer connectedPeer : ValidatorHandler.this.context.getNetwork().get(StandardPeerFilter.build(ValidatorHandler.this.context).setStates(PeerState.CONNECTED)))
-							ValidatorHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, connectedPeer);
+ 						Collection<BLSPublicKey> identities = getIdentities();
+ 						if (identities.isEmpty() == false)
+ 						{
+ 							identitiesMessage.setIdentities(identities);
+
+ 							for (ConnectedPeer connectedPeer : ValidatorHandler.this.context.getNetwork().get(StandardPeerFilter.build(ValidatorHandler.this.context).setStates(PeerState.CONNECTED)))
+ 								ValidatorHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, connectedPeer);
+ 						}
 					}
 					catch (Throwable t)
 					{
@@ -193,14 +199,14 @@ public final class ValidatorHandler implements Service
 	
 	// NOTE Can use the identity cache directly providing that access outside of this function
 	// wraps the returned set in a lock or a sync block
-	private Set<BLSPublicKey> getIdentities() throws DatabaseException
+	private Collection<BLSPublicKey> getIdentities() throws DatabaseException
 	{
 		synchronized(this.identityCache)
 		{
 			if (this.identityCache.isEmpty())
 				this.identityCache.addAll(this.validatorStore.getIdentities());
 			
-			return this.identityCache;
+			return Collections.unmodifiableCollection(new ArrayList<BLSPublicKey>(this.identityCache));
 		}
 	}
 	
@@ -498,8 +504,12 @@ public final class ValidatorHandler implements Service
 			try
 			{
 				IdentitiesMessage identitiesMessage = new IdentitiesMessage();
-				identitiesMessage.setIdentities(getIdentities());
-				ValidatorHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, peerConnectedEvent.getPeer());
+				Collection<BLSPublicKey> identities = getIdentities();
+				if (identities.isEmpty() == false)
+				{
+					identitiesMessage.setIdentities(identities);
+					ValidatorHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, peerConnectedEvent.getPeer());
+				}
 			}
 			catch (IOException ioex)
 			{

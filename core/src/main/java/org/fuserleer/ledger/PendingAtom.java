@@ -16,9 +16,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.fuserleer.Context;
 import org.fuserleer.crypto.BLSPublicKey;
+import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hashable;
+import org.fuserleer.database.DatabaseException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.CommitOperation.Type;
 import org.fuserleer.ledger.atoms.Atom;
@@ -74,7 +76,11 @@ public final class PendingAtom implements Hashable
 	private long			voteThreshold;
 	private final Set<AtomVote> votes;
 	private final Map<BLSPublicKey, Long> voted;
-	
+
+	private BLSPublicKey aggregatePublicKey;
+	private BLSSignature aggregateSignature;
+	private boolean verified = false;
+
 	private AtomCertificate certificate;
 	private final Map<StateKey<?, ?>, StateCertificate> certificates;
 	
@@ -580,17 +586,16 @@ public final class PendingAtom implements Hashable
 		}
 	}
 
-	public boolean vote(final AtomVote vote) throws IOException
+	public boolean vote(final AtomVote vote, long weight) throws ValidationException
 	{
 		this.lock.writeLock().lock();
 		try
 		{
-			long votePower = this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), vote.getOwner());
 			if (this.voted.containsKey(vote.getOwner()) == false)
 			{
 				this.votes.add(vote);
-				this.voted.put(vote.getOwner(), votePower);
-				this.voteWeight += votePower;
+				this.voted.put(vote.getOwner(), weight);
+				this.voteWeight += weight;
 			}
 			else
 			{
@@ -630,6 +635,102 @@ public final class PendingAtom implements Hashable
 	public long voteThreshold() 
 	{
 		return this.voteThreshold;
+	}
+	
+	public boolean preverify() throws DatabaseException
+	{
+		this.lock.writeLock().lock();
+		try
+		{
+			if (this.aggregatePublicKey != null)
+				throw new IllegalStateException("Pending atom "+this+" is already preverified");
+			
+			Set<Long> shardGroups = ShardMapper.toShardGroups(getShards(), this.context.getLedger().numShardGroups());
+			long votePowerThresold = PendingAtom.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroups);
+			if (voteWeight() < votePowerThresold)
+				return false;
+
+			// Aggregate and verify
+			// TODO failures
+			BLSPublicKey aggregatedPublicKey = null;
+			BLSSignature aggregatedSignature = null;
+			for (AtomVote vote : this.votes)
+			{
+				if (aggregatedPublicKey == null)
+				{
+					aggregatedPublicKey = vote.getOwner();
+					aggregatedSignature = vote.getSignature();
+				}
+				else
+				{
+					aggregatedPublicKey = aggregatedPublicKey.combine(vote.getOwner());
+					aggregatedSignature = aggregatedSignature.combine(vote.getSignature());
+				}
+			}
+			
+			this.aggregatePublicKey = aggregatedPublicKey;
+			this.aggregateSignature = aggregatedSignature;
+			
+			return true;
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+	
+	public boolean isPreverified()
+	{
+		this.lock.readLock().lock();
+		try
+		{
+			return this.aggregatePublicKey != null;
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+	}
+	
+	public boolean verify() throws CryptoException
+	{
+		this.lock.writeLock().lock();
+		try
+		{
+			if (this.verified == true)
+				throw new IllegalStateException("Pending atom "+this+" is already verified");
+
+			if (this.aggregatePublicKey == null)
+				throw new IllegalStateException("Pending atom "+this+" has not met threshold majority or is not prepared");
+			
+			if (this.aggregatePublicKey.verify(getHash(), this.aggregateSignature) == false)
+			{
+				atomsLog.error(this.context.getName()+": Atom votes failed verification for "+getHash()+" of "+this.votes.size()+" aggregated signatures");
+				this.aggregatePublicKey = null;
+				this.verified = false;
+				return false;
+			}
+			
+			this.verified = true;
+			return true;
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+	
+	public boolean isVerified()
+	{
+		this.lock.readLock().lock();
+		try
+		{
+			return this.verified;
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
 	}
 	
 	public AtomCertificate getCertificate()

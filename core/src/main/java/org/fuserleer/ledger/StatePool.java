@@ -18,14 +18,12 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
 import org.fuserleer.collections.Bloom;
 import org.fuserleer.collections.MappedBlockingQueue;
 import org.fuserleer.common.Primitive;
-import org.fuserleer.crypto.BLS12381;
 import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
@@ -84,7 +82,14 @@ public final class StatePool implements Service
 
 		private final Map<BLSPublicKey, StateVote> votes;
 		private final Map<Hash, Long> weights;
+		
+		private Bloom signers;
+		private StateVote majorityStateVote;
+		private BLSPublicKey aggregatePublicKey;
+		private BLSSignature aggregateSignature;
 		private StateCertificate certificate;
+		private boolean verified = false;
+		private long agreedVotePower, totalVotePower;
 
 		public PendingState(StateKey<?, ?> key, Hash atom, Hash block)
 		{
@@ -115,6 +120,128 @@ public final class StatePool implements Service
 			return this.atom;
 		}
 		
+		public boolean preverify() throws DatabaseException
+		{
+			this.lock.lock();
+			try
+			{
+				if (this.majorityStateVote != null)
+					throw new IllegalStateException("Pending state "+this+" is already preverified");
+				
+				final long shardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups(getHeight()));
+				final long votePowerThreshold = StatePool.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroup);
+				final long totalVotePower = StatePool.this.context.getLedger().getValidatorHandler().getTotalVotePower(Math.max(0, getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroup);
+
+				Entry<Hash, Long> executionWithMajority = null;
+				for (Entry<Hash, Long> execution : this.weights.entrySet())
+				{
+					if (execution.getValue() >= votePowerThreshold)
+					{
+						executionWithMajority = execution;
+						break;
+					}
+				}
+				
+				if (executionWithMajority == null)
+					return false;
+				
+				// Aggregate and verify
+				// TODO failures
+				StateVote majorityStateVote = null;
+				BLSPublicKey aggregatedPublicKey = null;
+				BLSSignature aggregatedSignature = null;
+				final Bloom signers = new Bloom(0.000001, this.votes.size());
+				for (StateVote vote : this.votes.values())
+				{
+					if (vote.getExecution().equals(executionWithMajority.getKey()) == false)
+						continue;
+					
+					if (majorityStateVote == null)
+						majorityStateVote = new StateVote(vote.getState(), vote.getAtom(), vote.getBlock(), vote.getInput(), vote.getOutput(), vote.getExecution());
+					
+					if (aggregatedPublicKey == null)
+					{
+						aggregatedPublicKey = vote.getOwner();
+						aggregatedSignature = vote.getSignature();
+					}
+					else
+					{
+						aggregatedPublicKey = aggregatedPublicKey.combine(vote.getOwner());
+						aggregatedSignature = aggregatedSignature.combine(vote.getSignature());
+					}
+
+					signers.add(vote.getOwner().toByteArray());
+				}
+				
+				this.agreedVotePower = executionWithMajority.getValue();
+				this.totalVotePower = totalVotePower;
+				this.majorityStateVote = majorityStateVote;
+				this.aggregatePublicKey = aggregatedPublicKey;
+				this.aggregateSignature = aggregatedSignature;
+				this.signers = signers;
+				
+				return true;
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+		
+		public boolean isPreverified()
+		{
+			this.lock.lock();
+			try
+			{
+				return this.majorityStateVote != null;
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+		
+		public boolean verify() throws CryptoException
+		{
+			this.lock.lock();
+			try
+			{
+				if (this.verified == true)
+					throw new IllegalStateException("Pending state "+this+" majority is already verified");
+
+				if (this.majorityStateVote == null)
+					throw new IllegalStateException("Pending state "+this+" has not met threshold majority or is not prepared");
+				
+				if (this.aggregatePublicKey.verify(this.majorityStateVote.getTarget(), this.aggregateSignature) == false)
+				{
+					statePoolLog.error(StatePool.this.context.getName()+": State pool votes failed verification for "+this.majorityStateVote.getTarget()+" of "+this.signers.count()+" aggregated signatures");
+					this.majorityStateVote = null;
+					this.verified = false;
+					return false;
+				}
+				
+				this.verified = true;
+				return true;
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+		
+		public boolean isVerified()
+		{
+			this.lock.lock();
+			try
+			{
+				return this.verified;
+			}
+			finally
+			{
+				this.lock.unlock();
+			}
+		}
+		
 		public StateCertificate buildCertificate() throws CryptoException, DatabaseException
 		{
 			this.lock.lock();
@@ -123,75 +250,19 @@ public final class StatePool implements Service
 				if (this.certificate != null)
 					throw new IllegalStateException("State certificate for "+this+" already exists");
 				
+				if (this.verified == false)
+					throw new IllegalStateException("Pending state "+this+" is not verified");
+				
 				final long shardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups(getHeight()));
-				final long totalVotePower = StatePool.this.context.getLedger().getValidatorHandler().getTotalVotePower(Math.max(0, getHeight()  - ValidatorHandler.VOTE_POWER_MATURITY), shardGroup);
-				final long votePowerThreshold = StatePool.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), shardGroup);
-
-				long executionWithMajorityWeight = 0;
-				Hash executionWithMajority = null;
-				for (Entry<Hash, Long> execution : this.weights.entrySet())
-				{
-					if (execution.getValue() >= votePowerThreshold)
-					{
-						executionWithMajority = execution.getKey();
-						executionWithMajorityWeight = execution.getValue();
-						break;
-					}
-				}
-				
-				if (executionWithMajority == null)
-					return null;
-				
-				final List<StateVote> votes = new ArrayList<StateVote>();
-				for (StateVote vote : this.votes.values())
-				{
-					if (vote.getExecution().equals(executionWithMajority) == false)
-						continue;
-					
-					votes.add(vote);
-				}
-				
-				final Bloom signers = new Bloom(0.000001, this.votes.size());
-				BLSSignature signature = BLS12381.aggregateSignatures(votes.stream().map(v -> {
-					signers.add(v.getOwner().toByteArray());
-					return v.getSignature();
-				}).collect(Collectors.toList()));
-				
 				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getValidatorHandler().getVotePowerBloom(getBlock(), shardGroup);
 				// TODO need merkles
-				final StateCertificate certificate = new StateCertificate(votes.get(0).getState(), votes.get(0).getAtom(), votes.get(0).getBlock(), 
-																		  votes.get(0).getInput(), votes.get(0).getOutput(), votes.get(0).getExecution(), 
-																	      Hash.random(), Collections.singletonList(new MerkleProof(Hash.random(), Branch.OLD_ROOT)), votePowers, signers, signature);
+				final StateCertificate certificate = new StateCertificate(this.majorityStateVote.getState(), this.majorityStateVote.getAtom(), this.majorityStateVote.getBlock(), 
+																		  this.majorityStateVote.getInput(), this.majorityStateVote.getOutput(), this.majorityStateVote.getExecution(), 
+																	      Hash.random(), Collections.singletonList(new MerkleProof(Hash.random(), Branch.OLD_ROOT)), votePowers, this.signers, this.aggregateSignature);
 				this.certificate = certificate;
-				statePoolLog.info(StatePool.this.context.getName()+": State certificate "+certificate.getHash()+" for state "+votes.get(0).getState()+" in atom "+votes.get(0).getAtom()+" has "+votes.get(0).getDecision()+" agreement with "+executionWithMajorityWeight+"/"+totalVotePower);
+				statePoolLog.info(StatePool.this.context.getName()+": State certificate "+certificate.getHash()+" for state "+this.majorityStateVote.getState()+" in atom "+this.majorityStateVote.getAtom()+" has "+this.majorityStateVote.getDecision()+" agreement with "+this.agreedVotePower+"/"+this.totalVotePower);
 				
 				return this.certificate;
-			}
-			finally
-			{
-				this.lock.unlock();
-			}
-		}
-		
-		public StateVote vote(BLSPublicKey identity)
-		{
-			this.lock.lock();
-			try
-			{
-				return this.votes.get(identity);
-			}
-			finally
-			{
-				this.lock.unlock();
-			}
-		}
-		
-		boolean voted(BLSPublicKey identity)
-		{
-			this.lock.lock();
-			try
-			{
-				return this.votes.containsKey(Objects.requireNonNull(identity, "Vote identity is null"));
 			}
 			finally
 			{
@@ -357,7 +428,6 @@ public final class StatePool implements Service
 							PendingState pendingState;
 							while((pendingState = StatePool.this.votesToCastQueue.peek()) != null)
 							{
-								StatePool.this.lock.writeLock().lock();
 								try
 								{
 									PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(pendingState.getAtom());
@@ -367,7 +437,6 @@ public final class StatePool implements Service
 										continue;
 									}
 									
-									// Always vote locally even if no vote power so that can determine the accuracy of local execution
 									long localVotePower = StatePool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, pendingState.getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), StatePool.this.context.getNode().getIdentity());
 									if (pendingAtom.thrown() == null && pendingAtom.getExecution() == null)
 										throw new IllegalStateException("Can not vote on state "+pendingState.getKey()+" when no decision made");
@@ -383,24 +452,24 @@ public final class StatePool implements Service
 										
 										if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == true)
 										{
-											if (pendingState.vote(stateVote, localVotePower) == true)
+											if (process(stateVote) == true)
 											{
 												if (statePoolLog.hasLevel(Logging.DEBUG))
 													statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
-										
+																					
 												stateVotesToBroadcast.add(stateVote);
 											}
+											
+//											if (pendingState.vote(stateVote, localVotePower) == true)
+//											{
+//												if (statePoolLog.hasLevel(Logging.DEBUG))
+//													statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
+//										
+//												stateVotesToBroadcast.add(stateVote);
+//											}
 										}
 										else // FIXME happens usually on sync after state reconstruction as local validator doesn't know its voted already
 											statePoolLog.error(StatePool.this.context.getName()+": Persistance of local state vote of "+stateVote.getState()+" for "+stateVote.getOwner()+" failed");
-									}
-									
-									// Don't build certificates from cast votes received until executed locally
-									if (pendingState.getCertificate() == null)
-									{
-										StateCertificate stateCertificate = pendingState.buildCertificate();
-										if (stateCertificate != null)
-											StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
 									}
 								}
 								catch (Exception ex)
@@ -411,8 +480,6 @@ public final class StatePool implements Service
 								{
 									if (pendingState.equals(StatePool.this.votesToCastQueue.poll()) == false)
 										throw new IllegalStateException("State pool vote cast peek/pool failed for "+pendingState.getKey());
-
-									StatePool.this.lock.writeLock().unlock();
 								}
 							}
 						}
@@ -865,18 +932,14 @@ public final class StatePool implements Service
 	{
 		Objects.requireNonNull(stateVote, "State vote is null");
 		
-		if (stateVote.verify(stateVote.getOwner()) == false)
-		{
-			statePoolLog.error(StatePool.this.context.getName()+": State vote failed verification for "+stateVote.getOwner());
-			return false;
-		}
-
 		StatePool.this.lock.writeLock().lock();
-		PendingState pendingState;
+		boolean response = false;
+		PendingState pendingState = null;
+		PendingAtom pendingAtom = null;
 		try
 		{
 			Hash stateAtomBlockHash = Hash.from(stateVote.getState().get(), stateVote.getAtom(), stateVote.getBlock());
-			final PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
+			pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
 			pendingState = StatePool.this.states.get(stateAtomBlockHash);
 			// Creating pending state objects from vote if particle not seen or committed
 			if (pendingState == null)
@@ -906,37 +969,48 @@ public final class StatePool implements Service
 			else if (pendingAtom == null)
 				throw new IllegalStateException("Pending atom "+pendingState.getAtom()+" for pending state "+pendingState.getKey()+" not found");
 
-			if (pendingState.getBlock().equals(stateVote.getBlock()) == false || 
-				pendingState.getAtom().equals(stateVote.getAtom()) == false)
-				throw new IllegalStateException("State vote "+stateVote.getState()+" block or atom dependencies not as expected for "+stateVote.getOwner());
-					
 			long votePower = StatePool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, pendingState.getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), stateVote.getOwner());
 			if (votePower > 0 && pendingState.vote(stateVote, votePower) == true)
-			{
-				if (pendingState.getCertificate() == null && pendingAtom.getStatus().greaterThan(CommitStatus.PROVISIONED) == true)
-				{
-					StateCertificate stateCertificate = pendingState.buildCertificate();
-					if (stateCertificate != null)
-					{
-						if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-							statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (CERTIFICATE)");
-						StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
-					}
-					else if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-						statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (NOT CERTIFICATE)");
-				}
-				else if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-					statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (NOT PROVISIONED)");
-				
-				return true;
-			}
-			
-			return false;
+				response = true;
 		}
 		finally
 		{
 			StatePool.this.lock.writeLock().unlock();
 		}
+		
+		// See if threshold vote power is met, verify aggregate signatures and attempt to build a state certificate
+		if (response == true)
+		{
+			// Don't build certificates from cast votes received until executed locally
+			if (pendingAtom.getStatus().greaterThan(CommitStatus.PROVISIONED) == false)
+				return response;
+
+			if (pendingState.isPreverified() == true)
+				return response;
+			
+			if (pendingState.preverify() == false)
+				return response;
+			
+			if (pendingState.isVerified() == true)
+				return response;
+			
+			if (pendingState.verify() == false)
+				return response;
+
+			if (pendingAtom.getCertificate() != null)
+				return response;
+
+			StateCertificate stateCertificate = pendingState.buildCertificate();
+			if (stateCertificate != null)
+			{
+				if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+					statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (CERTIFICATE)");
+
+				StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+			}
+		}
+		
+		return response;
 	}
 	
 	public int size()

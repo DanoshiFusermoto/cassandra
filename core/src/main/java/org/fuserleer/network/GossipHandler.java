@@ -247,6 +247,9 @@ public class GossipHandler implements Service
 	private final Map<ConnectedPeer, GossipPeerTask> requestTasks = Collections.synchronizedMap(new HashMap<ConnectedPeer, GossipPeerTask>());
 	private final Multimap<ConnectedPeer, Hash> requestSources = Multimaps.synchronizedMultimap(HashMultimap.create());
 
+	private final Map<Class<? extends Primitive>, Long> broadcastedAt = Collections.synchronizedMap(new HashMap<>());
+	private final Map<Class<? extends Primitive>, Long> requestedAt = Collections.synchronizedMap(new HashMap<>());
+
 	private final Map<Class<? extends Primitive>, GossipFilter> broadcastFilters = Collections.synchronizedMap(new HashMap<>());
 	private final Map<Class<? extends Primitive>, GossipInventory> inventoryProcessors = Collections.synchronizedMap(new HashMap<>());
 	private final Map<Class<? extends Primitive>, GossipFetcher> fetcherProcessors = Collections.synchronizedMap(new HashMap<>());
@@ -256,8 +259,6 @@ public class GossipHandler implements Service
 	
 	private Executable broadcastProcessor = new Executable()
 	{
-		long lastBroadcast = System.currentTimeMillis();
-		
 		@Override
 		public void execute()
 		{
@@ -285,12 +286,8 @@ public class GossipHandler implements Service
 							GossipHandler.this.toBroadcast.put(broadcast.getPrimitive().getClass(), broadcast);
 						}
 
-						if (GossipHandler.this.toBroadcast.size() < 32 && System.currentTimeMillis() - this.lastBroadcast < 250)
-							continue;
-						
 						// Broadcast
 						doBroadcast();
-						this.lastBroadcast = System.currentTimeMillis();
 					} 
 					catch (InterruptedException e) 
 					{
@@ -322,6 +319,9 @@ public class GossipHandler implements Service
 						if (broadcastQueue.isEmpty() == true)
 							continue;
 
+						if (broadcastQueue.size() < 32 && System.currentTimeMillis() - GossipHandler.this.broadcastedAt.getOrDefault(type, 0l) < 250)
+							continue;
+						
 						for (Broadcast broadcast : broadcastQueue)
 						{
 							try
@@ -338,6 +338,8 @@ public class GossipHandler implements Service
 							for(long shardGroup : broadcast.getShardGroups())
 								toBroadcast.put(shardGroup, broadcast);
 						}
+						
+						GossipHandler.this.broadcastedAt.put(type, System.currentTimeMillis());
 					}
 					finally
 					{
@@ -363,8 +365,8 @@ public class GossipHandler implements Service
 								
 								try
 								{
-									if (gossipLog.hasLevel(Logging.DEBUG) == true)
-										gossipLog.debug(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems()+" to " + connectedPeer);
+//									if (gossipLog.hasLevel(Logging.DEBUG) == true)
+										gossipLog.info(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems()+" to " + connectedPeer);
 
 									GossipHandler.this.context.getNetwork().getMessaging().send(broadcastInventoryMessage, connectedPeer);
 								}
@@ -395,7 +397,6 @@ public class GossipHandler implements Service
 
 	private Executable requestProcessor = new Executable()
 	{
-		private long lastRequest = System.currentTimeMillis(); 
 		private long lastHousekeeping = System.currentTimeMillis(); 
 
 		@Override
@@ -418,15 +419,11 @@ public class GossipHandler implements Service
 							continue;
 						}
 
-						if (GossipHandler.this.toRequest.size() < 32 && System.currentTimeMillis() - this.lastRequest < 250)
-							continue;
-
 						// Request
 						doRequests();
 						
 						// Housekeeping
 						doHousekeeping();
-						this.lastRequest = System.currentTimeMillis();
 					} 
 					catch (InterruptedException e) 
 					{
@@ -477,6 +474,9 @@ public class GossipHandler implements Service
 					gossipLog.error(GossipHandler.this.context.getName()+": Inventory processor for "+type+" is not found");
 					continue;
 				}
+				
+				if (GossipHandler.this.toRequest.get(type).size() < 32 && System.currentTimeMillis() - GossipHandler.this.requestedAt.getOrDefault(type, 0l) < 250)
+					continue;
 
 				for (ConnectedPeer connectedPeer : peersWithInventory)
 				{
@@ -518,6 +518,8 @@ public class GossipHandler implements Service
 						gossipLog.error(GossipHandler.this.context.getName()+": Unable to send "+type+" request of "+toRequest+" items in shard group to "+connectedPeer, ex);
 					}
 				}
+				
+				GossipHandler.this.requestedAt.put(type, System.currentTimeMillis());
 			}
 			
 			return true;
@@ -668,7 +670,7 @@ public class GossipHandler implements Service
 								return;
 							}
 
-							required.addAll(inventoryProcessor.required(broadcastInvMessage.getType(),  broadcastInvMessage.getItems()));
+							required.addAll(inventoryProcessor.required(broadcastInvMessage.getType(), broadcastInvMessage.getItems()));
 							if (required.isEmpty() == false)
 							{
 								GossipHandler.this.lock.writeLock().lock();
@@ -1045,8 +1047,8 @@ public class GossipHandler implements Service
 					this.context.getMetaData().increment("gossip.requests."+type.getSimpleName().toLowerCase(), itemsToRequest.size());
 					this.context.getMetaData().increment("gossip.requests.total", itemsToRequest.size());
 
-					if (gossipLog.hasLevel(Logging.DEBUG))
-						gossipLog.debug(GossipHandler.this.context.getName()+": Requesting "+getInventoryItemsMessage.getItems().size()+" items of type "+getInventoryItemsMessage.getType()+" from "+peer);
+//					if (gossipLog.hasLevel(Logging.DEBUG))
+						gossipLog.info(GossipHandler.this.context.getName()+": Requesting "+getInventoryItemsMessage.getItems().size()+" items of type "+getInventoryItemsMessage.getType()+" from "+peer);
 				}
 				catch (Throwable t)
 				{

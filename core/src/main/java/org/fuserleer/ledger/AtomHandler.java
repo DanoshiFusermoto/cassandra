@@ -339,7 +339,7 @@ public class AtomHandler implements Service
 	 */
 	PendingAtom get(Hash atom) throws IOException
 	{
-		AtomHandler.this.lock.readLock().lock();
+		AtomHandler.this.lock.writeLock().lock();
 		try
 		{
 			PendingAtom pendingAtom = this.pendingAtoms.get(atom);
@@ -355,7 +355,7 @@ public class AtomHandler implements Service
 		}
 		finally
 		{
-			AtomHandler.this.lock.readLock().unlock();
+			AtomHandler.this.lock.writeLock().unlock();
 		}
 	}
 	

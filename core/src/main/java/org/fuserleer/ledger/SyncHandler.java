@@ -881,11 +881,11 @@ public class SyncHandler implements Service
 				setSynced(true);
 
 				// Tell all sync peers we're synced
-				NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
 				for (ConnectedPeer syncPeer : syncPeers)
 				{
 					try
 					{
+						NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
 						this.context.getNetwork().getMessaging().send(nodeMessage, syncPeer);
 					}
 					catch (IOException ioex)

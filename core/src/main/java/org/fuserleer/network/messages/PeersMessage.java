@@ -18,25 +18,25 @@ public final class PeersMessage extends Message
 {
 	@JsonProperty("peers")
 	@DsonOutput(Output.ALL)
-	private List<Peer> peers = new ArrayList<>();
+	private List<Peer> peers;
 
-	public PeersMessage ()
+	@SuppressWarnings("unused")
+	private PeersMessage()
 	{
 		super();
 	}
-
-	public List<Peer> getPeers() 
-	{ 
-		return this.peers; 
-	}
-
-	public void setPeers(final Collection<Peer> peers)
+	
+	public PeersMessage(final Collection<Peer> peers)
 	{
 		Objects.requireNonNull(peers, "Peers is null");
 		if (peers.isEmpty() == true)
 			throw new IllegalArgumentException("Peer is empty");
 		
-		this.peers.clear();
-		this.peers.addAll(peers);
+		this.peers = new ArrayList<Peer>(peers);
+	}
+
+	public List<Peer> getPeers() 
+	{ 
+		return this.peers; 
 	}
 }

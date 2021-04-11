@@ -19,6 +19,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -352,13 +353,13 @@ public class GossipHandler implements Service
 						toBroadcast.get(shardGroup).forEach(b -> toBroadcastList.add(b.primitive.getHash()));
 						while(toBroadcastList.isEmpty() == false)
 						{
-							BroadcastInventoryMessage broadcastInventoryMessage = new BroadcastInventoryMessage(toBroadcastList, 0, Math.min(BroadcastInventoryMessage.MAX_ITEMS, toBroadcastList.size()), type);
+							List<Hash> toBroadcastSublist = toBroadcastList.stream().limit(BroadcastInventoryMessage.MAX_ITEMS).collect(Collectors.toList());
 							for (ConnectedPeer connectedPeer : GossipHandler.this.context.getNetwork().get(StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(shardGroup)))
 							{
 								if (connectedPeer.getNode().isSynced() == false)
 								{
 									if (gossipLog.hasLevel(Logging.DEBUG) == true)
-										gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) broadcast of inv type "+type+" containing "+broadcastInventoryMessage.getItems().size()+" items to " + connectedPeer);
+										gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) broadcast of inv type "+type+" containing "+toBroadcastSublist.size()+" items to " + connectedPeer);
 
 									continue;
 								}
@@ -366,8 +367,9 @@ public class GossipHandler implements Service
 								try
 								{
 //									if (gossipLog.hasLevel(Logging.DEBUG) == true)
-										gossipLog.info(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+broadcastInventoryMessage.getItems()+" to " + connectedPeer);
+										gossipLog.info(GossipHandler.this.context.getName()+": Broadcasting inv type "+type+" containing "+toBroadcastSublist+" to " + connectedPeer);
 
+									BroadcastInventoryMessage broadcastInventoryMessage = new BroadcastInventoryMessage(toBroadcastSublist, type);
 									GossipHandler.this.context.getNetwork().getMessaging().send(broadcastInventoryMessage, connectedPeer);
 								}
 								catch (IOException ex)
@@ -375,8 +377,7 @@ public class GossipHandler implements Service
 									gossipLog.error(GossipHandler.this.context.getName()+": Unable to send BroadcastInventoryMessage of "+toBroadcastList+" items in shard group "+shardGroup+" to "+connectedPeer, ex);
 								}
 							}
-							
-							toBroadcastList.removeAll(broadcastInventoryMessage.getItems());
+							toBroadcastList.removeAll(toBroadcastSublist);
 						}
 					}
 					

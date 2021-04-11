@@ -67,9 +67,7 @@ public abstract class Message extends BasicObject
 	
 	public static byte[] prepare(Message message, ECKeyPair identity) throws CryptoException, IOException
 	{
-		if (message.getSignature() == null || message.getSender() == null)
-			message.sign(identity);
-		
+		message.sign(identity);
 		return message.toByteArray();
 	}
 
@@ -156,8 +154,11 @@ public abstract class Message extends BasicObject
 		this.signature = signature;
 	}
 
-	public final void sign(ECKeyPair key) throws CryptoException
+	public final void sign(final ECKeyPair key) throws CryptoException
 	{
+		if (this.sender != null)
+			throw new IllegalStateException("Message "+this+" may already be signed");
+
 		if (this.signature != null)
 			throw new IllegalStateException("Message "+this+" is already signed");
 		

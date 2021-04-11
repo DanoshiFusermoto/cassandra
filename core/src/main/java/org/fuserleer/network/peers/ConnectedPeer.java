@@ -118,6 +118,7 @@ public abstract class ConnectedPeer extends Peer
 		if (this.handshake.availablePermits() == 0)
 		{
 			this.ephemeralRemotePublicKey = ephemeralRemotePublicKey;
+			networkLog.info(this.context.getName()+": Ephemeral keys set as "+this.ephemeralLocalKeyPair.getPublicKey()+" <> "+this.ephemeralRemotePublicKey+" for "+getURI()+":"+getNode().getIdentity());
 			onConnected();
 			return true;
 		}

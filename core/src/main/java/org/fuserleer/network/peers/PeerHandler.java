@@ -145,21 +145,21 @@ public class PeerHandler implements Service
 						// Deliver known Peers in its entirety, filtered on whitelist and activity
 						// Chunk the sending of Peers so that UDP can handle it
 						// TODO make this better!
-						PeersMessage peersMessage = new PeersMessage();
-						List<Peer> peers = PeerHandler.this.context.getNetwork().getPeerStore().get(new NotLocalPeersFilter(peer.getNode()));
-						for (Peer p : peers)
+						List<Peer> peersList = PeerHandler.this.context.getNetwork().getPeerStore().get(new NotLocalPeersFilter(peer.getNode()));
+						List<Peer> peersSublist = new ArrayList<Peer>();
+						for (Peer p : peersList)
 						{
-							peersMessage.getPeers().add(p);
+							peersSublist.add(p);
 	
-							if (peersMessage.getPeers().size() == 64)
+							if (peersSublist.size() == 64)
 							{
-								PeerHandler.this.context.getNetwork().getMessaging().send(peersMessage, peer);
-								peersMessage = new PeersMessage();
+								PeerHandler.this.context.getNetwork().getMessaging().send(new PeersMessage(peersSublist), peer);
+								peersSublist = new ArrayList<Peer>();
 							}
 						}
 	
-						if (peersMessage.getPeers().isEmpty() == false)
-							PeerHandler.this.context.getNetwork().getMessaging().send(peersMessage, peer);
+						if (peersSublist.isEmpty() == false)
+							PeerHandler.this.context.getNetwork().getMessaging().send(new PeersMessage(peersSublist), peer);
 					}
 					catch (Exception ex)
 					{

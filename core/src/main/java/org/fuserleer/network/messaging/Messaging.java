@@ -197,9 +197,10 @@ public class Messaging
 						}
 					}
 					
+					// FIXME why is this failing??
 					if (inboundMessage.getMessage().verify(inboundMessage.getPeer().getEphemeralRemotePublicKey()) == false)
 					{
-						inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": Did not validate against ephemeral key");
+						inboundMessage.getPeer().disconnect(inboundMessage.getMessage()+": Did not validate against ephemeral key "+inboundMessage.getPeer().getEphemeralRemotePublicKey()+" "+inboundMessage.getPeer().getURI()+":"+inboundMessage.getPeer().getNode().getIdentity());
 						continue;
 					}
 					

@@ -18,6 +18,7 @@ import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.time.Time;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.common.collect.ImmutableMap;
 
 @SerializerId2("network.peer")
@@ -29,7 +30,8 @@ public class Peer extends BasicObject
 
 	@JsonProperty("protocols")
 	@DsonOutput(Output.ALL)
-	private Set<Protocol>	protocols = new LinkedHashSet<>(); // Why a linkedhashset?
+	@JsonDeserialize(as=LinkedHashSet.class)
+	private Set<Protocol> protocols;
 
 	@JsonProperty("node")
 	@DsonOutput(Output.ALL)

@@ -133,14 +133,11 @@ public final class ValidatorHandler implements Service
  					try
 					{
 						// Identities refresh to all connected peers
- 						IdentitiesMessage identitiesMessage = new IdentitiesMessage();
  						Collection<BLSPublicKey> identities = getIdentities();
  						if (identities.isEmpty() == false)
  						{
- 							identitiesMessage.setIdentities(identities);
-
  							for (ConnectedPeer connectedPeer : ValidatorHandler.this.context.getNetwork().get(StandardPeerFilter.build(ValidatorHandler.this.context).setStates(PeerState.CONNECTED)))
- 								ValidatorHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, connectedPeer);
+ 								ValidatorHandler.this.context.getNetwork().getMessaging().send(new IdentitiesMessage(identities), connectedPeer);
  						}
 					}
 					catch (Throwable t)
@@ -503,13 +500,9 @@ public final class ValidatorHandler implements Service
 			
 			try
 			{
-				IdentitiesMessage identitiesMessage = new IdentitiesMessage();
 				Collection<BLSPublicKey> identities = getIdentities();
 				if (identities.isEmpty() == false)
-				{
-					identitiesMessage.setIdentities(identities);
-					ValidatorHandler.this.context.getNetwork().getMessaging().send(identitiesMessage, peerConnectedEvent.getPeer());
-				}
+					ValidatorHandler.this.context.getNetwork().getMessaging().send(new IdentitiesMessage(identities), peerConnectedEvent.getPeer());
 			}
 			catch (IOException ioex)
 			{

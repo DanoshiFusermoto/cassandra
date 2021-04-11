@@ -18,25 +18,27 @@ public class IdentitiesMessage extends Message
 {
 	@JsonProperty("identities")
 	@DsonOutput(Output.ALL)
-	private List<BLSPublicKey> identities = new ArrayList<>();
+	private List<BLSPublicKey> identities;
 
-	public IdentitiesMessage()
+	@SuppressWarnings("unused")
+	private IdentitiesMessage()
 	{
 		super();
+	}
+	
+	public IdentitiesMessage(final Collection<BLSPublicKey> identities)
+	{
+		super();
+		
+		Objects.requireNonNull(identities, "Identities is null");
+		if (identities.isEmpty() == true)
+			throw new IllegalArgumentException("Identities is empty");
+		
+		this.identities = new ArrayList<BLSPublicKey>(identities);
 	}
 
 	public List<BLSPublicKey> getIdentities() 
 	{ 
 		return this.identities; 
-	}
-
-	public void setIdentities(final Collection<BLSPublicKey> identities)
-	{
-		Objects.requireNonNull(identities, "Identities is null");
-		if (identities.isEmpty() == true)
-			throw new IllegalArgumentException("Identities is empty");
-		
-		this.identities.clear();
-		this.identities.addAll(identities);
 	}
 }

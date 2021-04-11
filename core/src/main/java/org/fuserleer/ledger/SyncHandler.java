@@ -299,7 +299,8 @@ public class SyncHandler implements Service
 									continue;
 								}
 								
-								if (block.getHeader().getCertificate().getSigners().count() == 0)
+								if (block.getHeader().getCertificate().getSigners() == null ||
+									block.getHeader().getCertificate().getSigners().count() == 0)
 								{
 									syncLog.warn(SyncHandler.this.context.getName()+": Block "+block.getHeader()+" has an empty certificate!");
 									continue;

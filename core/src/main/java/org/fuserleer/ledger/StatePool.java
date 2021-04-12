@@ -418,7 +418,8 @@ public final class StatePool implements Service
 								finally
 								{
 									if (StatePool.this.votesToCountQueue.remove(stateVote.getKey(), stateVote.getValue()) == false)
-										throw new IllegalStateException("State pool vote peek/remove failed for "+stateVote.getValue());
+										statePoolLog.warn(StatePool.this.context.getName()+": State pool vote peek/remove failed for "+stateVote.getValue());
+//										throw new IllegalStateException("State pool vote peek/remove failed for "+stateVote.getValue());
 								}
 							}
 						}
@@ -459,18 +460,12 @@ public final class StatePool implements Service
 																					
 												stateVotesToBroadcast.add(stateVote);
 											}
-											
-//											if (pendingState.vote(stateVote, localVotePower) == true)
-//											{
-//												if (statePoolLog.hasLevel(Logging.DEBUG))
-//													statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
-//										
-//												stateVotesToBroadcast.add(stateVote);
-//											}
 										}
 										else // FIXME happens usually on sync after state reconstruction as local validator doesn't know its voted already
 											statePoolLog.error(StatePool.this.context.getName()+": Persistance of local state vote of "+stateVote.getState()+" for "+stateVote.getOwner()+" failed");
 									}
+									else
+										StatePool.this.tryFinalize(pendingAtom, pendingState);
 								}
 								catch (Exception ex)
 								{
@@ -978,39 +973,46 @@ public final class StatePool implements Service
 			StatePool.this.lock.writeLock().unlock();
 		}
 		
+		tryFinalize(pendingAtom, pendingState);
+		return response;
+	}
+	
+	private boolean tryFinalize(final PendingAtom pendingAtom, final PendingState pendingState) throws DatabaseException, CryptoException
+	{
 		// See if threshold vote power is met, verify aggregate signatures and attempt to build a state certificate
-		if (response == true)
+//		if (response == true)
 		{
 			// Don't build certificates from cast votes received until executed locally
 			if (pendingAtom.getStatus().greaterThan(CommitStatus.PROVISIONED) == false)
-				return response;
+				return false;
 
 			if (pendingState.isPreverified() == true)
-				return response;
+				return false;
 			
 			if (pendingState.preverify() == false)
-				return response;
+				return false;
 			
 			if (pendingState.isVerified() == true)
-				return response;
+				return false;
 			
 			if (pendingState.verify() == false)
-				return response;
+				return false;
 
 			if (pendingAtom.getCertificate() != null)
-				return response;
+				return false;
 
 			StateCertificate stateCertificate = pendingState.buildCertificate();
 			if (stateCertificate != null)
 			{
 				if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-					statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" processed for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner()+" (CERTIFICATE)");
+					statePoolLog.debug(StatePool.this.context.getName()+": State certificate "+stateCertificate.getHash()+" constructed for "+stateCertificate.getObject()+":"+stateCertificate.getAtom());
 
 				StatePool.this.context.getEvents().post(new StateCertificateEvent(stateCertificate));
+				return true;
 			}
+			
+			return false;
 		}
-		
-		return response;
 	}
 	
 	public int size()

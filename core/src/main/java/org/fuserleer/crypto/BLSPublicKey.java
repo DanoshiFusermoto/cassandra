@@ -1,6 +1,8 @@
 package org.fuserleer.crypto;
 
+import java.util.Collection;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 import org.bouncycastle.util.Arrays;
 import org.fuserleer.crypto.bls.group.G2Point;
@@ -64,6 +66,12 @@ public final class BLSPublicKey extends PublicKey
 		Objects.requireNonNull(point, "Public key point is null");
 		this.point = point;
 		this.bytes = this.point.toBytes();
+	}
+
+	public BLSPublicKey combine(final Collection<BLSPublicKey> publicKeys) 
+	{
+		Objects.requireNonNull(publicKeys, "Public keys to combine is null");
+		return new BLSPublicKey(g2Point().add(publicKeys.stream().map(pk -> pk.point).collect(Collectors.toList())));
 	}
 
 	public BLSPublicKey combine(final BLSPublicKey publicKey) 

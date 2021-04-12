@@ -1,5 +1,6 @@
 package org.fuserleer.crypto.bls.group;
 
+import java.util.Collection;
 import java.util.Objects;
 
 import org.apache.milagro.amcl.BLS381.BIG;
@@ -39,6 +40,16 @@ public final class G1Point implements Group<G1Point>
 		return new G1Point(sum);
 	}
 	
+	public G1Point add(final Collection<G1Point> others) 
+	{
+		Objects.requireNonNull(others, "Points to add is null");
+		ECP sum = new ECP(this.point);
+		for (G1Point other : others)
+			sum.add(other.point);
+		sum.affine();
+		return new G1Point(sum);
+	}
+
 	public G1Point sub(final G1Point other)
 	{
 		Objects.requireNonNull(other, "Point to subtract is null");

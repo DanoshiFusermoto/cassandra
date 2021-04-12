@@ -1,6 +1,8 @@
 package org.fuserleer.crypto;
 
+import java.util.Collection;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 import org.bouncycastle.util.Arrays;
 import org.fuserleer.crypto.bls.group.G1Point;
@@ -68,6 +70,12 @@ public final class BLSSignature extends Signature
 	public String toString() 
 	{
 		return "Signature [ecpPoint="+this.point+"]";
+	}
+
+	public BLSSignature combine(final Collection<BLSSignature> signatures) 
+	{
+		Objects.requireNonNull(signatures, "Signature to combine is null");
+		return new BLSSignature(g1Point().add(signatures.stream().map(s -> s.point).collect(Collectors.toList())));
 	}
 
 	public BLSSignature combine(final BLSSignature signature) 

@@ -108,7 +108,9 @@ public final class BLS12381
 	{
 		Objects.requireNonNull(publicKeyList, "Public key list is null");
 		Numbers.isZero(publicKeyList.size(), "Public key list is empty");
-		return publicKeyList.stream().reduce((a, b) -> a.combine(b)).get();
+		if (publicKeyList.size() == 1)
+			return publicKeyList.get(0);
+		return publicKeyList.get(0).combine(publicKeyList.subList(1, publicKeyList.size()));
 	}
 
 	/**
@@ -122,7 +124,9 @@ public final class BLS12381
 	{
 		Objects.requireNonNull(signatureList, "Signature list is null");
 		Numbers.isZero(signatureList.size(), "Signature key list is empty");
-		return signatureList.stream().reduce((a, b) -> a.combine(b)).get();
+		if (signatureList.size() ==1)
+			return signatureList.get(0);
+		return signatureList.get(0).combine(signatureList.subList(1, signatureList.size()));
 	}
 
 	private static G1Point hashFunction(byte[] message) 

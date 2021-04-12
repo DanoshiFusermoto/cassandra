@@ -1,5 +1,6 @@
 package org.fuserleer.crypto.bls.group;
 
+import java.util.Collection;
 import java.util.Objects;
 
 import org.apache.milagro.amcl.BLS381.BIG;
@@ -28,6 +29,16 @@ public final class G2Point implements Group<G2Point>
 	{
 		Objects.requireNonNull(point, "ECP2 point is null");
 		this.point = new ECP2(point);
+	}
+
+	public G2Point add(final Collection<G2Point> others) 
+	{
+		Objects.requireNonNull(others, "Points to add is null");
+		ECP2 sum = new ECP2(this.point);
+		for (G2Point other : others)
+			sum.add(other.point);
+		sum.affine();
+		return new G2Point(sum);
 	}
 
 	public G2Point add(final G2Point other) 

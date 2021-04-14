@@ -1,16 +1,19 @@
 package org.fuserleer.console;
 
 import java.io.PrintStream;
+import java.util.Collection;
 import java.util.Date;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
+import org.fuserleer.crypto.Hash;
 import org.fuserleer.time.Time;
 
 public class Ledger extends Function
 {
 	private final static Options options = new Options().addOption("remote", false, "Return remote ledger information").addOption("pending", false, "Return pending ledger information")
+																													   .addOption("states", false, "Return hash list of all pending states")
 																													   .addOption("branches", false, "Return pending branches");
 
 	public Ledger()
@@ -28,6 +31,12 @@ public class Ledger extends Function
 			if (commandLine.hasOption("branches") == true)
 			{
 				context.getLedger().getBlockHandler().getPendingBranches().forEach(pb -> printStream.println(pb.toString()));
+			}
+			else if (commandLine.hasOption("states") == true)
+			{
+				Collection<Hash> pendingStates = context.getLedger().getStatePool().pending();
+				pendingStates.forEach(ps -> printStream.println(ps.toString()));
+				printStream.println(pendingStates.size()+" pending states");
 			}
 		}
 		else

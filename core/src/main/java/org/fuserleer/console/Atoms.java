@@ -1,6 +1,8 @@
 package org.fuserleer.console;
 
 import java.io.PrintStream;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
@@ -8,7 +10,11 @@ import org.fuserleer.API;
 import org.fuserleer.Context;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.ledger.SearchResult;
+import org.fuserleer.ledger.StateAddress;
+import org.fuserleer.ledger.StateSearchQuery;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.UniqueParticle;
 import org.fuserleer.serialization.Serialization;
 import org.json.JSONObject;
@@ -17,6 +23,8 @@ import org.fuserleer.serialization.DsonOutput.Output;
 public class Atoms extends Function
 {
 	private final static Options options = new Options().addOption("submit", true, "Submit atom/atoms")
+														.addOption("pending", false, "Returns the hashes of all atoms pending")
+														.addOption("pool", false, "Returns the hashes of all atoms in the pool")
 														.addOption("get", true, "Get an atom by hash");
 
 	public Atoms()
@@ -32,13 +40,32 @@ public class Atoms extends Function
 		if (commandLine.hasOption("get") == true)
 		{
 			Atom atom = context.getLedger().get(new Hash(commandLine.getOptionValue("get")), Atom.class);
+			AtomCertificate certificate = null;
 			if (atom == null)
 				printStream.println("Atom "+commandLine.getOptionValue("get")+" not found");
 			else
 			{
+				Future<SearchResult> certificateFuture = context.getLedger().get(new StateSearchQuery(new StateAddress(Atom.class, atom.getHash()), AtomCertificate.class));
+				SearchResult searchResult = certificateFuture.get();
+				if (searchResult != null) 
+					certificate = searchResult.getPrimitive();
+
 				JSONObject atomJSONObject = Serialization.getInstance().toJsonObject(atom, Output.PERSIST);
+				if (certificate != null)
+					atomJSONObject.put("certificate", Serialization.getInstance().toJsonObject(certificate, Output.PERSIST));
+				
 				printStream.println(atomJSONObject.toString(4));
 			}			
+		}
+		else if (commandLine.hasOption("pending") == true)
+		{
+			for (Hash atom : context.getLedger().getAtomHandler().pending())
+				printStream.println(atom);
+		}
+		else if (commandLine.hasOption("pool") == true)
+		{
+			for (Hash atom : context.getLedger().getAtomPool().pending())
+				printStream.println(atom);
 		}
 		else if (commandLine.hasOption("submit") == true)
 		{

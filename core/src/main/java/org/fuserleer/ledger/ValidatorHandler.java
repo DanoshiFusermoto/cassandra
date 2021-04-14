@@ -77,6 +77,10 @@ public final class ValidatorHandler implements Service
 		this.validatorStore = new ValidatorStore(context);
 		this.ownedPowerCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
 		this.identityCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
+		
+//		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		powerLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 	
 	@Override
@@ -431,6 +435,9 @@ public final class ValidatorHandler implements Service
 					long numRemoteShardGroups = this.context.getLedger().numShardGroups(stateCertificate.getHeight());
 					long stateShardGroup = ShardMapper.toShardGroup(stateCertificate.getState().get(), numRemoteShardGroups);
 					shardGroupNodes.putAll(stateShardGroup, this.validatorStore.get(stateShardGroup, numRemoteShardGroups));
+					
+					if (localShardGroup != stateShardGroup)
+						this.validatorStore.store(stateCertificate.getProducer());
 				}
 				
 				for (VotePowerBloom votePowerBloom : atomCertificate.getVotePowers())

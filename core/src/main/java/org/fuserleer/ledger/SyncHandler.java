@@ -875,7 +875,7 @@ public class SyncHandler implements Service
 					for (PendingAtom pendingAtom : this.atoms.values())
 					{
 						this.context.getLedger().getAtomHandler().push(pendingAtom);
-						this.context.getLedger().getStateHandler().push(pendingAtom);
+						this.context.getLedger().getStateHandler().provision(pendingAtom);
 					}
 				}
 				

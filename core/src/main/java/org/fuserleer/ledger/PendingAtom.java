@@ -823,7 +823,7 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
-	AtomCertificate buildCertificate() throws CryptoException, ValidationException, IOException
+	AtomCertificate buildCertificate() throws CryptoException, IOException, ValidationException
 	{
 		this.lock.writeLock().lock();
 		try
@@ -889,10 +889,6 @@ public final class PendingAtom implements Hashable
 			
 			AtomCertificate certificate = new AtomCertificate(getHash(), this.certificates.values(), votePowerBlooms.values());
 			setCertificate(certificate);
-			this.context.getEvents().post(new AtomCertificateEvent(certificate));
-			this.context.getMetaData().increment("ledger.pool.atom.certificates");
-			cerbyLog.info(this.context.getName()+": Created atom certificate "+certificate.getHash()+" for atom "+getHash()+" with decision "+certificate.getDecision());
-			
 			return this.certificate;
 		}
 		finally

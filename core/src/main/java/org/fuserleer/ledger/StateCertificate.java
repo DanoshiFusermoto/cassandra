@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Objects;
 
 import org.fuserleer.collections.Bloom;
+import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
@@ -28,6 +29,10 @@ public final class StateCertificate extends VoteCertificate
 	@JsonProperty("block")
 	@DsonOutput(Output.ALL)
 	private Hash block;
+
+	@JsonProperty("producer")
+	@DsonOutput(Output.ALL)
+	private BLSPublicKey producer;
 
 	@JsonProperty("atom")
 	@DsonOutput(Output.ALL)
@@ -76,9 +81,9 @@ public final class StateCertificate extends VoteCertificate
 		// FOR SERIALIZER //
 	}
 
-	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final VotePowerBloom powers, final Bloom signers, final BLSSignature signature) throws CryptoException
+	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final BLSPublicKey producer, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final VotePowerBloom powers, final Bloom signers, final BLSSignature signature) throws CryptoException
 	{
-		this(state, atom, block, input, output, execution, merkle, audit, powers.getHash(), signers, signature);
+		this(state, atom, block, producer, input, output, execution, merkle, audit, powers.getHash(), signers, signature);
 		
 		Objects.requireNonNull(powers, "Powers is null");
 		Numbers.isZero(powers.count(), "Powers is empty");
@@ -87,7 +92,7 @@ public final class StateCertificate extends VoteCertificate
 		this.powerBloom = powers;
 	}
 
-	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final Hash powers, final Bloom signers, final BLSSignature signature) throws CryptoException
+	public StateCertificate(final StateKey<?, ?> state, final Hash atom, final Hash block, final BLSPublicKey producer, final UInt256 input, final UInt256 output, final Hash execution, final Hash merkle, final List<MerkleProof> audit, final Hash powers, final Bloom signers, final BLSSignature signature) throws CryptoException
 	{
 		super(Objects.requireNonNull(execution, "Execution is null").equals(Hash.ZERO) == false ? StateDecision.POSITIVE : StateDecision.NEGATIVE, signers, signature);
 		
@@ -97,6 +102,7 @@ public final class StateCertificate extends VoteCertificate
 
 		Objects.requireNonNull(powers, "Powers is null");
 		Hash.notZero(powers, "Block is ZERO");
+		Objects.requireNonNull(producer, "Producer is null");
 		
 		Objects.requireNonNull(atom, "Atom is null");
 		Hash.notZero(atom, "Atom is ZERO");
@@ -110,6 +116,7 @@ public final class StateCertificate extends VoteCertificate
 		this.state = state;
 		this.atom = atom;
 		this.block = block;
+		this.producer = producer;
 		this.input = input;
 		this.output = output;
 		this.execution = execution;
@@ -122,6 +129,11 @@ public final class StateCertificate extends VoteCertificate
 	public Hash getBlock()
 	{
 		return this.block;
+	}
+	
+	public BLSPublicKey getProducer()
+	{
+		return this.producer;
 	}
 	
 	public long getHeight()
@@ -189,6 +201,7 @@ public final class StateCertificate extends VoteCertificate
 			baos.write(this.getState().toByteArray());
 			baos.write(this.atom.toByteArray());
 			baos.write(this.block.toByteArray());
+			baos.write(this.producer.toByteArray());
 			baos.write(this.execution.toByteArray());
 			
 			// TODO input AND output can be null??

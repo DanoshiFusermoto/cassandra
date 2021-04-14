@@ -79,7 +79,8 @@ public final class AtomCertificate extends Certificate
 			
 			// Create a "copy" instance of the StateCertificate dropping the bulky bloom which will 
 			// have been duplicated if there are multiple states within the same shard group
-			this.certificates.put(certificate.getState().get(), new StateCertificate(certificate.getState(), certificate.getAtom(), certificate.getBlock(), 
+			this.certificates.put(certificate.getState().get(), new StateCertificate(certificate.getState(), certificate.getAtom(), 
+																					 certificate.getBlock(), certificate.getProducer(),
 																					 certificate.getInput(), certificate.getOutput(), certificate.getExecution(), 
 																					 certificate.getMerkle(), certificate.getAudit(),
 																					 certificate.getPowers(), certificate.getSigners(), certificate.getSignature()));

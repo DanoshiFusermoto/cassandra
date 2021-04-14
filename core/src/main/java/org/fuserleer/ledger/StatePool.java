@@ -157,7 +157,7 @@ public final class StatePool implements Service
 						continue;
 					
 					if (majorityStateVote == null)
-						majorityStateVote = new StateVote(vote.getState(), vote.getAtom(), vote.getBlock(), vote.getInput(), vote.getOutput(), vote.getExecution());
+						majorityStateVote = new StateVote(vote.getState(), vote.getAtom(), vote.getBlock(), vote.getProducer(), vote.getInput(), vote.getOutput(), vote.getExecution());
 					
 					if (aggregatedPublicKey == null)
 					{
@@ -256,7 +256,8 @@ public final class StatePool implements Service
 				final long shardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), StatePool.this.context.getLedger().numShardGroups(getHeight()));
 				final VotePowerBloom votePowers = StatePool.this.context.getLedger().getValidatorHandler().getVotePowerBloom(getBlock(), shardGroup);
 				// TODO need merkles
-				final StateCertificate certificate = new StateCertificate(this.majorityStateVote.getState(), this.majorityStateVote.getAtom(), this.majorityStateVote.getBlock(), 
+				final StateCertificate certificate = new StateCertificate(this.majorityStateVote.getState(), this.majorityStateVote.getAtom(), 
+																		  this.majorityStateVote.getBlock(), this.majorityStateVote.getProducer(), 
 																		  this.majorityStateVote.getInput(), this.majorityStateVote.getOutput(), this.majorityStateVote.getExecution(), 
 																	      Hash.random(), Collections.singletonList(new MerkleProof(Hash.random(), Branch.OLD_ROOT)), votePowers, this.signers, this.aggregateSignature);
 				this.certificate = certificate;
@@ -402,7 +403,7 @@ public final class StatePool implements Service
 								{
 									if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote.getValue()).equals(OperationStatus.SUCCESS) == false)
 									{
-										statePoolLog.warn(StatePool.this.context.getName()+": Received already seen state vote of "+stateVote.getValue().getState()+" for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
+										statePoolLog.warn(StatePool.this.context.getName()+": Already seen state vote of "+stateVote.getValue().getState()+" for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
 										continue;
 									}
 									
@@ -446,7 +447,8 @@ public final class StatePool implements Service
 									{
 										Optional<UInt256> input = pendingAtom.getInput(pendingState.getKey());
 										Optional<UInt256> output = pendingAtom.getOutput(pendingState.getKey());
-										StateVote stateVote = new StateVote(pendingState.getKey(), pendingState.getAtom(), pendingState.getBlock(), 
+										StateVote stateVote = new StateVote(pendingState.getKey(), pendingState.getAtom(), 
+																			pendingState.getBlock(), StatePool.this.context.getLedger().getLedgerStore().get(pendingState.getBlock(), BlockHeader.class).getOwner(),
 																  			input == null ? null : input.orElse(null), output == null ? null : output.orElse(null),
 																  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
 										stateVote.sign(StatePool.this.context.getNode().getKeyPair());
@@ -691,7 +693,7 @@ public final class StatePool implements Service
 						}
 						catch (Exception ex)
 						{
-							statePoolLog.error(StatePool.this.context.getName()+": ledger.messages.state.get.pool " + peer, ex);
+							statePoolLog.error(StatePool.this.context.getName()+":  ledger.messages.sync.acquired " + peer, ex);
 						}
 						finally
 						{
@@ -977,7 +979,7 @@ public final class StatePool implements Service
 		return response;
 	}
 	
-	private boolean tryFinalize(final PendingAtom pendingAtom, final PendingState pendingState) throws DatabaseException, CryptoException
+	private boolean tryFinalize(final PendingAtom pendingAtom, final PendingState pendingState) throws IOException, CryptoException
 	{
 		// See if threshold vote power is met, verify aggregate signatures and attempt to build a state certificate
 //		if (response == true)

@@ -25,6 +25,7 @@ public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 	private PublicKey		identity;
 	private URI				URI;
 	private Set<PeerState> 	states;
+	private Boolean			synced;
 	
 	public static final StandardPeerFilter build(final Context context)
 	{
@@ -36,6 +37,12 @@ public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 		this.context = Objects.requireNonNull(context, "Context is null");
 	}
 	
+
+	public StandardPeerFilter setSynced(final boolean synced)
+	{
+		this.synced = synced;
+		return this;
+	}
 
 	public StandardPeerFilter setURI(final URI URI)
 	{
@@ -80,6 +87,9 @@ public class StandardPeerFilter implements PeerFilter<ConnectedPeer>
 	public boolean filter(final ConnectedPeer peer)
 	{
 		Objects.requireNonNull(peer, "Connected peer is null");
+		
+		if (this.synced != null && this.synced != peer.getNode().isSynced())
+			return false;
 		
 		if (this.shardGroup != null && ShardMapper.toShardGroup(peer.getNode().getIdentity(), this.context.getLedger().numShardGroups()) != this.shardGroup)
 			return false;

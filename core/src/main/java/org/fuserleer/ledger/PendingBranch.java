@@ -623,7 +623,7 @@ public class PendingBranch
 			{
 				try
 				{
-					PendingAtom pendingAtom = PendingBranch.this.context.getLedger().getAtomHandler().get(certificate.getAtom());
+					PendingAtom pendingAtom = PendingBranch.this.context.getLedger().getAtomHandler().get(certificate.getAtom(), CommitStatus.NONE);
 					if (pendingAtom == null)
 						throw new IllegalStateException("Pending atom "+certificate.getAtom()+" referenced in certificate not found for state unlock");
 					

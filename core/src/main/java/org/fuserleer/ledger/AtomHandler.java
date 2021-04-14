@@ -24,6 +24,7 @@ import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
+import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
@@ -166,7 +167,7 @@ public class AtomHandler implements Service
 			@Override
 			public Set<Long> filter(Primitive atom) throws IOException
 			{
-				PendingAtom pendingAtom = AtomHandler.this.get(atom.getHash());
+				PendingAtom pendingAtom = AtomHandler.this.get(atom.getHash(), CommitStatus.NONE);
 				return ShardMapper.toShardGroups(pendingAtom.getShards(), AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight()));
 			}
 		});
@@ -362,16 +363,23 @@ public class AtomHandler implements Service
 	}
 
 	/**
-	 * Returns an existing pending atom or creates it providing that the atom has not being included in a block.
+	 * Returns an existing pending atom or creates it providing that supplied CommitStatus condition is met.
 	 * <br><br>
 	 * TODO The above assumption should be tested in all cases.
 	 * 
 	 * @param atom The atom hash
 	 * @return A pending atom or null
 	 * @throws IOException
+	 * @throws  
 	 */
-	PendingAtom get(Hash atom) throws IOException
+	PendingAtom get(final Hash atom, final CommitStatus condition) throws IOException
 	{
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is zero");
+		Objects.requireNonNull(condition, "Condition is null");
+		if (CommitStatus.NONE.equals(condition) == false && CommitStatus.ACCEPTED.equals(condition) == false)
+			throw new IllegalArgumentException("Condition "+condition+" is invalid when getting atom "+atom);
+		
 		AtomHandler.this.lock.writeLock().lock();
 		try
 		{
@@ -379,10 +387,52 @@ public class AtomHandler implements Service
 			if (pendingAtom != null)
 				return pendingAtom;
 			
-			if (pendingAtom == null && this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom)) != null)
-				return null;
+			Atom persistedAtom = null;
+			BlockHeader persistedBlock = null;
+			if (pendingAtom == null)
+			{
+				persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
+				if (condition.equals(CommitStatus.NONE) == true && persistedAtom != null)
+					return null;
+
+				// This acts as a load, mainly for the sync transition to participation 
+				if (condition.equals(CommitStatus.ACCEPTED) == true)
+				{
+					Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom));
+					if (commit != null)
+					{
+						if (commit.getPath().get(Elements.CERTIFICATE) != null)
+							return null;
+						
+						persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
+						if (persistedAtom == null)
+							throw new IllegalStateException("Expected to find persisted atom "+atom+" for condition "+condition);
+						
+						persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
+						if (persistedBlock == null)
+							throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom+" for condition "+condition);
+					}
+				}
+			}
 
 			pendingAtom = PendingAtom.create(this.context, atom);
+			
+			if (persistedAtom != null)
+			{
+				pendingAtom.setAtom(persistedAtom);
+				try
+				{
+					pendingAtom.prepare();
+					if (persistedBlock != null)
+						pendingAtom.provision(persistedBlock);
+					
+				}
+				catch (ValidationException vex)
+				{
+					throw new IOException("Loading of persisted atom "+atom+" failed", vex);
+				}
+			}
+			
 			this.pendingAtoms.put(atom, pendingAtom);
 			return pendingAtom;
 		}
@@ -428,8 +478,10 @@ public class AtomHandler implements Service
 		}
 	}
 
-	boolean submit(Atom atom) throws InterruptedException
+	boolean submit(final Atom atom) throws InterruptedException
 	{
+		Objects.requireNonNull(atom, "Atom is null");
+		
 		if (this.atomQueue.putIfAbsent(atom.getHash(), atom) == null)
 		{
 			if (atomsLog.hasLevel(Logging.DEBUG) == true)
@@ -550,7 +602,7 @@ public class AtomHandler implements Service
 								if (commit != null && commit.getPath().get(Elements.CERTIFICATE) != null)
 									continue;
 									
-								PendingAtom pendingAtom = AtomHandler.this.get(item);
+								PendingAtom pendingAtom = AtomHandler.this.get(item, CommitStatus.ACCEPTED);
 								if (pendingAtom == null)
 								{
 									Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);

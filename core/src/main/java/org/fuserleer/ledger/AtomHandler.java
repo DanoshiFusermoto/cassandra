@@ -1,11 +1,13 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -73,6 +75,12 @@ public class AtomHandler implements Service
 				{
 					try
 					{
+						if (AtomHandler.this.context.getNode().isSynced() == false)
+						{
+							Thread.sleep(1000);
+							continue;
+						}
+
 						Entry<Hash, Atom> atom = AtomHandler.this.atomQueue.peek(1, TimeUnit.SECONDS);
 						if (atom != null)
 						{
@@ -241,6 +249,9 @@ public class AtomHandler implements Service
 							if (atomsLog.hasLevel(Logging.DEBUG) == true)
 								atomsLog.debug(AtomHandler.this.context.getName()+": Atom pool inventory request from "+peer);
 
+							final long numShardGroups = AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight());
+							final long localShardGroup = ShardMapper.toShardGroup(AtomHandler.this.context.getNode().getIdentity(), numShardGroups);
+
 							// TODO will cause problems when pool is BIG
 							Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(AtomHandler.this.pendingAtoms.values());
 							final Set<Hash> pendingAtomInventory = new LinkedHashSet<Hash>();
@@ -248,7 +259,14 @@ public class AtomHandler implements Service
 							
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
-								pendingAtomInventory.add(pendingAtom.getHash());
+								if (pendingAtom.getStatus().lessThan(CommitStatus.PREPARED) == true)
+									continue;
+								
+			                	Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
+			                	if (shardGroups.contains(localShardGroup) == false)
+			                		continue;
+
+			                	pendingAtomInventory.add(pendingAtom.getHash());
 								
 								for (AtomVote atomVote : pendingAtom.votes())
 									atomVoteInventory.add(atomVote.getHash());
@@ -326,6 +344,21 @@ public class AtomHandler implements Service
 	public int numPending()
 	{
 		return this.pendingAtoms.size();
+	}
+	
+	public Collection<Hash> pending()
+	{
+		AtomHandler.this.lock.readLock().lock();
+		try
+		{
+			List<Hash> pending = new ArrayList<Hash>(this.pendingAtoms.keySet());
+			Collections.sort(pending);
+			return pending;
+		}
+		finally
+		{
+			AtomHandler.this.lock.readLock().unlock();
+		}
 	}
 
 	/**

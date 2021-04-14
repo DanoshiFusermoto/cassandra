@@ -3,6 +3,7 @@ package org.fuserleer.ledger;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -470,6 +471,21 @@ public final class AtomPool implements Service
 		{
 			List<Atom> atoms = this.pending.values().stream().filter(pa -> pa.getAtom() != null).map(pa -> pa.getAtom()).collect(Collectors.toList());
 			return atoms;
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+	}
+
+	public Collection<Hash> pending()
+	{
+		this.lock.readLock().lock();
+		try
+		{
+			List<Hash> pending = new ArrayList<Hash>(this.pending.keySet());
+			Collections.sort(pending);
+			return pending;
 		}
 		finally
 		{

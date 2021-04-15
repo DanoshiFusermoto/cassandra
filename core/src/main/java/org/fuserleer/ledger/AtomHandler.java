@@ -380,6 +380,9 @@ public class AtomHandler implements Service
 		if (CommitStatus.NONE.equals(condition) == false && CommitStatus.ACCEPTED.equals(condition) == false)
 			throw new IllegalArgumentException("Condition "+condition+" is invalid when getting atom "+atom);
 		
+		if (this.context.getNode().isSynced() == false)
+			throw new IllegalStateException("Sync state is false!  AtomHandler::get called");
+		
 		AtomHandler.this.lock.writeLock().lock();
 		try
 		{
@@ -402,6 +405,9 @@ public class AtomHandler implements Service
 					if (commit != null)
 					{
 						if (commit.getPath().get(Elements.CERTIFICATE) != null)
+							return null;
+						
+						if (commit.isTimedout() == true)
 							return null;
 						
 						persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);

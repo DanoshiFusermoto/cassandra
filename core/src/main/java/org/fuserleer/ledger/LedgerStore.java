@@ -820,7 +820,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			
 	    	StateAddress blockStateAddress = new StateAddress(Block.class, block.getHeader().getHash());
     		Path blockPath = new Path(blockStateAddress.get(), ImmutableMap.of(Elements.BLOCK, block.getHeader().getHash()));
-    		Commit blockCommit = new Commit(block.getHeader().getIndex(), blockPath, Collections.emptyList(), block.getHeader().getTimestamp());
+    		Commit blockCommit = new Commit(block.getHeader().getIndex(), blockPath, Collections.emptyList(), block.getHeader().getTimestamp(), false);
 
     		DatabaseEntry blockStateAddressKey = new DatabaseEntry(blockStateAddress.get().toByteArray());
     		DatabaseEntry blockCommitValue = new DatabaseEntry(blockCommit.toByteArray()); //Serialization.getInstance().toDson(blockCommit, Output.PERSIST));
@@ -880,7 +880,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    {
 		    	StateAddress	atomStateAddress = new StateAddress(Atom.class, atom.getHash());
 		    	Path 			atomPath = new Path(atomStateAddress.get(), ImmutableMap.of(Elements.BLOCK, block.getHeader().getHash(), Elements.ATOM, atom.getHash()));
-		    	Commit			atomCommit = new Commit(block.getHeader().getIndexOf(InventoryType.ATOMS, atom.getHash()), atomPath, Collections.emptyList(), block.getHeader().getTimestamp());
+		    	Commit			atomCommit = new Commit(block.getHeader().getIndexOf(InventoryType.ATOMS, atom.getHash()), atomPath, Collections.emptyList(), block.getHeader().getTimestamp(), false);
 	    		DatabaseEntry 	atomStateAddressKey = new DatabaseEntry(atomStateAddress.get().toByteArray());
 	    		DatabaseEntry 	atomCommitValue = new DatabaseEntry(atomCommit.toByteArray()); //Serialization.getInstance().toDson(atomCommit, Output.PERSIST));
 				status = this.stateCommits.putNoOverwrite(transaction, atomStateAddressKey, atomCommitValue);
@@ -908,7 +908,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    	
 				StateAddress	certificateStateAddress = new StateAddress(AtomCertificate.class, certificate.getHash());
 		    	Path 			certificatePath = new Path(certificateStateAddress.get(), ImmutableMap.of(Elements.BLOCK, block.getHeader().getHash()));
-		    	Commit			certificateCommit = new Commit(block.getHeader().getIndexOf(InventoryType.CERTIFICATES, certificate.getHash()), certificatePath, Collections.emptyList(), block.getHeader().getTimestamp());
+		    	Commit			certificateCommit = new Commit(block.getHeader().getIndexOf(InventoryType.CERTIFICATES, certificate.getHash()), certificatePath, Collections.emptyList(), block.getHeader().getTimestamp(), false);
 		    	DatabaseEntry 	certificateStateAddressKey = new DatabaseEntry(certificateStateAddress.get().toByteArray());
 				DatabaseEntry 	certificateCommitValue = new DatabaseEntry(certificateCommit.toByteArray()); //Serialization.getInstance().toDson(certificateCommit, Output.ALL));
 				
@@ -941,6 +941,42 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    } 
 	}
 	
+	final OperationStatus timedOut(final Hash atom) throws IOException
+	{
+	    Objects.requireNonNull(atom, "Atom to timeout is null");
+
+	    Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
+	    try 
+	    {	
+	    	OperationStatus status;
+	    	StateAddress	atomStateAddress = new StateAddress(Atom.class, atom);
+    		DatabaseEntry 	atomStateAddressKey = new DatabaseEntry(atomStateAddress.get().toByteArray());
+    		DatabaseEntry 	atomCommitValue = new DatabaseEntry();
+    		status = this.stateCommits.get(transaction, atomStateAddressKey, atomCommitValue, LockMode.RMW);
+		    if (status.equals(OperationStatus.SUCCESS) != true) 
+	    		throw new DatabaseException("Expected atom commit state for "+atom+" but failed due to " + status.name());
+	    	
+		    Commit atomCommit = Commit.from(atomCommitValue.getData());
+		    atomCommit.setTimedOut();
+    		atomCommitValue.setData(atomCommit.toByteArray());
+			status = this.stateCommits.put(transaction, atomStateAddressKey, atomCommitValue);
+		    if (status.equals(OperationStatus.SUCCESS) != true) 
+	    		throw new DatabaseException("Failed to update atom state for "+atom+" in block "+atomCommit.getPath().get(Elements.BLOCK)+" due to " + status.name());
+			else if (databaseLog.hasLevel(Logging.DEBUG) == true)
+				databaseLog.debug(this.context.getName()+": Updated atom state for time out "+atomStateAddress);
+	    	transaction.commit();
+	    	return status;
+	    } 
+	    catch (Exception ex) 
+	    {
+			databaseLog.error(this.context.getName()+": Atom state timedout commit aborting for "+atom, ex);
+	    	transaction.abort();
+	    	if (ex instanceof DatabaseException)
+	    		throw ex; 
+	    	throw new DatabaseException(ex);
+	    } 
+	}
+
 	final void commit(final CommitOperation commit) throws IOException
 	{
 	    Objects.requireNonNull(commit, "Commit operation is null");
@@ -1010,7 +1046,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 				path.validate();
 
         		long shardGroup = ShardMapper.toShardGroup(path.endpoint(), this.context.getLedger().numShardGroups(commit.getHead().getHeight()));
-        		Commit stateCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp());
+        		Commit stateCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp(), false);
 				DatabaseEntry stateKey = new DatabaseEntry(path.endpoint().toByteArray());
 				DatabaseEntry stateCommitValue = new DatabaseEntry(stateCommit.toByteArray()); //Serialization.getInstance().toDson(stateCommit, Output.PERSIST));
 				status = this.stateCommits.put(transaction, stateKey, stateCommitValue);
@@ -1024,7 +1060,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    	{
 	    		path.validate();
 
-        		Commit associationCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp());
+        		Commit associationCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp(), false);
         		DatabaseEntry associationKey = new DatabaseEntry(path.endpoint().toByteArray());
 				DatabaseEntry associationCommitValue = new DatabaseEntry(associationCommit.toByteArray()); //Serialization.getInstance().toDson(associationCommit, Output.PERSIST));
 

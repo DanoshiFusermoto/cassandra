@@ -33,6 +33,7 @@ public final class Commit
 		dis.read(pathBytes);
 		Path path = Path.from(pathBytes);
 		
+		boolean timedout = dis.readBoolean();
 		long timestamp = dis.readLong();
 		
 		int auditSize = dis.readShort();
@@ -48,7 +49,7 @@ public final class Commit
 			}
 		}
 		
-		return new Commit(index, path, audit, timestamp);
+		return new Commit(index, path, audit, timestamp, timedout);
 	}
 
 	// Placeholder for the serializer ID
@@ -68,6 +69,11 @@ public final class Commit
 	@DsonOutput(Output.ALL)
 	private long timestamp;
 
+	// FIXME this is a massive fudge for now until timeout certificates are implemented
+	@JsonProperty("timedout")
+	@DsonOutput(Output.ALL)
+	private boolean timedout;
+
 	@JsonProperty("merkle_proof")
 	@DsonOutput(Output.ALL)
 	private List<MerkleProof> merkleProof;
@@ -79,7 +85,7 @@ public final class Commit
 		this.merkleProof = Collections.emptyList();
 	}
 
-	public Commit(final long index, final Path path, final List<MerkleProof> merkleProof, final long timestamp)
+	public Commit(final long index, final Path path, final List<MerkleProof> merkleProof, final long timestamp, final boolean timedout)
 	{
 		Objects.requireNonNull(path);
 		Objects.requireNonNull(merkleProof);
@@ -91,6 +97,7 @@ public final class Commit
 		this.index = index;
 		this.path = path;
 		this.merkleProof = new ArrayList<MerkleProof>(merkleProof);
+		this.timedout = timedout;
 		this.timestamp = timestamp;
 	}
 	
@@ -127,6 +134,16 @@ public final class Commit
 	{
 		return this.index;
 	}
+	
+	public boolean isTimedout()
+	{
+		return this.timedout;
+	}
+	
+	void setTimedOut()
+	{
+		this.timedout = true;
+	}
 
 	public long getTimestamp()
 	{
@@ -162,6 +179,9 @@ public final class Commit
 			if (this.index != ((Commit)other).index)
 				return false;
 
+			if (this.timedout != ((Commit)other).timedout)
+				return false;
+
 			if (this.timestamp != ((Commit)other).timestamp)
 				return false;
 
@@ -180,7 +200,7 @@ public final class Commit
 	@Override
 	public String toString()
 	{
-		return this.index+" "+this.path+" "+" "+this.timestamp+" "+this.merkleProof;
+		return this.index+" "+this.path+" "+" "+this.timestamp+":"+this.timedout+" "+this.merkleProof;
 	}
 	
 	public final byte[] toByteArray() throws IOException
@@ -192,7 +212,7 @@ public final class Commit
 		byte[] pathBytes = this.path.toByteArray();
 		dos.writeShort(pathBytes.length);
 		dos.write(pathBytes);
-		
+		dos.writeBoolean(this.timedout);
 		dos.writeLong(this.timestamp);
 		
 		int auditSize = this.merkleProof.size();

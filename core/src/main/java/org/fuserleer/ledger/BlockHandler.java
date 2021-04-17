@@ -913,7 +913,7 @@ public class BlockHandler implements Service
 									blockSize = bytes.length;
 									if (blockSize > Message.MAX_MESSAGE_SIZE)
 									{
-										numCertificatesToInclude /= numCertificatesToInclude;
+										numCertificatesToInclude /= 2;
 										blockSize = 0;
 										blocksLog.warn(this.context.getName()+": Generated block with size "+bytes.length+" which exceeds maximum of "+Message.MAX_MESSAGE_SIZE+", adjusting included certificates");
 									}

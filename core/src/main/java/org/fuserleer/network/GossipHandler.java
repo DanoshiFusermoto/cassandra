@@ -354,16 +354,9 @@ public class GossipHandler implements Service
 						while(toBroadcastList.isEmpty() == false)
 						{
 							List<Hash> toBroadcastSublist = toBroadcastList.stream().limit(BroadcastInventoryMessage.MAX_ITEMS).collect(Collectors.toList());
-							for (ConnectedPeer connectedPeer : GossipHandler.this.context.getNetwork().get(StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(shardGroup)))
+							StandardPeerFilter broadcastPeerFilter = StandardPeerFilter.build(GossipHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(shardGroup).setSynced(true);
+							for (ConnectedPeer connectedPeer : GossipHandler.this.context.getNetwork().get(broadcastPeerFilter))
 							{
-								if (connectedPeer.getNode().isSynced() == false)
-								{
-									if (gossipLog.hasLevel(Logging.DEBUG) == true)
-										gossipLog.debug(GossipHandler.this.context.getName()+": Aborting (not synced) broadcast of inv type "+type+" containing "+toBroadcastSublist.size()+" items to " + connectedPeer);
-
-									continue;
-								}
-								
 								try
 								{
 //									if (gossipLog.hasLevel(Logging.DEBUG) == true)

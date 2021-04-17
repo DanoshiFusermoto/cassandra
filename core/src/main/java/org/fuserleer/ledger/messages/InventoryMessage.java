@@ -43,6 +43,9 @@ public abstract class InventoryMessage extends Message
 
 	public Set<Hash> getInventory()
 	{
+		if (this.inventory == null)
+			return Collections.emptySet();
+		
 		return Collections.unmodifiableSet(this.inventory);
 	}
 }

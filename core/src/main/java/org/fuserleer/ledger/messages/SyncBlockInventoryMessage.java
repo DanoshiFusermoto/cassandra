@@ -21,6 +21,13 @@ public final class SyncBlockInventoryMessage extends InventoryMessage
 		super();
 	}
 
+	public SyncBlockInventoryMessage(final long responseSeq)
+	{
+		super();
+		
+		this.responseSeq = responseSeq;
+	}
+
 	public SyncBlockInventoryMessage(final long responseSeq, final Collection<Hash> inventory)
 	{
 		super(inventory);

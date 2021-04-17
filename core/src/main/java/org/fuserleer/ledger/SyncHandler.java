@@ -146,7 +146,8 @@ public class SyncHandler implements Service
 		{
 			// Build the re-requests
 			long rerequestShardGroup = ShardMapper.toShardGroup(getPeer().getNode().getIdentity(), SyncHandler.this.context.getLedger().numShardGroups());
-			List<ConnectedPeer> rerequestConnectedPeers = SyncHandler.this.context.getNetwork().get(StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(rerequestShardGroup));
+			StandardPeerFilter standardPeerFilter = StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(rerequestShardGroup);
+			List<ConnectedPeer> rerequestConnectedPeers = SyncHandler.this.context.getNetwork().get(standardPeerFilter);
 			if (rerequestConnectedPeers.isEmpty() == false)
 			{
 				ConnectedPeer rerequestPeer = rerequestConnectedPeers.get(0);
@@ -246,8 +247,8 @@ public class SyncHandler implements Service
 						Thread.sleep(500);//TimeUnit.SECONDS.toMillis(1));
 						
 						long localShardGroup = ShardMapper.toShardGroup(SyncHandler.this.context.getNode().getIdentity(), SyncHandler.this.context.getLedger().numShardGroups());
-						List<ConnectedPeer> syncPeers = SyncHandler.this.context.getNetwork().get(StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).
-								  																  setShardGroup(localShardGroup));
+						StandardPeerFilter standardPeerFilter = StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(localShardGroup);
+						List<ConnectedPeer> syncPeers = SyncHandler.this.context.getNetwork().get(standardPeerFilter);
 						if (syncPeers.isEmpty() == true)
 							continue;
 						
@@ -283,6 +284,7 @@ public class SyncHandler implements Service
 							
 							// Find committable block //
 							Block bestBlock = null;
+							double bestBlockVoteRatio = 0;
 							Iterator<Block> blockIterator = SyncHandler.this.blocks.values().iterator(); 
 							while(blockIterator.hasNext() == true)
 							{
@@ -307,13 +309,19 @@ public class SyncHandler implements Service
 								}
 
 								long blockVotePower = SyncHandler.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), block.getHeader().getCertificate().getSigners());
-								if (blockVotePower < SyncHandler.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup)))
+								long blockVotePowerThreshold = SyncHandler.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup));
+								double blockVotePowerRatio = blockVotePower / (double) blockVotePowerThreshold;
+								if (blockVotePower < blockVotePowerThreshold)
 									continue;
 								
-								if (bestBlock == null || 
-									bestBlock.getHeader().getAverageStep() < block.getHeader().getAverageStep() ||
-									(bestBlock.getHeader().getAverageStep() == block.getHeader().getAverageStep() && bestBlock.getHeader().getStep() < block.getHeader().getStep()))
+								if (blockVotePowerRatio < bestBlockVoteRatio)
+									continue;
+								
+								if (bestBlock == null || bestBlockVoteRatio < blockVotePowerRatio)
+								{
+									bestBlockVoteRatio = blockVotePowerRatio;
 									bestBlock = block;
+								}
 							}
 							
 							if (bestBlock != null)
@@ -584,17 +592,21 @@ public class SyncHandler implements Service
 									current = next;
 								}
 								while(current != null && inventory.size() < InventoryMessage.MAX_INVENTORY);
-	
-								if (inventory.isEmpty() == false)
+
+								// Always respond, even if nothing to send
+								SyncBlockInventoryMessage syncBlockInventoryMessage;
+								if (inventory.isEmpty() == true)
+									syncBlockInventoryMessage = new SyncBlockInventoryMessage(getSyncBlockInventoryMessage.getSeq());
+								else
+									syncBlockInventoryMessage = new SyncBlockInventoryMessage(getSyncBlockInventoryMessage.getSeq(), inventory);
+									
+								try
 								{
-									try
-									{
-										SyncHandler.this.context.getNetwork().getMessaging().send(new SyncBlockInventoryMessage(getSyncBlockInventoryMessage.getSeq(), inventory), peer);
-									}
-									catch (IOException ex)
-									{
-										syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockInventoryMessage "+getSyncBlockInventoryMessage.getSeq()+":"+getSyncBlockInventoryMessage.getHead()+" for "+inventory.size()+" blocks to "+peer, ex);
-									}
+									SyncHandler.this.context.getNetwork().getMessaging().send(syncBlockInventoryMessage, peer);
+								}
+								catch (IOException ex)
+								{
+									syncLog.error(SyncHandler.this.context.getName()+": Unable to send SyncBlockInventoryMessage "+getSyncBlockInventoryMessage.getSeq()+":"+getSyncBlockInventoryMessage.getHead()+" for "+inventory.size()+" blocks to "+peer, ex);
 								}
 							}
 							catch (Exception ex)
@@ -623,14 +635,10 @@ public class SyncHandler implements Service
 							SyncHandler.this.lock.lock();
 							try
 							{
-								if (syncLog.hasLevel(Logging.DEBUG) == true)
+								if (syncBlockInventoryMessage.getInventory().isEmpty() == true)
+									syncLog.warn(SyncHandler.this.context.getName()+": Received empty block inventory from " + peer);
+								else if (syncLog.hasLevel(Logging.DEBUG) == true)
 									syncLog.debug(SyncHandler.this.context.getName()+": Received block header inventory "+syncBlockInventoryMessage.getInventory()+" from " + peer);
-	
-								if (syncBlockInventoryMessage.getInventory().size() == 0)
-								{
-									syncLog.error(SyncHandler.this.context.getName()+": Received empty block inventory from " + peer);
-									return;
-								}
 								
 								SyncInventoryPeerTask syncInventoryPeerTask = SyncHandler.this.inventoryTasks.get(peer);
 								if (syncInventoryPeerTask == null || syncInventoryPeerTask.requestSeq != syncBlockInventoryMessage.getResponseSeq())
@@ -640,7 +648,8 @@ public class SyncHandler implements Service
 									return;
 								}
 								
-								SyncHandler.this.blockInventories.putAll(peer, syncBlockInventoryMessage.getInventory());
+								if (syncBlockInventoryMessage.getInventory().isEmpty() == false)
+									SyncHandler.this.blockInventories.putAll(peer, syncBlockInventoryMessage.getInventory());
 								SyncHandler.this.inventoryTasks.remove(peer, syncInventoryPeerTask);
 							}
 							catch (Exception ex)
@@ -780,6 +789,7 @@ public class SyncHandler implements Service
 				this.atoms.put(pendingAtom.getHash(), pendingAtom);
 				pendingAtom.prepare();
 				this.context.getLedger().getStateAccumulator().lock(pendingAtom);
+				pendingAtom.accepted();
 				pendingAtom.provision(atomBlockHeader);
 			}
 
@@ -825,7 +835,9 @@ public class SyncHandler implements Service
 		}
 
 		long numShardGroups = this.context.getLedger().numShardGroups();
-		List<ConnectedPeer> syncPeers = this.context.getNetwork().get(StandardPeerFilter.build(this.context).setShardGroup(ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups)).setStates(PeerState.CONNECTED)); 
+		long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+		StandardPeerFilter standardPeerFilter = StandardPeerFilter.build(this.context).setShardGroup(localShardGroup).setStates(PeerState.CONNECTED);
+		List<ConnectedPeer> syncPeers = this.context.getNetwork().get(standardPeerFilter); 
 		if (syncPeers.isEmpty() == true)
 		{
 			if (isSynced() == true)
@@ -875,6 +887,8 @@ public class SyncHandler implements Service
 					for (PendingAtom pendingAtom : this.atoms.values())
 					{
 						this.context.getLedger().getAtomHandler().push(pendingAtom);
+						this.context.getLedger().getStateHandler().add(pendingAtom);
+						this.context.getLedger().getStatePool().add(pendingAtom);
 						this.context.getLedger().getStateHandler().provision(pendingAtom);
 					}
 				}
@@ -981,9 +995,9 @@ public class SyncHandler implements Service
 	void setSynced(boolean synced)
 	{
 		// TODO what happens with an exception here?
+		this.context.getNode().setSynced(synced);
 		this.context.getEvents().post(new SyncStatusChangeEvent(synced));
 		this.synced = synced;
-		this.context.getNode().setSynced(synced);
 		reset();
 	}
 

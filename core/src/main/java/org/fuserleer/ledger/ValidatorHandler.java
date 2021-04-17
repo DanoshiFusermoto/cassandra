@@ -1,12 +1,16 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -78,8 +82,8 @@ public final class ValidatorHandler implements Service
 		this.ownedPowerCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
 		this.identityCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
 		
-//		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		powerLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 	
@@ -116,7 +120,10 @@ public final class ValidatorHandler implements Service
 						try
 						{
 							if (ValidatorHandler.this.validatorStore.store(identity) == OperationStatus.SUCCESS)
-								powerLog.info(ValidatorHandler.this.context.getName()+": Stored identity "+identity);
+							{
+								if (powerLog.hasLevel(Logging.DEBUG) == true)
+									powerLog.debug(ValidatorHandler.this.context.getName()+": Stored identity "+identity);
+							}
 						}
 						catch(IOException ioex)
 						{
@@ -182,14 +189,14 @@ public final class ValidatorHandler implements Service
 	
 	// NOTE Can use the identity cache directly providing that access outside of this function
 	// wraps the returned set in a lock or a sync block
-	private Set<BLSPublicKey> getPowerOwners() throws DatabaseException
+	private Collection<BLSPublicKey> getPowerOwners() throws DatabaseException
 	{
 		synchronized(this.ownedPowerCache)
 		{
 			if (this.ownedPowerCache.isEmpty())
 				this.ownedPowerCache.addAll(this.validatorStore.getWithPower());
 			
-			return this.ownedPowerCache;
+			return Collections.unmodifiableCollection(new ArrayList<BLSPublicKey>(this.ownedPowerCache));
 		}
 	}
 	
@@ -198,9 +205,37 @@ public final class ValidatorHandler implements Service
 		this.ownedPowerCache.clear();
 	}
 	
+	public Collection<Entry<BLSPublicKey, Long>> getVotePowers() throws DatabaseException
+	{
+		List<Entry<BLSPublicKey, Long>> votePowers = new ArrayList<Entry<BLSPublicKey, Long>>();
+		for (BLSPublicKey identity : getPowerOwners())
+		{
+			long votePower = getVotePower(this.context.getLedger().getHead().getHeight(), identity);
+			if (votePower == 0)
+				continue;
+			
+			votePowers.add(new AbstractMap.SimpleEntry<BLSPublicKey, Long>(identity, votePower));
+		}
+		
+		Collections.sort(votePowers, new Comparator<Entry<BLSPublicKey, Long>>() 
+		{
+			@Override
+			public int compare(Entry<BLSPublicKey, Long> arg0, Entry<BLSPublicKey, Long> arg1)
+			{
+				if (arg0.getValue() > arg1.getValue())
+					return -1;
+				if (arg0.getValue() < arg1.getValue())
+					return 1;
+				return 0;
+			}
+		});
+		
+		return votePowers;
+	}
+
 	// NOTE Can use the identity cache directly providing that access outside of this function
 	// wraps the returned set in a lock or a sync block
-	private Collection<BLSPublicKey> getIdentities() throws DatabaseException
+	public Collection<BLSPublicKey> getIdentities() throws DatabaseException
 	{
 		synchronized(this.identityCache)
 		{
@@ -496,7 +531,8 @@ public final class ValidatorHandler implements Service
 			{
 				if (ValidatorHandler.this.validatorStore.store(peerConnectedEvent.getPeer().getNode().getIdentity()).equals(OperationStatus.SUCCESS) == true)
 				{
-					powerLog.info(ValidatorHandler.this.context.getName()+": Stored identity "+peerConnectedEvent.getPeer().getNode().getIdentity());
+					if (powerLog.hasLevel(Logging.DEBUG) == true)
+						powerLog.debug(ValidatorHandler.this.context.getName()+": Stored identity "+peerConnectedEvent.getPeer().getNode().getIdentity());
 					ValidatorHandler.this.identityCache.add(peerConnectedEvent.getPeer().getNode().getIdentity());
 				}
 			}

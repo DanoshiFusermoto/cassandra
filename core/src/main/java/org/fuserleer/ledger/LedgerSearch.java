@@ -417,7 +417,8 @@ class LedgerSearch implements Service, LedgerInterface
 					StateSearchTask stateSearchTask = this.stateSearchTasks.get(query.getHash());
 					if (stateSearchTask == null)
 					{					
-						Collection<ConnectedPeer> connectedStatePeers = this.context.getNetwork().get(StandardPeerFilter.build(this.context).setStates(PeerState.CONNECTED).setShardGroup(searchShardGroup));
+						StandardPeerFilter standardPeerFilter = StandardPeerFilter.build(this.context).setStates(PeerState.CONNECTED).setShardGroup(searchShardGroup).setSynced(true);
+						Collection<ConnectedPeer> connectedStatePeers = this.context.getNetwork().get(standardPeerFilter);
 						if (connectedStatePeers.isEmpty() == true)
 							throw new IOException(this.context.getName()+": No peers available to query state "+query.getKey()+" @ shard group "+searchShardGroup);
 						
@@ -491,8 +492,9 @@ class LedgerSearch implements Service, LedgerInterface
 					{
 						if (searchShardGroup == localShardGroup)
 							continue;
-
-						Collection<ConnectedPeer> connectedPeers = this.context.getNetwork().get(StandardPeerFilter.build(this.context).setStates(PeerState.CONNECTED).setShardGroup(searchShardGroup));
+						
+						StandardPeerFilter standardPeerFilter = StandardPeerFilter.build(this.context).setStates(PeerState.CONNECTED).setShardGroup(searchShardGroup).setSynced(true);
+						Collection<ConnectedPeer> connectedPeers = this.context.getNetwork().get(standardPeerFilter);
 						if (connectedPeers.isEmpty() == true)
 						{
 							searchLog.error(this.context.getName()+": No peers available to query associations "+query+" @ shard group "+searchShardGroup);

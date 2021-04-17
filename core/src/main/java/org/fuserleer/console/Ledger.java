@@ -43,7 +43,7 @@ public class Ledger extends Function
 		}
 		else if (commandLine.hasOption("block") == true)
 		{
-			Block block = context.getLedger().get(Long.parseLong(commandLine.getOptionValue("block")));
+			Block block = context.getLedger().getBlock(Long.parseLong(commandLine.getOptionValue("block")));
 			printStream.println("Block: "+block.getHeader().toString());
 		}
 		else

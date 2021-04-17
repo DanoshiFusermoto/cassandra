@@ -254,7 +254,7 @@ public final class Ledger implements Service, LedgerInterface
 		return this.ledgerStore.get(hash, primitive);
 	}
 	
-	public Block get(long height) throws IOException
+	public Block getBlock(long height) throws IOException
 	{
 		Hash committedBlockHash = this.ledgerStore.getSyncBlock(height);
 		Block block = this.ledgerStore.get(committedBlockHash, Block.class);

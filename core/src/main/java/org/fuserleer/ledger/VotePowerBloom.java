@@ -47,7 +47,7 @@ public final class VotePowerBloom extends BasicObject
 	public VotePowerBloom(final Hash block, final long shardGroup, final int numIdentities)
 	{
 		this.block = Objects.requireNonNull(block, "Block hash is null");
-		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, numIdentities);
+		this.bloom = new Bloom(VOTE_POWER_PROBABILITY, numIdentities*MAX_VOTE_POWER_SHIFTS);
 		this.totalPower = 0l;
 		
 		Numbers.isNegative(shardGroup, "Shard group is negative");

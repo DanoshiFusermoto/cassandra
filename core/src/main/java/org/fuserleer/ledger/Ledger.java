@@ -102,12 +102,13 @@ public final class Ledger implements Service, LedgerInterface
 			this.context.getEvents().register(this.syncAtomListener);
 			this.context.getEvents().register(this.peerListener);
 
+			// IMPORTANT Order dependent!
 			this.blockHandler.start();
-			this.atomPool.start();
 			this.atomHandler.start();
+			this.atomPool.start();
 			this.stateAccumulator.reset();
-			this.statePool.start();
 			this.stateHandler.start();
+			this.statePool.start();
 			this.syncHandler.start();
 			
 			this.ledgerSearch.start();
@@ -201,7 +202,7 @@ public final class Ledger implements Service, LedgerInterface
 		return this.atomHandler;
 	}
 
-	ValidatorHandler getValidatorHandler()
+	public ValidatorHandler getValidatorHandler()
 	{
 		return this.validatorHandler;
 	}
@@ -253,6 +254,13 @@ public final class Ledger implements Service, LedgerInterface
 		return this.ledgerStore.get(hash, primitive);
 	}
 	
+	public Block get(long height) throws IOException
+	{
+		Hash committedBlockHash = this.ledgerStore.getSyncBlock(height);
+		Block block = this.ledgerStore.get(committedBlockHash, Block.class);
+		return block;
+	}
+
 	public boolean submit(Atom atom) throws InterruptedException
 	{
 		Objects.requireNonNull(atom);

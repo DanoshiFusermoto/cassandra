@@ -8,12 +8,14 @@ import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.ledger.Block;
 import org.fuserleer.time.Time;
 
 public class Ledger extends Function
 {
 	private final static Options options = new Options().addOption("remote", false, "Return remote ledger information").addOption("pending", false, "Return pending ledger information")
 																													   .addOption("states", false, "Return hash list of all pending states")
+																													   .addOption("block", true, "Return block at specified height")
 																													   .addOption("branches", false, "Return pending branches");
 
 	public Ledger()
@@ -38,6 +40,11 @@ public class Ledger extends Function
 				pendingStates.forEach(ps -> printStream.println(ps.toString()));
 				printStream.println(pendingStates.size()+" pending states");
 			}
+		}
+		else if (commandLine.hasOption("block") == true)
+		{
+			Block block = context.getLedger().get(Long.parseLong(commandLine.getOptionValue("block")));
+			printStream.println("Block: "+block.getHeader().toString());
 		}
 		else
 		{

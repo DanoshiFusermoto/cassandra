@@ -407,7 +407,8 @@ class LedgerSearch implements Service, LedgerInterface
 				if (commit != null)
 				{
 					Primitive primitive = doGet(commit, query.getType());
-					return CompletableFuture.completedFuture(new SearchResult(commit, primitive, query.getType()));
+					if (primitive != null)
+						return CompletableFuture.completedFuture(new SearchResult(commit, primitive, query.getType()));
 				}
 			}
 			else	

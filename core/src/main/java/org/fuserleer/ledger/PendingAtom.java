@@ -557,7 +557,7 @@ public final class PendingAtom implements Hashable
 	@Override
 	public String toString()
 	{
-		return this.hash+" @ "+this.witnessedAt;
+		return this.hash+":"+this.status+" @ "+this.witnessedAt;
 	}
 	
 	boolean voted(final BLSPublicKey identity)

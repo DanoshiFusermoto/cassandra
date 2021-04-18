@@ -125,10 +125,10 @@ public class BlockHandler implements Service
 						{
 							updateBlocks();
 							updateBranches();
-							BlockHandler.this.bestBranch = discoverBestBranch();
+							processBranches();
 							
-							if (BlockHandler.this.bestBranch != null)
-								buildCandidate = BlockHandler.this.bestBranch.getHigh().getHeader();
+							if (BlockHandler.this.buildBranch != null)
+								buildCandidate = BlockHandler.this.buildBranch.getHigh().getHeader();
 							else
 								buildCandidate = BlockHandler.this.context.getLedger().getHead();
 
@@ -136,8 +136,8 @@ public class BlockHandler implements Service
 							// If branches are getting long, then possible that blocks are being generated too fast and being voted on by the producing nodes.
 							// A race condition can also occur with fast block production such that producers will generate the strongest branch they can see and always vote on it.
 							// Defer the vote based on the size of the branch, giving generated block headers some time to propagate. 
-							if (BlockHandler.this.bestBranch != null && BlockHandler.this.voteClock.get() < (buildCandidate.getHeight() - Math.log(BlockHandler.this.bestBranch.size())))
-								vote(BlockHandler.this.bestBranch);
+							if (BlockHandler.this.buildBranch != null && BlockHandler.this.voteClock.get() < (buildCandidate.getHeight() - Math.log(BlockHandler.this.buildBranch.size())))
+								vote(BlockHandler.this.buildBranch);
 						}
 						finally
 						{
@@ -148,7 +148,7 @@ public class BlockHandler implements Service
 						long generationStart = Time.getSystemTime();
 						// Safe to attempt to build a block outside of a lock
 						if (buildCandidate.getHeight() >= BlockHandler.this.buildClock.get())
-							generatedBlock = BlockHandler.this.build(buildCandidate, BlockHandler.this.bestBranch);
+							generatedBlock = BlockHandler.this.build(buildCandidate, BlockHandler.this.buildBranch);
 						
 						BlockHandler.this.lock.writeLock().lock();
 						try
@@ -165,14 +165,14 @@ public class BlockHandler implements Service
 								BlockHandler.this.context.getNetwork().getGossipHandler().broadcast(generatedBlock.getHeader());
 							}
 
-							if (BlockHandler.this.bestBranch != null)
+							if (BlockHandler.this.commitBranch != null)
 							{
 								long commitStart = Time.getSystemTime();
 								Collection<PendingBlock> committedBlocks = null;
-								PendingBlock committable = BlockHandler.this.bestBranch.commitable();
+								PendingBlock committable = BlockHandler.this.commitBranch.commitable();
 								if (committable != null)
 								{
-									committedBlocks = commit(committable, BlockHandler.this.bestBranch);
+									committedBlocks = commit(committable, BlockHandler.this.commitBranch);
 									if (committedBlocks.isEmpty() == false)
 									{
 										this.committedCount += committedBlocks.size();
@@ -307,7 +307,8 @@ public class BlockHandler implements Service
 	private final AtomicLong					voteClock;
 	private final AtomicLong					buildClock;
 	private final AtomicReference<BlockHeader> 	currentVote;
-	private PendingBranch 						bestBranch;
+	private PendingBranch 						buildBranch;
+	private PendingBranch 						commitBranch;
 
 	private final MappedBlockingQueue<Hash, BlockVote> votesToSyncQueue;
 
@@ -324,7 +325,8 @@ public class BlockHandler implements Service
 		this.voteClock = new AtomicLong(0);
 		this.buildClock = new AtomicLong(0);
 		this.currentVote = new AtomicReference<BlockHeader>();
-		this.bestBranch = null;
+		this.buildBranch = null;
+		this.commitBranch = null;
 	}
 
 	@Override
@@ -883,7 +885,8 @@ public class BlockHandler implements Service
 					{
 						try
 						{
-							accumulator.lock(atom);
+							// Hack as no current block header, but accumulator here is ephemeral anyway
+							accumulator.lock(Hash.from(previous.getHash(), Hash.ZERO), atom);
 							atomExclusions.add(atom.getHash());
 							candidateAtoms.put(atom.getHash(), atom);
 							nextAtomTarget = atom.getHash().asLong();
@@ -965,8 +968,8 @@ public class BlockHandler implements Service
 					this.context.getMetaData().increment("ledger.blocks.bytes", Serialization.getInstance().toDson(committedBlock.getBlock(), Output.WIRE).length);
 				}
 	
-				if (this.bestBranch != null && this.bestBranch.isEmpty() == true)
-					this.bestBranch = null;
+				this.buildBranch = null;
+				this.commitBranch = null;
 				
 				// Signal the commit
 				// TODO Might need to catch exceptions on these from synchronous listeners
@@ -1191,8 +1194,8 @@ public class BlockHandler implements Service
 					pendingBranchIterator.remove();
 			}
 			
-			if (this.bestBranch != null && this.bestBranch.isEmpty() == true)
-				this.bestBranch = null;
+			this.buildBranch = null;
+			this.commitBranch = null;
 			
 			// Clear out pending of blocks that may not be in a branch and can't be committed due to this commit
 			Iterator<Entry<Hash, PendingBlock>> pendingBlocksIterator = BlockHandler.this.pendingBlocks.entrySet().iterator();
@@ -1265,7 +1268,8 @@ public class BlockHandler implements Service
 			{
 				for (PendingBranch pendingBranch : this.pendingBranches)
 				{
-					if (pendingBranch.merge(branch) == true)
+					if (pendingBranch.intersects(branch) == true &&
+						pendingBranch.merge(branch) == true)
 						return;
 				}
 
@@ -1300,12 +1304,12 @@ public class BlockHandler implements Service
 		}
 	}
 
-	PendingBranch getBestBranch()
+	PendingBranch getBuildBranch()
 	{
 		this.lock.readLock().lock();
 		try
 		{
-			return this.bestBranch;
+			return this.buildBranch;
 		}
 		finally
 		{
@@ -1313,12 +1317,25 @@ public class BlockHandler implements Service
 		}
 	}
 	
-	private PendingBranch discoverBestBranch() throws IOException
+	PendingBranch getCommitBranch()
 	{
 		this.lock.readLock().lock();
 		try
 		{
-			PendingBranch bestBranch = null;
+			return this.commitBranch;
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+	}
+
+	private void processBranches() throws IOException
+	{
+		this.lock.readLock().lock();
+		try
+		{
+			PendingBranch buildBranch = null;
 			Map<PendingBlock, PendingBranch> committable = new HashMap<PendingBlock, PendingBranch>();
 			for (PendingBranch pendingBranch : this.pendingBranches)
 			{
@@ -1334,7 +1351,10 @@ public class BlockHandler implements Service
 				// If not full constructed will commit the portion that is
 				PendingBlock committableBlock = pendingBranch.commitable();
 				if (committableBlock != null)
+				{
 					committable.put(committableBlock, pendingBranch);
+					continue;
+				}
 				
 				// Need fully constructed branches in order to select them!
 				// NOTE disable this to promote a stall on liveness when critical gossip / connectivity issues
@@ -1344,46 +1364,80 @@ public class BlockHandler implements Service
 				// TODO need a lower probability tiebreaker here
 				// TODO what happens if the branch has many un-constructable blocks which satisfy the below condition?
 				//      possible situation for a liveness break?  is this an attack surface that needs to be countered?
-				if (bestBranch == null || 
-					bestBranch.getHigh().getHeader().getAverageStep() < pendingBranch.getHigh().getHeader().getAverageStep() ||
-					(bestBranch.getHigh().getHeader().getAverageStep() == pendingBranch.getHigh().getHeader().getAverageStep() && bestBranch.getHigh().getHeader().getStep() < pendingBranch.getHigh().getHeader().getStep()))
+				if (buildBranch == null || 
+					buildBranch.getHigh().getHeader().getAverageStep() < pendingBranch.getHigh().getHeader().getAverageStep() ||
+					(buildBranch.getHigh().getHeader().getAverageStep() == pendingBranch.getHigh().getHeader().getAverageStep() && buildBranch.getHigh().getHeader().getStep() < pendingBranch.getHigh().getHeader().getStep()))
 				{
-					bestBranch = pendingBranch;
-					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected branch "+bestBranch.getHigh().getHeader());
+					buildBranch = pendingBranch;
+					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected build branch "+buildBranch.getHigh().getHeader());
 				}
 			}
+			
+			this.buildBranch = buildBranch;
 
-			// Have one or more committable branches.  Select the branch with the highest committable block.
-			// TODO verify this can not be gamed!
+			// Process any committable branches.
+			// Multiple committable branches is tricky.  It is allowed that validators can vote on any distinct branch at any time providing the vote clock is monotonic.
+			// Therefore a validator can legally vote on branch A, then vote on branch B which is stronger.  
+			// In the mean time, branch A became super-majority, but validator hasn't seen the votes that constitute it yet before voting on branch B.
+			// If many validators are voting similarly with latency regarding vote processing, branch A *AND* branch B could become super-majority.
+			// The solution is to require a minimum of 2 super-majority blocks per branch, with the latter acting as a confirmation chain of the first.
+			// However this will add at least one additional block production of latency to block commits, but will most certainly be secure!
+			// TODO can round of latency be optimised?
 			if (committable.isEmpty() == false)
 			{
-				blocksLog.debug(BlockHandler.this.context.getName()+": Discovered "+committable.size()+" committable branches "+committable);
+				if (committable.size() == 1)
+					blocksLog.debug(BlockHandler.this.context.getName()+": Discovered committable branch "+committable);
+				else 
+					blocksLog.debug(BlockHandler.this.context.getName()+": Discovered multiple committable branches "+committable);
 
-				bestBranch = null;
-				PendingBlock bestBlock = null;
+				PendingBranch commitBranch = null;
+				int	commitBranchSuperBlocks = 0;
 				for (Entry<PendingBlock, PendingBranch> c : committable.entrySet())
 				{
-					// TODO need a lower probability tiebreaker here
-					if (bestBlock == null || c.getKey().getHeight() > bestBlock.getHeight() || 
-						(c.getKey().getHeight() == bestBlock.getHeight() && c.getKey().getHeader().getAverageStep() < bestBlock.getHeader().getAverageStep()))
+					int superBlocks = 0;
+					for (PendingBlock pendingBlock : c.getValue().getBlocks())
 					{
-						bestBlock = c.getKey();
-						bestBranch = c.getValue();
+						long blockWeight = c.getValue().getWeight(pendingBlock.getHeight());
+						long votePowerThresholdAtBlock = c.getValue().getVotePowerThreshold(pendingBlock.getHeight());
+						
+						if (blockWeight < votePowerThresholdAtBlock)
+							continue;
+						
+						superBlocks++;
+					}
+					
+					if (superBlocks > commitBranchSuperBlocks)
+					{
+						commitBranchSuperBlocks = superBlocks;
+						commitBranch = c.getValue();
+						blocksLog.debug(BlockHandler.this.context.getName()+": Preselected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());
+					}
+					else if (superBlocks == commitBranchSuperBlocks)
+						commitBranch = null;
+				}
+				
+				if (commitBranch != null)
+				{
+					// Always select the best commit branch as the build branch
+					this.buildBranch = commitBranch;
+
+					if (commitBranchSuperBlocks >= 2)
+					{
+						this.commitBranch = commitBranch;
+						blocksLog.debug(BlockHandler.this.context.getName()+": Selected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());
 					}
 				}
 			}
 	
-			if (bestBranch != null)
+			if (this.buildBranch != null)
 			{
 				if (blocksLog.hasLevel(Logging.DEBUG) == true)
 				{
-					long branchWeight = bestBranch.getWeight(bestBranch.getHigh().getHeight());
-					long branchTotalVotePower = bestBranch.getTotalVotePower(bestBranch.getHigh().getHeight());
-					blocksLog.debug(BlockHandler.this.context.getName()+": Selected branch "+bestBranch.getHigh().getHeader().getAverageStep()+":"+branchWeight+"/"+branchTotalVotePower+" "+bestBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
+					long branchWeight = this.buildBranch.getWeight(this.buildBranch.getHigh().getHeight());
+					long branchTotalVotePower = this.buildBranch.getTotalVotePower(this.buildBranch.getHigh().getHeight());
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected build branch "+this.buildBranch.getHigh().getHeader().getAverageStep()+":"+branchWeight+"/"+branchTotalVotePower+" "+this.buildBranch.getBlocks().stream().map(pb -> pb.getHash().toString()).collect(Collectors.joining(" -> ")));
 				}
 			}
-			
-			return bestBranch;
 		}
 		finally
 		{
@@ -1456,7 +1510,8 @@ public class BlockHandler implements Service
 				else
 				{
 					blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing block handler");
-					BlockHandler.this.bestBranch = null;
+					BlockHandler.this.buildBranch = null;
+					BlockHandler.this.commitBranch = null;
 					BlockHandler.this.pendingBlocks.clear();
 					BlockHandler.this.pendingBranches.clear();
 					BlockHandler.this.votesToSyncQueue.clear();

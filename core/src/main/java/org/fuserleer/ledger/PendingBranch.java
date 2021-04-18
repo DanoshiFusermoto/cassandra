@@ -159,16 +159,46 @@ public class PendingBranch
 		}
 	}
 
-	boolean merge(final Collection<PendingBlock> blocks) throws StateLockedException, IOException
+	/**
+	 * Attempts to merge the provided blocks into this branch.
+	 * 
+	 * Suppresses all exceptions other than IOException, StateLockedException and returns false
+	 * 
+	 * @param blocks
+	 * @return
+	 * @throws IOException
+	 * @throws StateLockedException
+	 */
+	boolean tryMerge(final Collection<PendingBlock> blocks) throws IOException, StateLockedException
+	{
+		try
+		{
+			return merge(blocks);
+		}
+		catch (IOException | StateLockedException ex)
+		{
+			throw ex;
+		}
+		catch (Throwable t)
+		{
+			return false;
+		}
+	}
+
+	boolean merge(final Collection<PendingBlock> blocks) throws IOException, StateLockedException
 	{
 		Objects.requireNonNull(blocks, "Pending blocks is null");
 		Numbers.isZero(blocks.size(), "Pending blocks is empty");
 
 		List<PendingBlock> sortedBlocks = new ArrayList<PendingBlock>(blocks);
 		List<PendingBlock> mergeBlocks = new ArrayList<PendingBlock>();
+		
 		this.lock.lock();
 		try
 		{
+			if (this.blocks.isEmpty() == true)
+				throw new IllegalStateException("Can not merge into an empty branch "+this.root+" <- "+blocks);
+			
 			Collections.sort(sortedBlocks, new Comparator<PendingBlock>() 
 			{
 				@Override
@@ -184,13 +214,27 @@ public class PendingBranch
 				}
 			});
 			
+			// Determine the blocks to actually merge onto this branch
+			PendingBlock previous = this.blocks.getLast();
 			for (PendingBlock sortedBlock : sortedBlocks)
 			{
 				if (sortedBlock.getHeader() == null)
 					throw new IllegalStateException("Block "+sortedBlock.getHash()+" does not have a header");
 				
-				if (mergeBlocks.isEmpty() == false || (mergeBlocks.isEmpty() == true && this.blocks.getLast().getHash().equals(sortedBlock.getHeader().getPrevious()) == true))
+				if (sortedBlock.getHeight() <= previous.getHeight())
+					continue;
+				else if (this.blocks.contains(sortedBlock) == true)
+				{
+					previous = sortedBlock;
+					continue;
+				}
+				else if (sortedBlock.getHeader().getPrevious().equals(previous.getHash()) == true)
+				{
 					mergeBlocks.add(sortedBlock);
+					previous = sortedBlock;
+				}
+				else
+					throw new IllegalStateException("Merge block "+sortedBlock+" does not attach to previous "+previous+" in branch "+this);
 			}
 			
 			if (mergeBlocks.isEmpty() == false)
@@ -200,17 +244,10 @@ public class PendingBranch
 				
 				for (PendingBlock mergeBlock : mergeBlocks)
 				{
-					try
-					{
-						if (blocksLog.hasLevel(Logging.DEBUG) == true)
-							blocksLog.debug(this.context.getName()+": Adding merge block "+mergeBlock);
+					if (blocksLog.hasLevel(Logging.DEBUG) == true)
+						blocksLog.debug(this.context.getName()+": Adding merge block "+mergeBlock);
 
-						add(mergeBlock);
-					}
-					catch (Exception ex)
-					{
-						throw ex;
-					}
+					add(mergeBlock);
 				}
 				
 				return true;
@@ -226,10 +263,6 @@ public class PendingBranch
 			}
 			
 			return true;
-		}
-		catch (Exception ex)
-		{
-			throw ex;
 		}
 		finally
 		{
@@ -585,7 +618,10 @@ public class PendingBranch
 		try
 		{
 			// See if there is a section of the best branch that can be committed (any block that has 2f+1 agreement)
+			// Blocks to be committed require at least one "confirming" super block higher than it, thus there will always 
+			// be at least one super block in a pending branch
 			// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
+			PendingBlock highestSuper = null;
 			Iterator<PendingBlock> vertexIterator = this.blocks.descendingIterator();
 			while(vertexIterator.hasNext())
 			{
@@ -598,8 +634,16 @@ public class PendingBranch
 				long threshold = getVotePowerThreshold(vertex.getHeight());
 				if (weight >= threshold)
 				{
-					blocksLog.info(this.context.getName()+": Found commit at block with weight "+weight+"/"+total+" to commit list "+vertex);
-					return vertex;
+					if (highestSuper == null)
+					{
+						highestSuper = vertex;
+						blocksLog.info(this.context.getName()+": Found possible commit super block with weight "+weight+"/"+total+" "+vertex);
+					}
+					else
+					{
+						blocksLog.info(this.context.getName()+": Found commit at block with weight "+weight+"/"+total+" to commit list "+vertex);
+						return vertex;
+					}
 				}
 			}
 			
@@ -640,7 +684,7 @@ public class PendingBranch
 			{
 				try
 				{
-					this.accumulator.lock(pendingAtom);
+					this.accumulator.lock(block.getHash(), pendingAtom);
 				}
 				catch (Exception ex)
 				{

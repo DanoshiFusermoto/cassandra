@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.util.Objects;
 
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.crypto.CryptoException;
+import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateAddress;
@@ -35,6 +37,14 @@ public final class UniqueParticle extends SignedParticle
 		this.value = Objects.requireNonNull(value);
 	}
 	
+	public UniqueParticle(Hash value, ECKeyPair owner) throws CryptoException
+	{
+		super(Spin.UP, owner.getPublicKey());
+		
+		this.value = Objects.requireNonNull(value);
+		this.sign(owner);
+	}
+
 	public Hash getValue()
 	{
 		return this.value;

@@ -90,17 +90,27 @@ public final class PendingAtom implements Hashable
 
 	private PendingAtom(final Context context, final Atom atom)
 	{
-		this(context, Objects.requireNonNull(atom, "Atom is null").getHash());
-
-		setAtom(atom);
+		this(context, atom, Time.getSystemTime());
 	}
 
 	private PendingAtom(final Context context, final Hash atom)
 	{
+		this(context, atom, Time.getSystemTime());
+	}
+	
+	PendingAtom(final Context context, final Atom atom, final long witnessedAt)
+	{
+		this(context, Objects.requireNonNull(atom, "Atom is null").getHash(), witnessedAt);
+
+		setAtom(atom);
+	}
+
+	PendingAtom(final Context context, final Hash atom, final long witnessedAt)
+	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		
 		this.hash = Objects.requireNonNull(atom, "Atom is null");
-		this.witnessedAt = Time.getSystemTime();
+		this.witnessedAt = witnessedAt;
 		this.acceptedAt = 0;
 		this.commitBlockTimeout = 0;
 		this.inclusionTimeout = this.witnessedAt + TimeUnit.SECONDS.toMillis(PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS);
@@ -113,7 +123,7 @@ public final class PendingAtom implements Hashable
 		this.status = new AtomicReference<CommitStatus>(CommitStatus.NONE);
 		this.locks = new AtomicInteger(0);
 	}
-	
+
 	@Override
 	public Hash getHash()
 	{
@@ -492,6 +502,20 @@ public final class PendingAtom implements Hashable
 		return this.status.get();
 	}
 			
+	boolean setStatus(final CommitStatus expected, final CommitStatus status)
+	{
+		Objects.requireNonNull(status, "Status is null");
+		
+		synchronized(this.status)
+		{
+			if (this.status.get().equals(expected) == false)
+				return false;
+			
+			setStatus(status);
+			return true;
+		}
+	}
+
 	void setStatus(final CommitStatus status)
 	{
 		Objects.requireNonNull(status, "Status is null");

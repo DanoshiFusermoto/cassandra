@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerConstants;
@@ -17,7 +18,7 @@ import org.fuserleer.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.state.inputs")
-class StateInputs
+class StateInputs implements Primitive
 {
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
@@ -50,6 +51,12 @@ class StateInputs
 		this.inputs = new HashMap<StateKey<?, ?>, UInt256>();
 	}
 	
+	@Override
+	public Hash getHash()
+	{
+		return Hash.from(this.block, this.atom);
+	}
+
 	public Hash getBlock()
 	{
 		return this.block;

@@ -506,6 +506,42 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
+	final OperationStatus store(final StateInputs stateInputs) throws IOException 
+	{
+		Objects.requireNonNull(stateInputs, "State inputs is null");
+		
+		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
+		try 
+		{
+			OperationStatus status = store(transaction, stateInputs.getHash(), stateInputs, Serialization.getInstance().toDson(stateInputs, DsonOutput.Output.PERSIST));
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    {
+		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    	{
+		    		databaseLog.warn(this.context.getName()+": State inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" are already present");
+		    		transaction.abort();
+		    		return status;
+		    	}
+		    	else 
+		    		throw new DatabaseException("Failed to store state inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" due to "+status.name());
+		    } 
+
+			status = storeSyncInventory(transaction, Longs.fromByteArray(stateInputs.getBlock().toByteArray()), stateInputs.getHash(), StateInputs.class);
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+	    		throw new DatabaseException("Failed to store state inputs for "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" in sync inventory due to "+status.name());
+
+		    transaction.commit();
+		    return OperationStatus.SUCCESS;
+		} 
+		catch (Exception ex) 
+		{
+			transaction.abort();
+		    if (ex instanceof DatabaseException)
+		    	throw ex; 
+		    throw new DatabaseException(ex);
+		} 
+	}
+
 	private OperationStatus store(final Transaction transaction, final Hash hash, final Primitive primitive, final byte[] bytes) throws IOException 
 	{
 		Objects.requireNonNull(hash, "Hash is null");
@@ -977,103 +1013,108 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    } 
 	}
 
-	final void commit(final CommitOperation commit) throws IOException
+	final void commit(final Collection<CommitOperation> commits) throws IOException
 	{
-	    Objects.requireNonNull(commit, "Commit operation is null");
+	    Objects.requireNonNull(commits, "Commit operations is null");
+	    Numbers.isZero(commits.size(), "Commit operations is empty");
 		
 	    Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
 	    try 
 	    {
     		OperationStatus status;
-			final DatabaseEntry atomKey = new DatabaseEntry(commit.getAtom().getHash().toByteArray());
-
-			if (1==0)
+    		
+    		for (CommitOperation commit : commits)
     		{
-		    	final StateAddress	atomStateAddress = new StateAddress(Atom.class, commit.getAtom().getHash());
-	    		final DatabaseEntry atomStateAddressKey = new DatabaseEntry(atomStateAddress.get().toByteArray());
-	    		final DatabaseEntry atomCommitValue = new DatabaseEntry();
-		    		
-	    		status = this.stateCommits.get(transaction, atomStateAddressKey, atomCommitValue, LockMode.DEFAULT);
-	    		if (status.equals(OperationStatus.SUCCESS) == false)
-	   				throw new DatabaseException("Atom state commit "+commit.getAtom().getHash()+" not found or has error "+status.name());
-		    		
-	    		final Commit atomCommit = Commit.from(atomCommitValue.getData()); //Serialization.getInstance().fromDson(atomCommitValue.getData(), Commit.class);
-				if (atomCommit.getPath().get(Elements.BLOCK).equals(commit.getHead().getHash()) == false)
-					throw new DatabaseException("Atom state commit "+commit.getAtom().getHash()+" references block "+atomCommit.getPath().get(Elements.BLOCK)+" not expected "+commit.getHead().getHash());
-
-				final StateAddress	blockStateAddress = new StateAddress(Block.class, commit.getHead().getHash());
-				final DatabaseEntry blockStateAddressKey = new DatabaseEntry(blockStateAddress.get().toByteArray());
-
-				if (commit.getHead().getHash().equals(Universe.getDefault().getGenesis().getHash()) == false)
-				{
-		    		status = this.stateCommits.get(transaction, blockStateAddressKey, null, LockMode.DEFAULT);
+				final DatabaseEntry atomKey = new DatabaseEntry(commit.getAtom().getHash().toByteArray());
+	
+				if (1==0)
+	    		{
+			    	final StateAddress	atomStateAddress = new StateAddress(Atom.class, commit.getAtom().getHash());
+		    		final DatabaseEntry atomStateAddressKey = new DatabaseEntry(atomStateAddress.get().toByteArray());
+		    		final DatabaseEntry atomCommitValue = new DatabaseEntry();
+			    		
+		    		status = this.stateCommits.get(transaction, atomStateAddressKey, atomCommitValue, LockMode.DEFAULT);
 		    		if (status.equals(OperationStatus.SUCCESS) == false)
-	    				throw new DatabaseException("Expected committed block "+commit.getHead().getHash()+" not found "+status.name());
+		   				throw new DatabaseException("Atom state commit "+commit.getAtom().getHash()+" not found or has error "+status.name());
+			    		
+		    		final Commit atomCommit = Commit.from(atomCommitValue.getData()); //Serialization.getInstance().fromDson(atomCommitValue.getData(), Commit.class);
+					if (atomCommit.getPath().get(Elements.BLOCK).equals(commit.getHead().getHash()) == false)
+						throw new DatabaseException("Atom state commit "+commit.getAtom().getHash()+" references block "+atomCommit.getPath().get(Elements.BLOCK)+" not expected "+commit.getHead().getHash());
+	
+					final StateAddress	blockStateAddress = new StateAddress(Block.class, commit.getHead().getHash());
+					final DatabaseEntry blockStateAddressKey = new DatabaseEntry(blockStateAddress.get().toByteArray());
+	
+					if (commit.getHead().getHash().equals(Universe.getDefault().getGenesis().getHash()) == false)
+					{
+			    		status = this.stateCommits.get(transaction, blockStateAddressKey, null, LockMode.DEFAULT);
+			    		if (status.equals(OperationStatus.SUCCESS) == false)
+		    				throw new DatabaseException("Expected committed block "+commit.getHead().getHash()+" not found "+status.name());
+					}
+	    		}
+					
+				// Atom should exist in primitives
+				if (this.primitiveLRW.containsKey(commit.getAtom().getHash()) == false)
+				{
+		    		status = this.primitives.get(transaction, atomKey, null, LockMode.DEFAULT);
+		    		if (status.equals(OperationStatus.SUCCESS) == false)
+						throw new DatabaseException("Atom "+commit.getAtom().getHash()+" not found or has error "+status.name());
 				}
+	    		
+				// Update atom in primitives as it should now be carrying state values at the time of the commit
+				DatabaseEntry atomValue = new DatabaseEntry(Serialization.getInstance().toDson(commit.getAtom(), DsonOutput.Output.PERSIST));
+				status = this.primitives.put(transaction, atomKey, atomValue);
+			    if (status.equals(OperationStatus.SUCCESS) != true) 
+		    		throw new DatabaseException("Failed to commit atom "+commit.getAtom().getHash()+" with state objects " + status.name());
+	    		
+				for (StateOp stateOp : commit.getStateOps())
+				{
+					if (stateOp.ins().equals(Instruction.SET) == false)
+						continue;
+					
+	        		long shardGroup = ShardMapper.toShardGroup(stateOp.key().get(), this.context.getLedger().numShardGroups(commit.getHead().getHeight()));
+					DatabaseEntry stateOpKey = new DatabaseEntry(stateOp.key().get().toByteArray());
+					DatabaseEntry stateOpValue = new DatabaseEntry(stateOp.toByteArray()); //Serialization.getInstance().toDson(stateOp, Output.PERSIST));
+					status = this.stateOperations.put(transaction, stateOpKey, stateOpValue);
+					if (status.equals(OperationStatus.SUCCESS) == false)
+						throw new DatabaseException("Failed to commit state "+stateOp+" for commit "+commit.getHead().getHeight()+":"+commit.getAtom().getHash()+" due to "+status.name()); 
+					else if (databaseLog.hasLevel(Logging.DEBUG) == true)
+						databaseLog.debug(this.context.getName()+": Stored state op "+stateOp+" in shard group "+shardGroup);
+				}
+	
+				for (Path path : commit.getStatePaths())
+				{
+					path.validate();
+	
+	        		long shardGroup = ShardMapper.toShardGroup(path.endpoint(), this.context.getLedger().numShardGroups(commit.getHead().getHeight()));
+	        		Commit stateCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp(), false);
+					DatabaseEntry stateKey = new DatabaseEntry(path.endpoint().toByteArray());
+					DatabaseEntry stateCommitValue = new DatabaseEntry(stateCommit.toByteArray()); //Serialization.getInstance().toDson(stateCommit, Output.PERSIST));
+					status = this.stateCommits.put(transaction, stateKey, stateCommitValue);
+					if (status.equals(OperationStatus.SUCCESS) == false)
+						throw new DatabaseException("Failed to commit state "+path+" for commit "+commit.getHead().getHeight()+":"+commit.getAtom().getHash()+" due to "+status.name()); 
+					else if (databaseLog.hasLevel(Logging.DEBUG) == true)
+						databaseLog.debug(this.context.getName()+": Stored state path in shard group "+shardGroup+" "+path);
+				}
+				
+		    	for (Path path : commit.getAssociationPaths()) 
+		    	{
+		    		path.validate();
+	
+	        		Commit associationCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp(), false);
+	        		DatabaseEntry associationKey = new DatabaseEntry(path.endpoint().toByteArray());
+					DatabaseEntry associationCommitValue = new DatabaseEntry(associationCommit.toByteArray()); //Serialization.getInstance().toDson(associationCommit, Output.PERSIST));
+	
+					status = this.stateAssociations.put(transaction, associationKey, associationCommitValue);
+		    		if (status.equals(OperationStatus.SUCCESS) == false)
+						throw new DatabaseException("Failed to commit association "+path.endpoint()+" for commit "+commit.getHead().getHeight()+":"+commit.getAtom().getHash()+" due to "+status.name()); 
+		    	}
     		}
-				
-			// Atom should exist in primitives
-			if (this.primitiveLRW.containsKey(commit.getAtom().getHash()) == false)
-			{
-	    		status = this.primitives.get(transaction, atomKey, null, LockMode.DEFAULT);
-	    		if (status.equals(OperationStatus.SUCCESS) == false)
-					throw new DatabaseException("Atom "+commit.getAtom().getHash()+" not found or has error "+status.name());
-			}
-    		
-			// Update atom in primitives as it should now be carrying state values at the time of the commit
-			DatabaseEntry atomValue = new DatabaseEntry(Serialization.getInstance().toDson(commit.getAtom(), DsonOutput.Output.PERSIST));
-			status = this.primitives.put(transaction, atomKey, atomValue);
-		    if (status.equals(OperationStatus.SUCCESS) != true) 
-	    		throw new DatabaseException("Failed to commit atom "+commit.getAtom().getHash()+" with state objects " + status.name());
-    		
-			for (StateOp stateOp : commit.getStateOps())
-			{
-				if (stateOp.ins().equals(Instruction.SET) == false)
-					continue;
-				
-        		long shardGroup = ShardMapper.toShardGroup(stateOp.key().get(), this.context.getLedger().numShardGroups(commit.getHead().getHeight()));
-				DatabaseEntry stateOpKey = new DatabaseEntry(stateOp.key().get().toByteArray());
-				DatabaseEntry stateOpValue = new DatabaseEntry(stateOp.toByteArray()); //Serialization.getInstance().toDson(stateOp, Output.PERSIST));
-				status = this.stateOperations.put(transaction, stateOpKey, stateOpValue);
-				if (status.equals(OperationStatus.SUCCESS) == false)
-					throw new DatabaseException("Failed to commit state "+stateOp+" for commit "+commit.getHead().getHeight()+":"+commit.getAtom().getHash()+" due to "+status.name()); 
-				else if (databaseLog.hasLevel(Logging.DEBUG) == true)
-					databaseLog.debug(this.context.getName()+": Stored state op "+stateOp+" in shard group "+shardGroup);
-			}
-
-			for (Path path : commit.getStatePaths())
-			{
-				path.validate();
-
-        		long shardGroup = ShardMapper.toShardGroup(path.endpoint(), this.context.getLedger().numShardGroups(commit.getHead().getHeight()));
-        		Commit stateCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp(), false);
-				DatabaseEntry stateKey = new DatabaseEntry(path.endpoint().toByteArray());
-				DatabaseEntry stateCommitValue = new DatabaseEntry(stateCommit.toByteArray()); //Serialization.getInstance().toDson(stateCommit, Output.PERSIST));
-				status = this.stateCommits.put(transaction, stateKey, stateCommitValue);
-				if (status.equals(OperationStatus.SUCCESS) == false)
-					throw new DatabaseException("Failed to commit state "+path+" for commit "+commit.getHead().getHeight()+":"+commit.getAtom().getHash()+" due to "+status.name()); 
-				else if (databaseLog.hasLevel(Logging.DEBUG) == true)
-					databaseLog.debug(this.context.getName()+": Stored state path in shard group "+shardGroup+" "+path);
-			}
-			
-	    	for (Path path : commit.getAssociationPaths()) 
-	    	{
-	    		path.validate();
-
-        		Commit associationCommit = new Commit(commit.getHead().getIndexOf(InventoryType.ATOMS, commit.getAtom().getHash()), path, Collections.emptyList(), commit.getTimestamp(), false);
-        		DatabaseEntry associationKey = new DatabaseEntry(path.endpoint().toByteArray());
-				DatabaseEntry associationCommitValue = new DatabaseEntry(associationCommit.toByteArray()); //Serialization.getInstance().toDson(associationCommit, Output.PERSIST));
-
-				status = this.stateAssociations.put(transaction, associationKey, associationCommitValue);
-	    		if (status.equals(OperationStatus.SUCCESS) == false)
-					throw new DatabaseException("Failed to commit association "+path.endpoint()+" for commit "+commit.getHead().getHeight()+":"+commit.getAtom().getHash()+" due to "+status.name()); 
-	    	}
 
 	    	transaction.commit();
 	    } 
 	    catch (Exception ex) 
 	    {
-			databaseLog.error(this.context.getName()+": State commit aborting", ex);
+			databaseLog.error(this.context.getName()+": State commit of "+commits.size()+" operations aborting", ex);
 	    	transaction.abort();
 	    	if (ex instanceof DatabaseException)
 	    		throw ex; 

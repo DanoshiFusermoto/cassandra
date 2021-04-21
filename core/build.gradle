@@ -51,6 +51,9 @@ dependencies {
 	// https://mvnrepository.com/artifact/com.fasterxml.jackson.datatype/jackson-datatype-guava
 	compile group: 'com.fasterxml.jackson.datatype', name: 'jackson-datatype-guava', version: '2.9.7'
 	
+	// https://mvnrepository.com/artifact/com.fasterxml.jackson.datatype/jackson-datatype-guava
+	compile group: 'com.fasterxml.jackson.datatype', name: 'jackson-datatype-jdk8', version: '2.9.7'
+
 	// https://mvnrepository.com/artifact/com.fasterxml.jackson.datatype/jackson-datatype-json-org
 	compile group: 'com.fasterxml.jackson.datatype', name: 'jackson-datatype-json-org', version: '2.9.7'
 	

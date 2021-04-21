@@ -27,6 +27,7 @@ import com.fasterxml.jackson.databind.deser.BeanDeserializerModifier;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.FilterProvider;
 import com.fasterxml.jackson.datatype.guava.GuavaModule;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsonorg.JsonOrgModule;
 
 /**
@@ -142,7 +143,8 @@ public class JacksonCborMapper extends ObjectMapper {
 		mapper.registerModule(cborModule);
 	    mapper.registerModule(new JsonOrgModule());
 	    mapper.registerModule(new GuavaModule());
-
+	    mapper.registerModule(new Jdk8Module());
+	    
 		mapper.configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true);
 		mapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 		mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);

@@ -222,7 +222,8 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			DatabaseEntry value = new DatabaseEntry();
 			
 			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || 
-				Vote.class.isAssignableFrom(primitive) == true || Certificate.class.isAssignableFrom(primitive) == true)
+				Vote.class.isAssignableFrom(primitive) == true || Certificate.class.isAssignableFrom(primitive) == true || 
+				StateInputs.class.isAssignableFrom(primitive) == true)
 			{
 				OperationStatus status = this.primitives.get(null, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)

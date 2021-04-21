@@ -4,6 +4,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
@@ -15,6 +17,8 @@ import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.state.inputs")
@@ -34,10 +38,18 @@ class StateInputs implements Primitive
 	private Hash atom;
 		
 	@JsonProperty("inputs")
+	@JsonInclude(Include.ALWAYS)
 	@DsonOutput(Output.ALL)
-	private Map<StateKey<?, ?>, UInt256> inputs;
+	private Map<Hash, Optional<UInt256>> inputs;
 	
-	StateInputs(final Hash block, final Hash atom, final Map<StateKey<?, ?>, UInt256> inputs)
+	
+	@SuppressWarnings("unused")
+	private StateInputs()
+	{
+		// FOR SERIALIZER
+	}
+	
+	StateInputs(final Hash block, final Hash atom, final Map<StateKey<?, ?>, Optional<UInt256>> inputs)
 	{
 		Objects.requireNonNull(inputs, "State inputs is null");
 		Numbers.isZero(inputs.size(), "State inputs is empty");
@@ -48,7 +60,7 @@ class StateInputs implements Primitive
 
 		this.atom = atom;
 		this.block = block;
-		this.inputs = new HashMap<StateKey<?, ?>, UInt256>();
+		this.inputs = inputs.entrySet().stream().collect(Collectors.toMap(e -> e.getKey().get(), e -> e.getValue()));
 	}
 	
 	@Override
@@ -67,14 +79,9 @@ class StateInputs implements Primitive
 		return this.atom;
 	}
 	
-	public Map<StateKey<?, ?>, UInt256> getInputs()
-	{
-		return Collections.unmodifiableMap(new HashMap<StateKey<?, ?>, UInt256>(this.inputs));
-	}
-	
-	public UInt256 getInput(final StateKey<?, ?> stateKey)
+	public Optional<UInt256> getInput(final StateKey<?, ?> stateKey)
 	{
 		Objects.requireNonNull(stateKey, "State key is null");
-		return this.inputs.get(stateKey);
+		return this.inputs.getOrDefault(stateKey.get(), null);
 	}
 }

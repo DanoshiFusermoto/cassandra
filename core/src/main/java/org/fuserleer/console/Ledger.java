@@ -9,12 +9,14 @@ import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.ledger.Block;
+import org.fuserleer.ledger.StateKey;
 import org.fuserleer.time.Time;
 
 public class Ledger extends Function
 {
 	private final static Options options = new Options().addOption("remote", false, "Return remote ledger information").addOption("pending", false, "Return pending ledger information")
 																													   .addOption("states", false, "Return hash list of all pending states")
+																													   .addOption("snapshot", false, "Outputs current state info of ledger")
 																													   .addOption("block", true, "Return block at specified height")
 																													   .addOption("branches", false, "Return pending branches");
 
@@ -45,6 +47,30 @@ public class Ledger extends Function
 		{
 			Block block = context.getLedger().getBlock(Long.parseLong(commandLine.getOptionValue("block")));
 			printStream.println("Block: "+block.getHeader().toString());
+		}
+		else if (commandLine.hasOption("snapshot") == true)
+		{
+			Collection<Hash> atomHandlerPending = context.getLedger().getAtomHandler().pending();
+			atomHandlerPending.forEach(p -> printStream.println(p.toString()));
+			printStream.println(atomHandlerPending.size()+" pending in atom handler");
+
+			Collection<Hash> atomPoolPending = context.getLedger().getAtomPool().pending();
+			atomPoolPending.forEach(p -> printStream.println(p.toString()));
+			printStream.println(atomPoolPending.size()+" pending in atom pool");
+
+			Collection<Hash> stateHandlerPending = context.getLedger().getStateHandler().pending();
+			stateHandlerPending.forEach(p -> printStream.println(p.toString()));
+			printStream.println(stateHandlerPending.size()+" pending in state handler");
+			
+			Collection<Hash> statePoolPending = context.getLedger().getStatePool().pending();
+			statePoolPending.forEach(p -> printStream.println(p.toString()));
+			printStream.println(statePoolPending.size()+" pending in state pool");
+			
+			Collection<Hash> stateAccumulatorLocked = context.getLedger().getStateAccumulator().locked();
+			stateAccumulatorLocked.forEach(p -> printStream.println(p.toString()));
+			printStream.println(stateAccumulatorLocked.size()+" locked in accumulator");
+
+			printStream.println("Current head: "+context.getLedger().getHead());
 		}
 		else
 		{

@@ -297,6 +297,14 @@ public final class PendingAtom implements Hashable
 		}
 	}
 
+	boolean isProvisioned()
+	{
+		if (this.stateMachine == null)
+			return false;
+		
+		return this.stateMachine.isProvisioned();
+	}
+	
 	Set<StateKey<?, ?>> provision(final BlockHeader block)
 	{
 		this.lock.writeLock().lock();
@@ -400,6 +408,30 @@ public final class PendingAtom implements Hashable
 			this.lock.readLock().unlock();
 		}
 	}
+
+	StateInputs getInputs()
+	{
+		this.lock.readLock().lock();
+		try
+		{
+			Map<StateKey<?, ?>, UInt256> inputs = new HashMap<StateKey<?, ?>, UInt256>();
+			for (StateKey<?, ?> stateKey : this.stateMachine.getStateKeys())
+			{
+				Optional<UInt256> input = this.stateMachine.getInput(stateKey);
+				if (input.isPresent() == false)
+					continue;
+				
+				inputs.put(stateKey, input.get());
+			}
+			
+			return new StateInputs(this.block, this.getHash(), inputs);
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+	}
+
 	
 	Optional<UInt256> getOutput(final StateKey<?, ?> key)
 	{

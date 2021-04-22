@@ -402,22 +402,22 @@ public class AtomHandler implements Service
 				if (condition.equals(CommitStatus.ACCEPTED) == true)
 				{
 					Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom));
-					if (commit != null)
-					{
-						if (commit.getPath().get(Elements.CERTIFICATE) != null)
-							return null;
+					if (commit == null)
+						return null;
+					
+					if (commit.getPath().get(Elements.CERTIFICATE) != null)
+						return null;
 						
-						if (commit.isTimedout() == true)
-							return null;
+					if (commit.isTimedout() == true)
+						return null;
 						
-						persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
-						if (persistedAtom == null)
-							throw new IllegalStateException("Expected to find persisted atom "+atom+" for condition "+condition);
+					persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
+					if (persistedAtom == null)
+						throw new IllegalStateException("Expected to find persisted atom "+atom+" for condition "+condition);
 						
-						persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
-						if (persistedBlock == null)
-							throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom+" for condition "+condition);
-					}
+					persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
+					if (persistedBlock == null)
+						throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom+" for condition "+condition);
 				}
 			}
 
@@ -597,19 +597,15 @@ public class AtomHandler implements Service
 				if (event.isSynced() == true)
 				{
 					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom handler state");
-					for (long height = Math.max(0, AtomHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  AtomHandler.this.context.getLedger().getHead().getHeight() ; height++)
+					for (long height = Math.max(0, AtomHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= AtomHandler.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try
 						{
 							Collection<Hash> items = AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
 							for (Hash item : items)
 							{
-								Commit commit = AtomHandler.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, item));
-								if (commit != null && commit.getPath().get(Elements.CERTIFICATE) != null)
-									continue;
-									
 								PendingAtom pendingAtom = AtomHandler.this.get(item, CommitStatus.ACCEPTED);
-								if (pendingAtom == null)
+								if (pendingAtom != null)
 								{
 									Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
 									submit(atom);

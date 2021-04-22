@@ -25,7 +25,6 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.CommitOperation.Type;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.events.AtomCertificateEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.time.Time;
@@ -414,14 +413,11 @@ public final class PendingAtom implements Hashable
 		this.lock.readLock().lock();
 		try
 		{
-			Map<StateKey<?, ?>, UInt256> inputs = new HashMap<StateKey<?, ?>, UInt256>();
+			Map<StateKey<?, ?>, Optional<UInt256>> inputs = new HashMap<StateKey<?, ?>, Optional<UInt256>>();
 			for (StateKey<?, ?> stateKey : this.stateMachine.getStateKeys())
 			{
 				Optional<UInt256> input = this.stateMachine.getInput(stateKey);
-				if (input.isPresent() == false)
-					continue;
-				
-				inputs.put(stateKey, input.get());
+				inputs.put(stateKey, input);
 			}
 			
 			return new StateInputs(this.block, this.getHash(), inputs);

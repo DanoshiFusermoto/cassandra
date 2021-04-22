@@ -886,7 +886,7 @@ public class BlockHandler implements Service
 						try
 						{
 							// Hack as no current block header, but accumulator here is ephemeral anyway
-							accumulator.lock(Hash.from(previous.getHash(), Hash.ZERO), atom);
+							accumulator.lock(atom);
 							atomExclusions.add(atom.getHash());
 							candidateAtoms.put(atom.getHash(), atom);
 							nextAtomTarget = atom.getHash().asLong();
@@ -1058,7 +1058,18 @@ public class BlockHandler implements Service
 	
 						pendingBlock.constructBlock();
 						if (pendingBlock.getBlock() != null)
+						{
 							BlockHandler.this.context.getLedger().getLedgerStore().store(pendingBlock.getBlock());
+							
+							Iterator<PendingBranch> pendingBranchIterator = BlockHandler.this.pendingBranches.iterator();
+							while(pendingBranchIterator.hasNext() == true)
+							{
+								PendingBranch pendingBranch = pendingBranchIterator.next();
+								
+								if (pendingBranch.contains(pendingBlock) == true)
+									pendingBranch.apply(pendingBlock);
+							}
+						}
 					}
 					catch (Exception e)
 					{
@@ -1268,9 +1279,11 @@ public class BlockHandler implements Service
 			{
 				for (PendingBranch pendingBranch : this.pendingBranches)
 				{
-					if (pendingBranch.intersects(branch) == true &&
-						pendingBranch.merge(branch) == true)
+					if (pendingBranch.isMergable(branch) == true)
+					{
+						pendingBranch.merge(branch);
 						return;
+					}
 				}
 
 				for (PendingBranch pendingBranch : this.pendingBranches)
@@ -1472,7 +1485,7 @@ public class BlockHandler implements Service
 				if (event.isSynced() == true)
 				{
 					blocksLog.info(BlockHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known block handler state");
-					for (long height = Math.max(0, BlockHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  BlockHandler.this.context.getLedger().getHead().getHeight() ; height++)
+					for (long height = Math.max(0, BlockHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= BlockHandler.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try
 						{
@@ -1501,11 +1514,34 @@ public class BlockHandler implements Service
 							blocksLog.error(BlockHandler.this.context.getName()+": Failed to load state for block handler at height "+height, ex);
 						}
 					}
-				
+					
+/*					try
+					{
+						// Look forward for any super blocks that weren't committed
+						List<Block> superBlocks = new ArrayList<Block>();
+						Hash nextBlock = BlockHandler.this.context.getLedger().getLedgerStore().getNext(BlockHandler.this.context.getLedger().getHead().getHash(), BlockHeader.class);
+						if (nextBlock != null)
+						{
+							do
+							{
+								Block block = BlockHandler.this.context.getLedger().getLedgerStore().get(nextBlock, Block.class);
+								if(block.getHeader().getCertificate() != null)
+									superBlocks.add(block);
+								
+								nextBlock = BlockHandler.this.context.getLedger().getLedgerStore().getNext(nextBlock, Block.class);
+							}
+							while(nextBlock != null);
+						}
+					}
+					catch (IOException ex)
+					{
+						blocksLog.error(BlockHandler.this.context.getName()+": Failed to load state for block handler at "+BlockHandler.this.context.getLedger().getHead(), ex);
+					}
+					
 					synchronized(BlockHandler.this.voteProcessor)
 					{
 						BlockHandler.this.voteProcessor.notify();
-					}
+					}*/
 				}
 				else
 				{

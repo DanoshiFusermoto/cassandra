@@ -839,9 +839,11 @@ public class BlockHandler implements Service
 		{
 			this.context.getMetaData().increment("ledger.accumulator.iterations");
 
-			StateAccumulator accumulator = branch != null ? branch.getStateAccumulator().shadow() : this.context.getLedger().getStateAccumulator().shadow();
-			Set<Hash> atomExclusions = accumulator.getPendingAtoms().stream().map(pa -> pa.getHash()).collect(Collectors.toSet());
-			List<Hash> certificateExclusions = new ArrayList<Hash>(branchCertificateExclusions);
+			final StateAccumulator accumulator = branch != null ? branch.getStateAccumulator().shadow() : this.context.getLedger().getStateAccumulator().shadow();
+			final Set<Hash> atomExclusions = branch == null ? new HashSet<Hash>() : branch.getBlocks().stream().flatMap(pb -> pb.getHeader().getInventory(InventoryType.ATOMS).stream()).collect(Collectors.toSet());
+			atomExclusions.addAll(accumulator.getPendingAtoms().stream().map(pa -> pa.getHash()).collect(Collectors.toSet()));
+			
+			final List<Hash> certificateExclusions = new ArrayList<Hash>(branchCertificateExclusions);
 			final long timestamp = Time.getSystemTime();
 			final List<PendingAtom> seedAtoms = this.context.getLedger().getAtomPool().get(initialAtomTarget-Long.MIN_VALUE, initialAtomTarget, BlockRegulator.BASELINE_DISTANCE_TARGET, 8, atomExclusions);
 			long nextAtomTarget = initialAtomTarget;

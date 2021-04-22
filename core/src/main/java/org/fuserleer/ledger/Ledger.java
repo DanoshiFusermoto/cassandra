@@ -1,12 +1,16 @@
 package org.fuserleer.ledger;
 
 import java.io.IOException;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -39,6 +43,7 @@ import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.node.Node;
 
 import com.fasterxml.jackson.annotation.JsonGetter;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.eventbus.Subscribe;
 
 public final class Ledger implements Service, LedgerInterface
@@ -61,6 +66,7 @@ public final class Ledger implements Service, LedgerInterface
 	private final LedgerSearch	ledgerSearch;
 	private final ValidatorHandler validatorHandler;
 	
+	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 	private final transient AtomicReference<BlockHeader> head;
 	
 	public Ledger(Context context)
@@ -148,52 +154,60 @@ public final class Ledger implements Service, LedgerInterface
 	
 	private void integrity() throws IOException, ValidationException, StateLockedException
 	{
-		Hash headHash = this.ledgerStore.head();
-		
-		Hash genesis = this.ledgerStore.getSyncBlock(0);
-		if (genesis != null)
+		this.lock.writeLock().lock();
+		try
 		{
-			if (Universe.getDefault().getGenesis().getHeader().getHash().equals(genesis) == false)
-				throw new RuntimeException("You didn't clean your database dumbass!");
-		}
-
-		// Check if this is just a new ledger store and doesn't need integrity or recovery
-		if (headHash.equals(Universe.getDefault().getGenesis().getHeader().getHash()) == true && this.ledgerStore.has(headHash) == false)
-		{
-			// Store the genesis block primitive
-			this.ledgerStore.store(Universe.getDefault().getGenesis());
-
-			// Commit the genesis block
-			// Some simple manual actions here with regard to provisioning as don't want to complicate the flow with a special case for genesis
-			this.ledgerStore.commit(Universe.getDefault().getGenesis());
-			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
+			Hash headHash = this.ledgerStore.head();
+			
+			Hash genesis = this.ledgerStore.getSyncBlock(0);
+			if (genesis != null)
 			{
-				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
-				pendingAtom.prepare();
-				pendingAtom.accepted();
-				pendingAtom.provision(Universe.getDefault().getGenesis().getHeader());
-				pendingAtom.setStatus(CommitStatus.PROVISIONED);
-				pendingAtom.execute();
-				this.ledgerStore.commit(pendingAtom.getCommitOperation(Type.ACCEPT));
+				if (Universe.getDefault().getGenesis().getHeader().getHash().equals(genesis) == false)
+					throw new RuntimeException("You didn't clean your database dumbass!");
 			}
-			
-			return;
-		}
-		else
-		{
-			// TODO block header is known but is it the strongest head that represents state?
-			BlockHeader header = this.ledgerStore.get(headHash, BlockHeader.class);
-			
-			if (header != null)
-				setHead(header);
+	
+			// Check if this is just a new ledger store and doesn't need integrity or recovery
+			if (headHash.equals(Universe.getDefault().getGenesis().getHeader().getHash()) == true && this.ledgerStore.has(headHash) == false)
+			{
+				// Store the genesis block primitive
+				this.ledgerStore.store(Universe.getDefault().getGenesis());
+	
+				// Commit the genesis block
+				// Some simple manual actions here with regard to provisioning as don't want to complicate the flow with a special case for genesis
+				this.ledgerStore.commit(Universe.getDefault().getGenesis());
+				for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
+				{
+					PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
+					pendingAtom.prepare();
+					pendingAtom.accepted();
+					pendingAtom.provision(Universe.getDefault().getGenesis().getHeader());
+					pendingAtom.setStatus(CommitStatus.PROVISIONED);
+					pendingAtom.execute();
+					this.ledgerStore.commit(Collections.singletonList(pendingAtom.getCommitOperation(Type.ACCEPT)));
+				}
+				
+				return;
+			}
 			else
 			{
-				// TODO recover to the best head with committed state
-				ledgerLog.error(Ledger.this.context.getName()+": Local block header "+headHash+" not found in store");
-				throw new UnsupportedOperationException("Integrity recovery not implemented");
+				// TODO block header is known but is it the strongest head that represents state?
+				BlockHeader header = this.ledgerStore.get(headHash, BlockHeader.class);
+				
+				if (header != null)
+					this.head.set(header);
+				else
+				{
+					// TODO recover to the best head with committed state
+					ledgerLog.error(Ledger.this.context.getName()+": Local block header "+headHash+" not found in store");
+					throw new UnsupportedOperationException("Integrity recovery not implemented");
+				}
+				
+				// TODO clean up vote power if needed after recovery as could be in a compromised state 
 			}
-			
-			// TODO clean up vote power if needed after recovery as could be in a compromised state 
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
 		}
 	}
 	
@@ -227,9 +241,19 @@ public final class Ledger implements Service, LedgerInterface
 		return this.statePool;
 	}
 
-	StateAccumulator getStateAccumulator()
+	@VisibleForTesting
+	public StateAccumulator getStateAccumulator()
 	{
-		return this.stateAccumulator;
+		this.lock.readLock().lock();
+		try
+		{
+			return this.stateAccumulator;
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+			
 	}
 
 	LedgerStore getLedgerStore()
@@ -243,10 +267,49 @@ public final class Ledger implements Service, LedgerInterface
 		return this.head.get();
 	}
 
-	void setHead(final BlockHeader head)
+	private void update(final Block block) throws StateLockedException, IOException
 	{
-		this.head.set(Objects.requireNonNull(head, "Head is null"));
-		this.context.getNode().setHead(head);
+		Objects.requireNonNull(block, "Block is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			Set<PendingAtom> acceptedPendingAtoms = new HashSet<PendingAtom>();
+			for (Atom atom : block.getAtoms())
+			{
+				PendingAtom pendingAtom = getAtomHandler().get(atom.getHash(), CommitStatus.NONE);
+				if (pendingAtom == null)
+					throw new IllegalStateException("Pending atom "+atom.getHash()+" state appears invalid.");
+				
+				acceptedPendingAtoms.add(pendingAtom);
+			}
+			
+			this.stateAccumulator.lock(acceptedPendingAtoms);
+			acceptedPendingAtoms.forEach(pa -> pa.provision(block.getHeader()));
+			
+			Set<PendingAtom> committedPendingAtoms = new HashSet<PendingAtom>();
+			for (AtomCertificate atomCertificate : block.getCertificates())
+			{
+				PendingAtom pendingAtom = getAtomHandler().get(atomCertificate.getAtom(), CommitStatus.ACCEPTED);
+				if (pendingAtom == null)
+					throw new IllegalStateException("Pending atom certificate "+atomCertificate.getAtom()+" state appears invalid.");
+				
+				committedPendingAtoms.add(pendingAtom);
+			}
+
+			if (committedPendingAtoms.isEmpty() == false)
+			{
+				this.ledgerStore.commit(committedPendingAtoms.stream().map(cpa -> cpa.getCommitOperation()).collect(Collectors.toList()));
+				this.stateAccumulator.unlock(committedPendingAtoms);
+			}
+			
+			this.head.set(block.getHeader());
+			this.context.getNode().setHead(block.getHeader());
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
 	}
 
 	public <T extends Primitive> T get(Hash hash, Class<T> primitive) throws IOException
@@ -328,7 +391,6 @@ public final class Ledger implements Service, LedgerInterface
 		{
 			try
 			{
-				Ledger.this.stateAccumulator.commit(event.getPendingAtom());
 				if (event.getPendingAtom().getCertificate().getDecision().equals(StateDecision.POSITIVE))
 					Ledger.this.context.getEvents().post(new AtomAcceptedEvent(event.getPendingAtom()));
 				if (event.getPendingAtom().getCertificate().getDecision().equals(StateDecision.NEGATIVE))
@@ -348,21 +410,21 @@ public final class Ledger implements Service, LedgerInterface
 		}
 
 		@Subscribe
-		public void on(final AtomCommitTimeoutEvent event) 
+		public void on(final AtomCommitTimeoutEvent event) throws StateLockedException 
 		{
 			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" commit aborted due to timeout");
-			Ledger.this.stateAccumulator.abort(event.getPendingAtom());
+			Ledger.this.stateAccumulator.unlock(event.getPendingAtom());
 		}
 
 		@Subscribe
-		public void on(final AtomExceptionEvent event) 
+		public void on(final AtomExceptionEvent event) throws StateLockedException 
 		{
 			// FIXME not a fan of isolating the StateLockedException in this way
 			if (event.getException() instanceof StateLockedException)
 				return;
 			
 			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" aborted", event.getException());
-			Ledger.this.stateAccumulator.abort(event.getPendingAtom());
+			Ledger.this.stateAccumulator.unlock(event.getPendingAtom());
 		}
 	};
 	
@@ -378,18 +440,18 @@ public final class Ledger implements Service, LedgerInterface
 		private long lastThroughputShardsTouched = 0;
 
 		@Subscribe
-		public void on(final BlockCommittedEvent event) 
+		public void on(final BlockCommittedEvent event) throws StateLockedException, IOException 
 		{
-			process(event.getBlock());
+			update(event.getBlock());
 		}
 		
 		@Subscribe
-		public void on(final SyncBlockEvent event) 
+		public void on(final SyncBlockEvent event) throws StateLockedException, IOException 
 		{
-			process(event.getBlock());
+			sync(event.getBlock());
 		}
 
-		private void process(final Block block)
+		private void update(final Block block) throws StateLockedException, IOException
 		{
 			if (block.getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
 			{
@@ -397,10 +459,30 @@ public final class Ledger implements Service, LedgerInterface
 				return;
 			}
 			
-			// Clone it to make sure to extract the header
-			Ledger.this.setHead(block.getHeader());
+			Ledger.this.update(block);
 			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
+			stats(block);
+		}
 			
+		private void sync(final Block block) throws StateLockedException, IOException
+		{
+			if (block.getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
+			{
+				ledgerLog.error(Ledger.this.context.getName()+": Synced block "+block.getHeader()+" does not attach to current head "+Ledger.this.getHead());
+				return;
+			}
+			
+			Ledger.this.head.set(block.getHeader());
+			Ledger.this.context.getNode().setHead(block.getHeader());
+			ledgerLog.info(Ledger.this.context.getName()+": Synced block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
+			stats(block);
+		}
+
+		private void stats(final Block block) throws StateLockedException, IOException
+		{
+			Collection<Hash> stateAccumulatorLocked = context.getLedger().getStateAccumulator().locked();
+			ledgerLog.info(Ledger.this.context.getName()+": "+stateAccumulatorLocked.size()+" locked in accumulator "+stateAccumulatorLocked.stream().reduce((a, b) -> Hash.from(a,b)));
+
 			long numShardGroups = Ledger.this.numShardGroups(block.getHeader().getHeight());
 			Set<Long> shardGroupsTouched = new HashSet<Long>();
 			for (AtomCertificate atomCertificate : block.getCertificates())

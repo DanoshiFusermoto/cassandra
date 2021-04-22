@@ -6,11 +6,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.Map.Entry;
 import java.util.NavigableSet;
 import java.util.concurrent.ThreadLocalRandom;
@@ -49,6 +52,7 @@ import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
+import org.fuserleer.utils.UInt256;
 
 import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
@@ -754,7 +758,7 @@ public class SyncHandler implements Service
 		return true;
 	}
 
-	void commit(LinkedList<Block> branch) throws IOException, ValidationException, StateLockedException
+	private void commit(LinkedList<Block> branch) throws IOException, ValidationException, StateLockedException
 	{
 		// TODO pretty much everything, limited validation here currently, just accepts blocks and atoms almost on faith
 		// TODO remove reference to ledger StateAccumulator and use a local instance with a push on sync
@@ -805,6 +809,7 @@ public class SyncHandler implements Service
 			}
 
 			//  Process certificates contained in block
+			final List<CommitOperation> atomCommitOperations = new ArrayList<CommitOperation>();
 			for (AtomCertificate certificate : block.getCertificates())
 			{
 				PendingAtom pendingAtom = this.atoms.get(certificate.getAtom());
@@ -812,8 +817,27 @@ public class SyncHandler implements Service
 					throw new ValidationException(this.context.getName()+": Pending atom "+certificate.getAtom()+" not found for certificate "+certificate.getHash()+" in block "+block.getHash());
 				
 				pendingAtom.setCertificate(certificate);
-				this.context.getLedger().getStateAccumulator().commit(pendingAtom);
+				atomCommitOperations.add(pendingAtom.getCommitOperation());
+				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
 				this.atoms.remove(pendingAtom.getHash());
+			}
+			if (atomCommitOperations.isEmpty() == false)
+				this.context.getLedger().getLedgerStore().commit(atomCommitOperations);
+			
+			// Timeouts
+			Iterator<PendingAtom> atomsIterator = this.atoms.values().iterator();
+			while(atomsIterator.hasNext() == true)
+			{
+				PendingAtom pendingAtom = atomsIterator.next();
+
+				if (block.getHeader().getTimestamp() < pendingAtom.getInclusionTimeout())
+					continue;
+			
+				if (block.getHeader().getHeight() < pendingAtom.getCommitBlockTimeout())
+					continue;
+				
+				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
+				atomsIterator.remove();
 			}
 		}
 		
@@ -850,10 +874,19 @@ public class SyncHandler implements Service
 		}
 	
 		// Out of sync?
-//		PendingBranch bestBranch = this.context.getLedger().getBlockHandler().getBestBranch();
-//		int OOSTrigger = bestBranch == null ? Node.OOS_TRIGGER_LIMIT : Node.OOS_TRIGGER_LIMIT + bestBranch.size(); 
 		// TODO need to deal with forks that don't converge with local chain due to safety break
-		if (isSynced() == true && syncPeers.stream().anyMatch(cp -> cp.getNode().isAheadOf(this.context.getNode(), Node.OOS_TRIGGER_LIMIT)) == true)
+		boolean unsynced = syncPeers.stream().anyMatch(sp -> {
+			if (sp.getNode().isAheadOf(this.context.getNode(), Node.OOS_TRIGGER_LIMIT) == true)
+				return true;
+			
+			if (this.context.getLedger().getHead().getHash().equals(Universe.getDefault().getGenesis().getHash()) == true && 
+				sp.getNode().isAheadOf(this.context.getNode(), Node.OOS_RESOLVED_LIMIT) == true)
+				return true;
+			
+			return false;
+		});
+		
+		if (isSynced() == true && unsynced == true)
 		{
 			setSynced(false);
 			syncLog.info(this.context.getName()+": Out of sync state detected with OOS_TRIGGER limit of "+Node.OOS_TRIGGER_LIMIT);
@@ -881,19 +914,58 @@ public class SyncHandler implements Service
 			if (this.blocksRequested.isEmpty() == true && 
 				this.blocks.isEmpty() == true && syncAcquired == true)
 			{
-				synchronized(this.atoms)
+				// TODO May be better to do the sync status change via events to the modules which carry the 
+				//		pendingAtoms left mid-phase here rather than calling direct into services.
+				//		Two events would be needed I think, one to prepare for the sync status change (load state)
+				//		and another to then execute that state on an actual sync status change event.
+				
+				// Take a copy of atoms mid-phase as setSynced() calls reset
+				List<PendingAtom> pendingAtoms = new ArrayList<PendingAtom>(this.atoms.values());
+				// Inject remaining atoms that may be in a pending consensus phase
+				for (PendingAtom pendingAtom : pendingAtoms)
 				{
-					// Inject remaining atoms that may be in a pending consensus phase
-					for (PendingAtom pendingAtom : this.atoms.values())
-					{
-						this.context.getLedger().getAtomHandler().push(pendingAtom);
-						this.context.getLedger().getStateHandler().add(pendingAtom);
-						this.context.getLedger().getStatePool().add(pendingAtom);
-						this.context.getLedger().getStateHandler().provision(pendingAtom);
-					}
+					this.context.getLedger().getAtomHandler().push(pendingAtom);
+					this.context.getLedger().getStateHandler().add(pendingAtom);
+					this.context.getLedger().getStatePool().add(pendingAtom);
 				}
 				
+				// Determine which pending atoms have been provisioned and can be executed
+				for (PendingAtom pendingAtom : pendingAtoms)
+				{
+					final StateInputs stateInputs = this.context.getLedger().getLedgerStore().get(Hash.from(pendingAtom.getBlock(), pendingAtom.getHash()), StateInputs.class);
+					if (stateInputs == null)
+						continue;
+
+					for (StateKey<?,?> stateKey : pendingAtom.getStateKeys())
+					{
+						Optional<UInt256> value = stateInputs.getInput(stateKey);
+						pendingAtom.provision(stateKey, value.orElse(null));
+					}
+					
+					if (pendingAtom.isProvisioned() == true)
+						pendingAtom.execute();
+				}
+
 				setSynced(true);
+				
+				// Finally signal provisioning of atom state inputs
+				for (PendingAtom pendingAtom : pendingAtoms)
+				{
+					if (pendingAtom.isProvisioned() == true)
+						continue;
+					
+					final Set<StateKey<?, ?>> stateKeysToProvision = new HashSet<StateKey<?, ?>>();
+					for (StateKey<?,?> stateKey : pendingAtom.getStateKeys())
+					{
+						StateCertificate stateCertificate = pendingAtom.getCertificate(stateKey);
+						if (stateCertificate == null)
+							stateKeysToProvision.add(stateKey);
+						else
+							pendingAtom.provision(stateKey, stateCertificate.getInput());
+					}
+					
+					this.context.getLedger().getStateHandler().provision(pendingAtom, stateKeysToProvision);
+				}
 
 				// Tell all sync peers we're synced
 				for (ConnectedPeer syncPeer : syncPeers)
@@ -977,7 +1049,7 @@ public class SyncHandler implements Service
 			// Process the atoms contained in block
 			for (Atom atom : block.getAtoms())
 			{
-				PendingAtom pendingAtom = PendingAtom.create(this.context, atom);
+				PendingAtom pendingAtom = new PendingAtom(this.context, atom, block.getHeader().getTimestamp());
 				this.atoms.put(pendingAtom.getHash(), pendingAtom);
 				pendingAtom.prepare();
 				this.context.getLedger().getStateAccumulator().lock(pendingAtom);

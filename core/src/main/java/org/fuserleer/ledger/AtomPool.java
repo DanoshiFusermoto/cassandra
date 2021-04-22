@@ -937,22 +937,7 @@ public final class AtomPool implements Service
 						{
 							Collection<Hash> items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
 							for (Hash item : items)
-							{
-								AtomPool.this.context.getLedger().getAtomHandler().get(item, CommitStatus.ACCEPTED);
-								
-/*								Commit commit = AtomPool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, item));
-								if (commit != null && commit.getPath().get(Elements.BLOCK) != null)
-									continue;
-									
-								PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(item);
-								if (pendingAtom == null)
-								{
-									Atom atom = AtomPool.this.context.getLedger().getLedgerStore().get(item, Atom.class);
-									AtomPool.this.context.getLedger().getAtomHandler().submit(atom);
-								}
-//								else
-//									AtomPool.this.add(pendingAtom);*/
-							}
+								AtomPool.this.context.getLedger().getAtomHandler().get(item, CommitStatus.NONE);
 							
 							items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class);
 							for (Hash item : items)
@@ -960,22 +945,6 @@ public final class AtomPool implements Service
 								AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);
 								if (AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom(), CommitStatus.NONE) != null)
 									AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
-									
-/*								AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);
-								Commit commit = AtomPool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atomVote.getAtom()));
-								if (commit != null && commit.getPath().get(Elements.BLOCK) != null)
-									continue;
-									
-								PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
-								if (pendingAtom == null)
-								{
-									Atom atom = AtomPool.this.context.getLedger().getLedgerStore().get(atomVote.getAtom(), Atom.class);
-									AtomPool.this.context.getLedger().getAtomHandler().submit(atom);
-								}
-//								else
-//									AtomPool.this.add(pendingAtom);
-								
-								AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);*/
 							}
 						}
 						catch (Exception ex)

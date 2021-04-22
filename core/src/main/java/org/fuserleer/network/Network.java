@@ -419,7 +419,9 @@ public final class Network implements Service
 			this.peerStore.start();
 			this.peerHandler.start();
 			this.gossipHandler.start();
-			this.websocketService.start();
+			
+			if (this.websocketService != null)
+				this.websocketService.start();
 			
 			this.messaging.register(NodeMessage.class, this.getClass(), new MessageProcessor<NodeMessage>() 
 			{
@@ -609,7 +611,9 @@ public final class Network implements Service
 				this.TCPServerSocket.close();
 			}
 			
-			this.websocketService.stop();
+			if (this.websocketService != null)
+				this.websocketService.stop();
+			
 			this.gossipHandler.stop();
 			this.messaging.stop();
 			this.peerHandler.stop();

@@ -266,6 +266,13 @@ class PendingBlock implements Hashable
 		}
 	}
 
+	public PendingAtom getAtom(final Hash atom)
+	{
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is zero");
+		return this.atoms.get(atom);
+	}
+
 	public List<PendingAtom> getAtoms()
 	{
 		this.lock.lock();

@@ -14,10 +14,13 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
+import org.fuserleer.Universe;
 import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
+import org.fuserleer.ledger.BlockHeader.InventoryType;
+import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -30,7 +33,7 @@ public class PendingBranch
 {
 	public enum Type
 	{
-		NONE, FORK
+		NONE, FORK, MERGE
 	}
 	
 	private static final Logger blocksLog = Logging.getLogger("blocks");
@@ -45,7 +48,7 @@ public class PendingBranch
 
 	private final ReentrantLock lock = new ReentrantLock();
 	
-	PendingBranch(final Context context, final Type type, final BlockHeader root, final StateAccumulator accumulator)
+	PendingBranch(final Context context, final Type type, final BlockHeader root, final StateAccumulator accumulator) throws IOException
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.type = Objects.requireNonNull(type, "Type is null");
@@ -53,6 +56,26 @@ public class PendingBranch
 		this.blocks = new LinkedList<PendingBlock>();
 		this.root = Objects.requireNonNull(root, "Root is null");
 		this.accumulator = Objects.requireNonNull(accumulator, "Accumulator is null");
+
+		// TODO This is expensive, want to keep long term?
+		if (root.getHash().equals(Universe.getDefault().getGenesis().getHash()) == false)
+		{
+			for (Hash atom : this.root.getInventory(InventoryType.ATOMS))
+				if (this.accumulator.isLocked(new StateAddress(Atom.class, atom)) == true)
+					throw new IllegalStateException("Atom "+atom+" is locked in state accumulator");
+			
+			for (Hash certificate : this.root.getInventory(InventoryType.CERTIFICATES))
+			{
+				AtomCertificate atomCertificate = context.getLedger().getStateHandler().getCertificate(certificate, AtomCertificate.class);
+				if (atomCertificate == null)
+					throw new IllegalStateException("Atom certificate "+certificate+" not found");
+
+				if (this.accumulator.isLocked(new StateAddress(Atom.class, atomCertificate.getAtom())) == true)
+					throw new IllegalStateException("Atom "+atomCertificate.getAtom()+" is not locked in state accumulator");
+			}
+			
+			blocksLog.info(context.getName()+": Branch "+type+" "+root+" accumulator shadow "+accumulator.locked().size()+" locked in accumulator "+accumulator.locked().stream().reduce((a, b) -> Hash.from(a,b)));
+		}
 	}
 
 	PendingBranch(final Context context, final Type type, final BlockHeader root, final StateAccumulator accumulator, final PendingBlock block) throws ValidationException, IOException, StateLockedException
@@ -107,9 +130,14 @@ public class PendingBranch
 			if (foundPrev == false && this.root.getHash().equals(block.getHeader().getPrevious()) == false)
 				throw new IllegalStateException("Block "+block.getHash()+" does not attach to branch "+toString());
 			
-			lock(block);
 			this.blocks.add(block);
+
+			if (block.getBlock() != null)
+				apply(block);
 			block.setInBranch();
+			
+			blocksLog.info(context.getName()+": Added block "+block.getHeader()+" to branch "+type+" "+root);
+			
 			return true;
 		}
 		finally
@@ -159,33 +187,46 @@ public class PendingBranch
 		}
 	}
 
-	/**
-	 * Attempts to merge the provided blocks into this branch.
-	 * 
-	 * Suppresses all exceptions other than IOException, StateLockedException and returns false
-	 * 
-	 * @param blocks
-	 * @return
-	 * @throws IOException
-	 * @throws StateLockedException
-	 */
-	boolean tryMerge(final Collection<PendingBlock> blocks) throws IOException, StateLockedException
+	boolean isMergable(final Collection<PendingBlock> blocks)
 	{
+		Objects.requireNonNull(blocks, "Pending blocks is null");
+		Numbers.isZero(blocks.size(), "Pending blocks is empty");
+
+		this.lock.lock();
 		try
 		{
-			return merge(blocks);
+			PendingBlock last = null;
+			for (PendingBlock block : blocks)
+			{
+				if (last == null || last.getHeight() < block.getHeight())
+					last = block;
+			}
+			
+			if (this.blocks.contains(last) == true)
+				return true;
+			
+			boolean mergable = false;
+			for (PendingBlock block : blocks)
+			{
+				if (block.getHeader() == null)
+					throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
+				
+				if (this.blocks.getLast().getHash().equals(block.getHeader().getPrevious()) == false)
+					continue;
+				
+				mergable = true;
+				break;
+			}
+			
+			return mergable;
 		}
-		catch (IOException | StateLockedException ex)
+		finally
 		{
-			throw ex;
-		}
-		catch (Throwable t)
-		{
-			return false;
+			this.lock.unlock();
 		}
 	}
-
-	boolean merge(final Collection<PendingBlock> blocks) throws IOException, StateLockedException
+	
+	void merge(final Collection<PendingBlock> blocks) throws IOException, StateLockedException
 	{
 		Objects.requireNonNull(blocks, "Pending blocks is null");
 		Numbers.isZero(blocks.size(), "Pending blocks is empty");
@@ -249,20 +290,7 @@ public class PendingBranch
 
 					add(mergeBlock);
 				}
-				
-				return true;
 			}
-			
-			for (PendingBlock sortedBlock : sortedBlocks)
-			{
-				if (sortedBlock.getHeight() <= this.root.getHeight())
-					continue;
-				
-				if (this.contains(sortedBlock) == false)
-					return false;
-			}
-			
-			return true;
 		}
 		finally
 		{
@@ -370,7 +398,7 @@ public class PendingBranch
 				}
 			});
 
-			PendingBlock forkBlock = null;
+			PendingBlock forkingBlock = null;
 			for (PendingBlock sortedBlock : sortedBlocks)
 			{
 				if (sortedBlock.getHeader() == null)
@@ -382,26 +410,26 @@ public class PendingBranch
 					{
 						if (vertex.equals(this.blocks.getLast()) == false)
 						{
-							forkBlock = vertex;
+							forkingBlock = vertex;
 							break;
 						}
 					}
 				}
 				
-				if (forkBlock != null)
+				if (forkingBlock != null)
 					break;
 			}
 			
-			if (forkBlock == null)
+			if (forkingBlock == null)
 				return null;
 			
 			if (blocksLog.hasLevel(Logging.DEBUG) == true)
-				blocksLog.debug(this.context.getName()+": Forking branch "+this.blocks+" from "+forkBlock);
+				blocksLog.debug(this.context.getName()+": Forking branch "+this.blocks+" from "+forkingBlock);
 			
 			List<PendingBlock> forkBlocks = new LinkedList<PendingBlock>();
 			for (PendingBlock vertex : this.blocks)
 			{
-				if (vertex.getHeight() <= forkBlock.getHeight())
+				if (vertex.getHeight() <= forkingBlock.getHeight())
 				{
 					forkBlocks.add(vertex);
 
@@ -415,7 +443,7 @@ public class PendingBranch
 			Collections.reverse(sortedBlocks);
 			for (PendingBlock sortedBlock : sortedBlocks)
 			{
-				if (sortedBlock.getHeight() > forkBlock.getHeight())
+				if (sortedBlock.getHeight() > forkingBlock.getHeight())
 				{
 					forkBlocks.add(sortedBlock);
 
@@ -432,7 +460,7 @@ public class PendingBranch
 		}
 	}
 
-	PendingBranch fork(final PendingBlock block) throws StateLockedException, IOException
+/*	PendingBranch fork(final PendingBlock block) throws StateLockedException, IOException
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
 			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
@@ -484,7 +512,7 @@ public class PendingBranch
 		{
 			this.lock.unlock();
 		}
-	}
+	}*/
 
 	boolean intersects(final PendingBlock block)
 	{
@@ -655,7 +683,7 @@ public class PendingBranch
 		}
 	}
 
-	private void lock(final PendingBlock block) throws IOException, StateLockedException
+	void apply(final PendingBlock block) throws IOException, StateLockedException
 	{
 		Objects.requireNonNull(block, "Pending block is null");
 		
@@ -667,7 +695,9 @@ public class PendingBranch
 			{
 				try
 				{
-					PendingAtom pendingAtom = PendingBranch.this.context.getLedger().getAtomHandler().get(certificate.getAtom(), CommitStatus.NONE);
+					PendingAtom pendingAtom = block.getAtom(certificate.getAtom());
+					if (pendingAtom == null)
+						pendingAtom = PendingBranch.this.context.getLedger().getAtomHandler().get(certificate.getAtom(), CommitStatus.NONE);
 					if (pendingAtom == null)
 						throw new IllegalStateException("Pending atom "+certificate.getAtom()+" referenced in certificate not found for state unlock");
 					
@@ -684,13 +714,15 @@ public class PendingBranch
 			{
 				try
 				{
-					this.accumulator.lock(block.getHash(), pendingAtom);
+					this.accumulator.lock(pendingAtom);
 				}
 				catch (Exception ex)
 				{
 					throw ex;
 				}
 			}
+
+			blocksLog.info(context.getName()+": Applied block "+block+" to "+type+" "+root+" accumulator shadow "+accumulator.locked().size()+" locked in accumulator "+accumulator.locked().stream().reduce((a, b) -> Hash.from(a,b)));
 		}
 		finally
 		{

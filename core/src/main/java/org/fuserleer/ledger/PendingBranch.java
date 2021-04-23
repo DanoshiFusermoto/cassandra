@@ -5,9 +5,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
@@ -42,6 +44,7 @@ public class PendingBranch
 	private final long 	id;
 	private final Type	type;
 	private final LinkedList<PendingBlock> blocks;
+	private final Map<Hash, Boolean> meta;
 	private final StateAccumulator accumulator;
 	
 	private BlockHeader root;
@@ -54,6 +57,7 @@ public class PendingBranch
 		this.type = Objects.requireNonNull(type, "Type is null");
 		this.id = ThreadLocalRandom.current().nextLong();
 		this.blocks = new LinkedList<PendingBlock>();
+		this.meta = new HashMap<Hash, Boolean>();
 		this.root = Objects.requireNonNull(root, "Root is null");
 		this.accumulator = Objects.requireNonNull(accumulator, "Accumulator is null");
 
@@ -111,7 +115,7 @@ public class PendingBranch
 		this.lock.lock();
 		try
 		{
-			if (this.blocks.contains(block) == true)
+			if (this.meta.containsKey(block.getHash()) == true)
 				return false;
 			
 			if (block.getHeight() <= this.root.getHeight())
@@ -131,11 +135,13 @@ public class PendingBranch
 				throw new IllegalStateException("Block "+block.getHash()+" does not attach to branch "+toString());
 			
 			this.blocks.add(block);
+			this.meta.put(block.getHash(), Boolean.FALSE);
 
-			if (block.getBlock() != null)
+			if (block.getBlock() != null && 
+				(block.getHeader().getPrevious().equals(this.root.getHash()) == true || this.meta.getOrDefault(block.getHeader().getPrevious(), Boolean.FALSE).equals(Boolean.TRUE)))
 				apply(block);
+
 			block.setInBranch();
-			
 			blocksLog.info(context.getName()+": Added block "+block.getHeader()+" to branch "+type+" "+root);
 			
 			return true;
@@ -154,13 +160,7 @@ public class PendingBranch
 		this.lock.lock();
 		try
 		{
-			for (PendingBlock vertex : this.blocks)
-			{
-				if (vertex.getHash().equals(block) == true)
-					return true;
-			}
-
-			return false;
+			return this.meta.containsKey(block);
 		}
 		finally
 		{
@@ -175,11 +175,7 @@ public class PendingBranch
 		this.lock.lock();
 		try
 		{
-			for (PendingBlock vertex : this.blocks)
-				if (vertex.equals(pendingBlock) == true)
-					return true;
-			
-			return false;
+			return this.meta.containsKey(pendingBlock.getHash());
 		}
 		finally
 		{
@@ -264,7 +260,7 @@ public class PendingBranch
 				
 				if (sortedBlock.getHeight() <= previous.getHeight())
 					continue;
-				else if (this.blocks.contains(sortedBlock) == true)
+				else if (this.meta.containsKey(sortedBlock.getHash()) == true)
 				{
 					previous = sortedBlock;
 					continue;
@@ -460,60 +456,6 @@ public class PendingBranch
 		}
 	}
 
-/*	PendingBranch fork(final PendingBlock block) throws StateLockedException, IOException
-	{
-		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
-			throw new IllegalStateException("Block "+block.getHash()+" does not have a header");
-
-		this.lock.lock();
-		try
-		{
-			PendingBlock forkBlock = null;
-			for (PendingBlock vertex : this.blocks)
-			{
-				if (vertex.getHash().equals(block.getHeader().getPrevious()) == true)
-				{
-					if (vertex.equals(this.blocks.getLast()) == false)
-					{
-						forkBlock = vertex;
-						break;
-					}
-				}
-			}
-			
-			if (forkBlock == null)
-				return null;
-			
-			if (blocksLog.hasLevel(Logging.DEBUG) == true)
-				blocksLog.debug(this.context.getName()+": Forking branch "+this.blocks+" from "+forkBlock);
-			
-			List<PendingBlock> forkBlocks = new LinkedList<PendingBlock>();
-			for (PendingBlock vertex : this.blocks)
-			{
-				if (vertex.getHeight() <= forkBlock.getHeight())
-				{
-					forkBlocks.add(vertex);
-					
-					if (blocksLog.hasLevel(Logging.DEBUG) == true)
-						blocksLog.debug(this.context.getName()+": Adding pre-fork block "+vertex);
-				}
-				else
-					break;
-			}
-
-			forkBlocks.add(block);	
-			
-			if (blocksLog.hasLevel(Logging.DEBUG) == true)
-				blocksLog.debug(this.context.getName()+": Adding fork block "+block);
-			
-			return new PendingBranch(this.context, Type.FORK, this.root, this.context.getLedger().getStateAccumulator().shadow(), forkBlocks);
-		}
-		finally
-		{
-			this.lock.unlock();
-		}
-	}*/
-
 	boolean intersects(final PendingBlock block)
 	{
 		if (Objects.requireNonNull(block, "Block is null").getHeader() == null)
@@ -522,9 +464,8 @@ public class PendingBranch
 		this.lock.lock();
 		try
 		{
-			for (PendingBlock vertex : this.blocks)
-				if (vertex.getHash().equals(block.getHeader().getPrevious()) == true)
-					return true;
+			if (this.meta.containsKey(block.getHeader().getPrevious()) == true)
+				return true;
 			
 			return false;
 		}
@@ -558,10 +499,9 @@ public class PendingBranch
 				}
 			});
 
-			for (PendingBlock vertex : this.blocks)
-				for (PendingBlock sortedBlock : sortedBlocks)
-					if (vertex.getHash().equals(sortedBlock.getHeader().getPrevious()) == true)
-						return true;
+			for (PendingBlock sortedBlock : sortedBlocks)
+				if (this.meta.containsKey(sortedBlock.getHeader().getPrevious()) == true)
+					return true;
 			
 			return false;
 		}
@@ -588,7 +528,10 @@ public class PendingBranch
 			{
 				PendingBlock vertex = vertexIterator.next();
 				if (vertex.getHeader().getHeight() <= header.getHeight())
+				{
+					this.meta.remove(vertex.getHash());
 					vertexIterator.remove();
+				}
 			}
 
 			this.root = header;
@@ -618,6 +561,7 @@ public class PendingBranch
 				vertex.buildCertificate();
 				this.context.getLedger().getLedgerStore().commit(vertex.getBlock());
 				committed.add(vertex);
+				this.meta.remove(vertex.getHash());
 				vertexIterator.remove();
 				
 				if (vertex.getHash().equals(block.getHash()) == true)
@@ -640,7 +584,7 @@ public class PendingBranch
 		}
 	}
 	
-	PendingBlock commitable() throws IOException
+	PendingBlock commitable() throws IOException, StateLockedException
 	{
 		this.lock.lock();
 		try
@@ -656,6 +600,14 @@ public class PendingBranch
 				PendingBlock vertex = vertexIterator.next();
 				if (vertex.getBlock() == null)
 					continue;
+				
+				if (this.meta.get(vertex.getHash()).equals(Boolean.FALSE))
+				{
+					if (vertex.getHeader().getPrevious().equals(this.root.getHash()) == true || this.meta.get(vertex.getHeader().getPrevious()).equals(Boolean.TRUE))
+						apply(vertex);
+					else
+						continue;
+				}
 				
 				long weight = getWeight(vertex.getHeight());
 				long total = getTotalVotePower(vertex.getHeight());
@@ -687,9 +639,21 @@ public class PendingBranch
 	{
 		Objects.requireNonNull(block, "Pending block is null");
 		
+		if (block.getBlock() == null)
+			throw new IllegalStateException("Can not apply an un-constructed block "+block.getHeader());
+		
 		this.lock.lock();
 		try
 		{
+			if (block.getHeader().getPrevious().equals(this.root.getHash()) == false)
+			{
+				if (this.meta.containsKey(block.getHeader().getPrevious()) == false)
+					throw new IllegalStateException("Can not apply block "+block.getHeader()+" when previous absent");
+
+				if (this.meta.get(block.getHeader().getPrevious()).equals(Boolean.FALSE))
+					throw new IllegalStateException("Can not apply block "+block.getHeader()+" when previous is not applied");
+			}
+			
 			final List<AtomCertificate> certificates = block.getCertificates();
 			for (AtomCertificate certificate : certificates)
 			{
@@ -726,6 +690,7 @@ public class PendingBranch
 		}
 		finally
 		{
+			this.meta.put(block.getHash(), Boolean.TRUE);
 			this.lock.unlock();
 		}
 	}

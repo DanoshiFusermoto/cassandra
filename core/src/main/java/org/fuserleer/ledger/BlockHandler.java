@@ -1060,18 +1060,7 @@ public class BlockHandler implements Service
 	
 						pendingBlock.constructBlock();
 						if (pendingBlock.getBlock() != null)
-						{
 							BlockHandler.this.context.getLedger().getLedgerStore().store(pendingBlock.getBlock());
-							
-							Iterator<PendingBranch> pendingBranchIterator = BlockHandler.this.pendingBranches.iterator();
-							while(pendingBranchIterator.hasNext() == true)
-							{
-								PendingBranch pendingBranch = pendingBranchIterator.next();
-								
-								if (pendingBranch.contains(pendingBlock) == true)
-									pendingBranch.apply(pendingBlock);
-							}
-						}
 					}
 					catch (Exception e)
 					{
@@ -1345,7 +1334,7 @@ public class BlockHandler implements Service
 		}
 	}
 
-	private void processBranches() throws IOException
+	private void processBranches() throws IOException, StateLockedException
 	{
 		this.lock.readLock().lock();
 		try

@@ -830,12 +830,10 @@ public class SyncHandler implements Service
 			{
 				PendingAtom pendingAtom = atomsIterator.next();
 
-				if (block.getHeader().getTimestamp() < pendingAtom.getInclusionTimeout())
+				if (block.getHeader().getHeight() < pendingAtom.getCommitBlockTimeout() && 
+					block.getHeader().getTimestamp() < pendingAtom.getInclusionTimeout())
 					continue;
 			
-				if (block.getHeader().getHeight() < pendingAtom.getCommitBlockTimeout())
-					continue;
-				
 				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
 				atomsIterator.remove();
 			}

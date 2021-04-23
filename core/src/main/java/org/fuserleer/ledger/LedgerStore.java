@@ -514,23 +514,27 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
 		try 
 		{
-			OperationStatus status = store(transaction, stateInputs.getHash(), stateInputs, Serialization.getInstance().toDson(stateInputs, DsonOutput.Output.PERSIST));
+			DatabaseEntry key = new DatabaseEntry(stateInputs.getHash().toByteArray());
+			DatabaseEntry value = new DatabaseEntry(Serialization.getInstance().toDson(stateInputs, DsonOutput.Output.PERSIST));
+			boolean overwrite = false;
+			OperationStatus status = this.primitives.get(transaction, key, null, LockMode.RMW); 
+			if (status.equals(OperationStatus.KEYEXIST) == true)
+			{
+				overwrite = true;
+	    		databaseLog.warn(this.context.getName()+": State inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" are being overwritten");
+			}
+
+			status = this.primitives.put(transaction, key, value);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
+	    		throw new DatabaseException("Failed to store state inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" due to "+status.name());
+
+		    if (overwrite == false)
 		    {
-		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
-		    	{
-		    		databaseLog.warn(this.context.getName()+": State inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" are already present");
-		    		transaction.abort();
-		    		return status;
-		    	}
-		    	else 
-		    		throw new DatabaseException("Failed to store state inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" due to "+status.name());
-		    } 
-
-			status = storeSyncInventory(transaction, Longs.fromByteArray(stateInputs.getBlock().toByteArray()), stateInputs.getHash(), StateInputs.class);
-		    if (status.equals(OperationStatus.SUCCESS) == false) 
-	    		throw new DatabaseException("Failed to store state inputs for "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" in sync inventory due to "+status.name());
-
+				status = storeSyncInventory(transaction, Longs.fromByteArray(stateInputs.getBlock().toByteArray()), stateInputs.getHash(), StateInputs.class);
+			    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    		throw new DatabaseException("Failed to store state inputs for "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" in sync inventory due to "+status.name());
+		    }
+		    
 		    transaction.commit();
 		    return OperationStatus.SUCCESS;
 		} 
@@ -557,6 +561,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		return status;
 	}
 	
+
 	final OperationStatus store(final long height, final AtomVote vote) throws IOException 
 	{
 		Objects.requireNonNull(vote, "Vote is null");

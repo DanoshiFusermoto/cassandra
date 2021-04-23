@@ -525,10 +525,12 @@ public final class StateMachine // implements LedgerInterface
 	
 	public Optional<UInt256> getInput(final StateKey<?, ?> stateKey)
 	{
+		Objects.requireNonNull(stateKey, "State key is null");
+		
 		this.lock.readLock().lock();
 		try
 		{
-			Optional<UInt256> value = this.stateInputs.get(Objects.requireNonNull(stateKey, "State key is null").get());
+			Optional<UInt256> value = this.stateInputs.get(stateKey.get());
 			return value;
 		}
 		finally

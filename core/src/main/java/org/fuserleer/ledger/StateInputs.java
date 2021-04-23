@@ -66,7 +66,7 @@ class StateInputs implements Primitive
 	@Override
 	public Hash getHash()
 	{
-		return Hash.from(this.block, this.atom);
+		return new StateAddress(StateInputs.class, this.atom).get();
 	}
 
 	public Hash getBlock()
@@ -83,5 +83,10 @@ class StateInputs implements Primitive
 	{
 		Objects.requireNonNull(stateKey, "State key is null");
 		return this.inputs.getOrDefault(stateKey.get(), null);
+	}
+
+	public boolean isEmpty()
+	{
+		return this.inputs.isEmpty();
 	}
 }

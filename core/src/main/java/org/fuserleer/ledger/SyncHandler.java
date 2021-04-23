@@ -932,13 +932,17 @@ public class SyncHandler implements Service
 				// Determine which pending atoms have been provisioned and can be executed
 				for (PendingAtom pendingAtom : pendingAtoms)
 				{
-					final StateInputs stateInputs = this.context.getLedger().getLedgerStore().get(Hash.from(pendingAtom.getBlock(), pendingAtom.getHash()), StateInputs.class);
-					if (stateInputs == null)
+					final StateInputs stateInputs = this.context.getLedger().getLedgerStore().get(new StateAddress(StateInputs.class, pendingAtom.getHash()).get(), StateInputs.class);
+					if (stateInputs == null || stateInputs.getBlock().equals(pendingAtom.getBlock()) == false)
 						continue;
 
 					for (StateKey<?,?> stateKey : pendingAtom.getStateKeys())
 					{
 						Optional<UInt256> value = stateInputs.getInput(stateKey);
+						// Partial provision?
+						if (value == null)
+							continue;
+						
 						pendingAtom.provision(stateKey, value.orElse(null));
 					}
 					
@@ -957,6 +961,9 @@ public class SyncHandler implements Service
 					final Set<StateKey<?, ?>> stateKeysToProvision = new HashSet<StateKey<?, ?>>();
 					for (StateKey<?,?> stateKey : pendingAtom.getStateKeys())
 					{
+						if (pendingAtom.getInput(stateKey) != null)
+							continue; 
+						
 						StateCertificate stateCertificate = pendingAtom.getCertificate(stateKey);
 						if (stateCertificate == null)
 							stateKeysToProvision.add(stateKey);

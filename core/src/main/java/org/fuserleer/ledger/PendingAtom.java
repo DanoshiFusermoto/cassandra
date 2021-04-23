@@ -417,6 +417,9 @@ public final class PendingAtom implements Hashable
 			for (StateKey<?, ?> stateKey : this.stateMachine.getStateKeys())
 			{
 				Optional<UInt256> input = this.stateMachine.getInput(stateKey);
+				if (input == null)
+					continue;
+				
 				inputs.put(stateKey, input);
 			}
 			

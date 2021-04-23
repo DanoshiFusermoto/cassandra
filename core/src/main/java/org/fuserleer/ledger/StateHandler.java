@@ -818,6 +818,21 @@ public final class StateHandler implements Service
 									return;
 								}
 								
+								StateInputs stateInputs = StateHandler.this.context.getLedger().getLedgerStore().get(new StateAddress(StateInputs.class, getStateMessage.getAtom()).get(), StateInputs.class);
+								if (stateInputs != null)
+								{
+									value = stateInputs.getInput(getStateMessage.getKey()); 
+									if (value != null)
+									{
+										status = CommitStatus.PROVISIONED;
+										
+										if (cerbyLog.hasLevel(Logging.DEBUG) == true)
+											cerbyLog.debug(StateHandler.this.context.getName()+": State request "+getStateMessage.getKey()+" in atom "+getStateMessage.getAtom()+" served from persisted state inputs for " + peer);
+	
+										StateHandler.this.context.getNetwork().getMessaging().send(new StateMessage(getStateMessage.getAtom(), getStateMessage.getKey(), value.orElse(null), status), peer);
+									}
+								}
+								
 								// Pending atom is not found in any pool or commit. Need to set a future response
 								if (pendingAtom == null)
 									cerbyLog.warn(StateHandler.this.context.getName()+": Pending atom "+getStateMessage.getAtom()+" was null for state request "+getStateMessage.getKey()+" for " + peer);
@@ -1190,7 +1205,7 @@ public final class StateHandler implements Service
 		}
 	}
 
-	private void remove(final PendingAtom pendingAtom)
+	private void remove(final PendingAtom pendingAtom) throws IOException
 	{
 		Objects.requireNonNull(pendingAtom, "Pending atom is null");
 		
@@ -1211,6 +1226,14 @@ public final class StateHandler implements Service
 			
 			if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) && removed == false)
 				throw new IllegalStateException("Expected pending atom "+pendingAtom.getHash()+" but was not found");
+			
+			// Store any partially provisioned state inputs
+			if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == true)
+			{
+				StateInputs stateInputs = pendingAtom.getInputs();
+				if (stateInputs.isEmpty() == false)
+					this.context.getLedger().getLedgerStore().store(pendingAtom.getInputs());
+			}
 		}
 		finally
 		{
@@ -1256,13 +1279,13 @@ public final class StateHandler implements Service
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final AtomAcceptedEvent event) 
+		public void on(final AtomAcceptedEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
 		}
 
 		@Subscribe
-		public void on(final AtomRejectedEvent event) 
+		public void on(final AtomRejectedEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
 		}
@@ -1276,7 +1299,7 @@ public final class StateHandler implements Service
 		}
 
 		@Subscribe
-		public void on(final AtomExceptionEvent event) 
+		public void on(final AtomExceptionEvent event) throws IOException 
 		{
 			if (event.getException() instanceof StateLockedException)
 				return;

@@ -209,7 +209,7 @@ public final class StateHandler implements Service
 							{
 								try
 								{
-									if (StateHandler.this.context.getLedger().getLedgerStore().store(stateCertificate.getValue()).equals(OperationStatus.SUCCESS) == false)
+									if (StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), stateCertificate.getValue()).equals(OperationStatus.SUCCESS) == false)
 									{
 										cerbyLog.warn(StateHandler.this.context.getName()+": Already seen state certificate of "+stateCertificate.getValue()+" for "+stateCertificate.getValue().getAtom());
 										continue;

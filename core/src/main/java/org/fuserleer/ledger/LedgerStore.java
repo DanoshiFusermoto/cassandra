@@ -415,6 +415,22 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 				    } 
 				    LRWItems.put(certificate.getHash(), certificate.getHash());
 				}
+				
+				for (StateCertificate stateCertificate : certificate.getAll())
+				{
+					if (this.primitiveLRW.containsKey(stateCertificate.getHash()) == false)
+					{
+						status = store(transaction, stateCertificate.getHash(), stateCertificate, Serialization.getInstance().toDson(stateCertificate, DsonOutput.Output.PERSIST));
+					    if (status.equals(OperationStatus.SUCCESS) == false) 
+					    {
+					    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+					    		databaseLog.warn(this.context.getName()+": State certificate "+stateCertificate.getHash()+" for "+stateCertificate.getAtom()+" in block "+blockHeader + " is already present");
+					    	else 
+					    		throw new DatabaseException("Failed to store state certificate "+stateCertificate.getHash()+" for "+stateCertificate.getAtom()+" in block "+blockHeader + " due to " + status.name());
+					    } 
+					    LRWItems.put(stateCertificate.getHash(), stateCertificate.getHash());
+					}
+				}
 		    }
 
 		    transaction.commit();
@@ -430,7 +446,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 	
-	final OperationStatus store(final BlockHeader blockHeader) throws IOException 
+	final OperationStatus store(final long height, final BlockHeader blockHeader) throws IOException 
 	{
 		Objects.requireNonNull(blockHeader, "Block header is null");
 		
@@ -449,7 +465,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store " + blockHeader.getHash() + " due to " + status.name());
 		    } 
 		    
-			status = storeSyncInventory(transaction, blockHeader.getHeight(), blockHeader.getHash(), BlockHeader.class);
+			status = storeSyncInventory(transaction, height, blockHeader.getHash(), BlockHeader.class);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store block header "+blockHeader.getHash()+" in sync inventory due to "+status.name());
 
@@ -603,9 +619,10 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
-	final OperationStatus store(final BlockVote vote) throws IOException 
+	final OperationStatus store(final long height, final BlockVote vote) throws IOException 
 	{
 		Objects.requireNonNull(vote, "Vote is null");
+		Numbers.isNegative(height, "Height is negative");
 		
 		if (this.primitiveLRW.containsKey(vote.getHash()) == true)
 			return OperationStatus.KEYEXIST;
@@ -626,7 +643,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store block votes "+vote.getHash()+" due to "+status.name());
 		    } 
 
-			status = storeSyncInventory(transaction, vote.getHeight(), vote.getHash(), BlockVote.class);
+			status = storeSyncInventory(transaction, height, vote.getHash(), BlockVote.class);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store block vote "+vote.getHash()+" in sync inventory due to "+status.name());
 
@@ -643,10 +660,11 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 	
-	final OperationStatus store(final StateVote vote) throws IOException 
+	final OperationStatus store(final long height, final StateVote vote) throws IOException 
 	{
 		Objects.requireNonNull(vote, "Vote is null");
-		
+		Numbers.isNegative(height, "Height is negative");
+
 		if (this.primitiveLRW.containsKey(vote.getHash()) == true)
 			return OperationStatus.KEYEXIST;
 
@@ -666,7 +684,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store state vote "+vote.getHash()+" due to "+status.name());
 		    } 
 
-			status = storeSyncInventory(transaction, vote.getHeight(), vote.getHash(), StateVote.class);
+			status = storeSyncInventory(transaction, height, vote.getHash(), StateVote.class);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store state vote "+vote.getHash()+" in sync inventory due to "+status.name());
 
@@ -683,10 +701,11 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
-	final OperationStatus store(final StateCertificate certificate) throws IOException 
+	final OperationStatus store(final long height, final StateCertificate certificate) throws IOException 
 	{
 		Objects.requireNonNull(certificate, "State certificate is null");
-		
+		Numbers.isNegative(height, "Height is negative");
+
 		if (this.primitiveLRW.containsKey(certificate.getHash()) == true)
 			return OperationStatus.KEYEXIST;
 		
@@ -706,7 +725,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store state certificate "+certificate.getHash()+" due to "+status.name());
 		    } 
 
-			status = storeSyncInventory(transaction, certificate.getHeight(), certificate.getHash(), StateCertificate.class);
+			status = storeSyncInventory(transaction, height, certificate.getHash(), StateCertificate.class);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store state certificate "+certificate.getHash()+" in sync inventory due to "+status.name());
 		    

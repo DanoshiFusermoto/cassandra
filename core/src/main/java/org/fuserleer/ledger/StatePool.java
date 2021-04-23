@@ -98,7 +98,7 @@ public final class StatePool implements Service
 							{
 								try
 								{
-									if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote.getValue()).equals(OperationStatus.SUCCESS) == false)
+									if (StatePool.this.context.getLedger().getLedgerStore().store(StatePool.this.context.getLedger().getHead().getHeight(), stateVote.getValue()).equals(OperationStatus.SUCCESS) == false)
 									{
 										statePoolLog.warn(StatePool.this.context.getName()+": Already seen state vote of "+stateVote.getValue().getState()+" for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
 										continue;
@@ -163,7 +163,7 @@ public final class StatePool implements Service
 																	  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
 											stateVote.sign(StatePool.this.context.getNode().getKeyPair());
 											
-											if (StatePool.this.context.getLedger().getLedgerStore().store(stateVote).equals(OperationStatus.SUCCESS) == true)
+											if (StatePool.this.context.getLedger().getLedgerStore().store(StatePool.this.context.getLedger().getHead().getHeight(), stateVote).equals(OperationStatus.SUCCESS) == true)
 											{
 												StateVoteStatus status = process(stateVote);
 												if (status == StateVoteStatus.SUCCESS)

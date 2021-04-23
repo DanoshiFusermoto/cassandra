@@ -274,7 +274,7 @@ public class AtomHandler implements Service
 							}
 							
 							long height = AtomHandler.this.context.getLedger().getHead().getHeight();
-							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_TRIGGER_LIMIT))
 							{
 								pendingAtomInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class));
 								atomVoteInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class));
@@ -430,7 +430,10 @@ public class AtomHandler implements Service
 				{
 					pendingAtom.prepare();
 					if (persistedBlock != null)
+					{
+						pendingAtom.accepted();
 						pendingAtom.provision(persistedBlock);
+					}
 					
 				}
 				catch (ValidationException vex)
@@ -605,7 +608,7 @@ public class AtomHandler implements Service
 							for (Hash item : items)
 							{
 								PendingAtom pendingAtom = AtomHandler.this.get(item, CommitStatus.ACCEPTED);
-								if (pendingAtom != null)
+								if (pendingAtom == null)
 								{
 									Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
 									submit(atom);

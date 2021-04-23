@@ -931,7 +931,7 @@ public final class AtomPool implements Service
 				if (event.isSynced() == true)
 				{
 					atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom pool state");
-					for (long height = Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <  AtomPool.this.context.getLedger().getHead().getHeight() ; height++)
+					for (long height = Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= AtomPool.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try
 						{

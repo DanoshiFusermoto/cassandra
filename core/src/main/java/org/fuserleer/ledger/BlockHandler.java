@@ -251,7 +251,7 @@ public class BlockHandler implements Service
 							{
 								try
 								{
-									if (BlockHandler.this.context.getLedger().getLedgerStore().store(blockVote.getValue()).equals(OperationStatus.SUCCESS) == false)
+									if (BlockHandler.this.context.getLedger().getLedgerStore().store(BlockHandler.this.context.getLedger().getHead().getHeight(), blockVote.getValue()).equals(OperationStatus.SUCCESS) == false)
 									{
 										blocksLog.warn(BlockHandler.this.context.getName()+": Received already seen block vote of "+blockVote.getValue()+" for "+blockVote.getValue().getOwner());
 										continue;
@@ -799,7 +799,7 @@ public class BlockHandler implements Service
 						BlockVote blockHeaderVote = new BlockVote(pendingBlock.getHeader().getHash(), BlockHandler.this.voteClock.get(), BlockHandler.this.context.getNode().getIdentity());
 						blockHeaderVote.sign(BlockHandler.this.context.getNode().getKeyPair());
 						pendingBlock.vote(blockHeaderVote);
-						this.context.getLedger().getLedgerStore().store(blockHeaderVote);
+						this.context.getLedger().getLedgerStore().store(BlockHandler.this.context.getLedger().getHead().getHeight(), blockHeaderVote);
 						this.context.getNetwork().getGossipHandler().broadcast(blockHeaderVote);
 						
 						branchVotes.add(blockHeaderVote);
@@ -1039,7 +1039,7 @@ public class BlockHandler implements Service
 						{
 							if (pendingBlock.containsAtom(atomHash) == false)
 							{
-								PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomPool().get(atomHash);
+								PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomHandler().get(atomHash, CommitStatus.NONE);
 								if (pendingAtom != null)
 								{
 									pendingAtom.lock();
@@ -1120,7 +1120,7 @@ public class BlockHandler implements Service
 			if (pendingBlock.getHeader() == null)
 			{
 				pendingBlock.setHeader(header);
-				BlockHandler.this.context.getLedger().getLedgerStore().store(pendingBlock.getHeader());
+				BlockHandler.this.context.getLedger().getLedgerStore().store(BlockHandler.this.context.getLedger().getHead().getHeight(), pendingBlock.getHeader());
 				upsert = true;
 			}
 

@@ -58,6 +58,7 @@ import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Longs;
+import com.sleepycat.je.OperationStatus;
 
 public class SyncHandler implements Service
 {
@@ -817,6 +818,11 @@ public class SyncHandler implements Service
 					throw new ValidationException(this.context.getName()+": Pending atom "+certificate.getAtom()+" not found for certificate "+certificate.getHash()+" in block "+block.getHash());
 				
 				pendingAtom.setCertificate(certificate);
+				
+				this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), certificate);
+				for (StateCertificate stateCertificate : certificate.getAll())
+					this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), stateCertificate);
+				
 				atomCommitOperations.add(pendingAtom.getCommitOperation());
 				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
 				this.atoms.remove(pendingAtom.getHash());

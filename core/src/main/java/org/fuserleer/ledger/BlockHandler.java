@@ -1519,34 +1519,6 @@ public class BlockHandler implements Service
 							blocksLog.error(BlockHandler.this.context.getName()+": Failed to load state for block handler at height "+height, ex);
 						}
 					}
-					
-/*					try
-					{
-						// Look forward for any super blocks that weren't committed
-						List<Block> superBlocks = new ArrayList<Block>();
-						Hash nextBlock = BlockHandler.this.context.getLedger().getLedgerStore().getNext(BlockHandler.this.context.getLedger().getHead().getHash(), BlockHeader.class);
-						if (nextBlock != null)
-						{
-							do
-							{
-								Block block = BlockHandler.this.context.getLedger().getLedgerStore().get(nextBlock, Block.class);
-								if(block.getHeader().getCertificate() != null)
-									superBlocks.add(block);
-								
-								nextBlock = BlockHandler.this.context.getLedger().getLedgerStore().getNext(nextBlock, Block.class);
-							}
-							while(nextBlock != null);
-						}
-					}
-					catch (IOException ex)
-					{
-						blocksLog.error(BlockHandler.this.context.getName()+": Failed to load state for block handler at "+BlockHandler.this.context.getLedger().getHead(), ex);
-					}
-					
-					synchronized(BlockHandler.this.voteProcessor)
-					{
-						BlockHandler.this.voteProcessor.notify();
-					}*/
 				}
 				else
 				{

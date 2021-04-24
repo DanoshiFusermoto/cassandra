@@ -305,7 +305,7 @@ public final class StatePool implements Service
 				StateVote stateVote = (StateVote) object;
 				if (statePoolLog.hasLevel(Logging.DEBUG) == true)
 					statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" received for "+stateVote.getObject()+":"+stateVote.getAtom()+" by "+stateVote.getOwner());
-
+				
 				long numShardGroups = StatePool.this.context.getLedger().numShardGroups();
 				long localShardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), numShardGroups); 
 				long stateVoteShardGroup = ShardMapper.toShardGroup(stateVote.getOwner(), numShardGroups);
@@ -316,6 +316,17 @@ public final class StatePool implements Service
 					return;
 				}
 				
+				// Check existence of StateVote ... primary cause of this evaluating to true is that 
+				// the received StateVote is the local nodes.
+				// Syncing from a clean slate may result in the local node voting for a state in 
+				// the pool, not knowing it already voted previously until it receives the vote from
+				// a sync peer.  The duplicate will get caught in the votesToCountQueue processor
+				// outputting a lot of warnings which is undesirable.
+				if (StatePool.this.votesToCountDelayed.containsKey(stateVote.getHash()) == true || 
+					StatePool.this.votesToCountQueue.contains(stateVote.getHash()) == true || 
+					StatePool.this.context.getLedger().getLedgerStore().has(stateVote.getHash()) == true)
+					return;
+
 				if (stateVote.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight())
 				{
 					StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);

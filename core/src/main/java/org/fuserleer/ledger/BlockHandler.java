@@ -327,6 +327,10 @@ public class BlockHandler implements Service
 		this.currentVote = new AtomicReference<BlockHeader>();
 		this.buildBranch = null;
 		this.commitBranch = null;
+		
+//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -526,6 +530,16 @@ public class BlockHandler implements Service
 					return;
 				}
 				
+				// Check existence of BlockVote ... primary cause of this evaluating to true is that 
+				// the received BlockVote is the local nodes.
+				// Syncing from a clean slate may result in the local node voting for a block in 
+				// the pool, not knowing it already voted previously until it receives the vote from
+				// a sync peer.  The duplicate will get caught in the votesToCountQueue processor
+				// outputting a lot of warnings which is undesirable.
+				if (BlockHandler.this.votesToCountQueue.contains(blockVote.getHash()) == true || 
+					BlockHandler.this.context.getLedger().getLedgerStore().has(blockVote.getHash()) == true)
+					return;
+
 				BlockHandler.this.votesToCountQueue.put(blockVote.getHash(), blockVote);
 				synchronized(BlockHandler.this.voteProcessor)
 				{

@@ -120,7 +120,6 @@ public final class AtomPool implements Service
 									if (process(atomVote.getValue()) == true)
 									{
 										PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getValue().getAtom(), CommitStatus.NONE);
-											
 										if (pendingAtom != null)
 										{
 											if (pendingAtom.getStatus().greaterThan(CommitStatus.NONE) == true)
@@ -166,7 +165,7 @@ public final class AtomPool implements Service
 											if (process(atomVote) == true)
 											{
 												if (atomsLog.hasLevel(Logging.DEBUG))
-													atomsLog.debug(AtomPool.this.context.getName()+": Voted on atom "+atomVote.getHash());
+													atomsLog.debug(AtomPool.this.context.getName()+": Voted on atom "+atomVote.getAtom()+" with vote "+atomVote.getHash());
 											}
 										}
 										else
@@ -249,8 +248,8 @@ public final class AtomPool implements Service
 			location += BUCKET_SPAN;
 		}
 
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -312,10 +311,25 @@ public final class AtomPool implements Service
 				if (atomsLog.hasLevel(Logging.DEBUG) == true)
 					atomsLog.debug(AtomPool.this.context.getName()+": Atom vote received "+vote.getHash()+":"+vote.getAtom()+" for "+vote.getOwner());
 				
-				AtomPool.this.votesToCountQueue.put(vote.getHash(), vote);
-				synchronized(AtomPool.this.voteProcessor)
+				// Check existence of AtomVote ... primary cause of this evaluating to true is that 
+				// the received AtomVote is the local nodes.
+				// Syncing from a clean slate may result in the local node voting for an Atom in 
+				// the pool, not knowing it already voted previously until it receives the vote from
+				// a sync peer.  The duplicate will get caught in the votesToCountQueue processor
+				// outputting a lot of warnings which is undesirable.
+				if (AtomPool.this.votesToSyncQueue.contains(vote.getHash()) == true || 
+					AtomPool.this.votesToCountQueue.contains(vote.getHash()) == true || 
+					AtomPool.this.context.getLedger().getLedgerStore().has(vote.getHash()) == true)
+					return;
+
+				PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(vote.getAtom(), CommitStatus.NONE);
+				if (pendingAtom != null)
 				{
-					AtomPool.this.voteProcessor.notify();
+					AtomPool.this.votesToCountQueue.put(vote.getHash(), vote);
+					synchronized(AtomPool.this.voteProcessor)
+					{
+						AtomPool.this.voteProcessor.notify();
+					}
 				}
 			}
 		});

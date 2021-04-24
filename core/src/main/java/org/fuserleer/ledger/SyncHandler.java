@@ -835,6 +835,7 @@ public class SyncHandler implements Service
 					continue;
 			
 				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
+				this.context.getLedger().getLedgerStore().timedOut(pendingAtom.getHash());
 				atomsIterator.remove();
 			}
 		}
@@ -955,6 +956,16 @@ public class SyncHandler implements Service
 				{
 					if (pendingAtom.isProvisioned() == true)
 						continue;
+
+					// Atom certificates may have been loaded on sync event change
+					if (pendingAtom.getCertificate() != null)
+					{
+						for (StateCertificate stateCertificate : pendingAtom.getCertificate().getAll())
+							pendingAtom.provision(stateCertificate.getState(), stateCertificate.getInput());
+						
+						pendingAtom.execute();
+						continue;
+					}
 					
 					final Set<StateKey<?, ?>> stateKeysToProvision = new HashSet<StateKey<?, ?>>();
 					for (StateKey<?,?> stateKey : pendingAtom.getStateKeys())

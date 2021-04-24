@@ -113,7 +113,7 @@ public final class StateHandler implements Service
 				if (StateHandler.this.outboundProvisionRequests.remove(Hash.from(this.stateKey.get(), this.pendingAtom.getHash()), this) == true)
 				{
 					if (getPeer().getState().equals(PeerState.CONNECTED) || getPeer().getState().equals(PeerState.CONNECTING))
-						cerbyLog.error(StateHandler.this.context.getName()+": "+getPeer()+" did not respond to request for state "+this.stateKey+" in atom "+this.pendingAtom.getHash());
+						cerbyLog.warn(StateHandler.this.context.getName()+": "+getPeer()+" did not respond to request for state "+this.stateKey+" in atom "+this.pendingAtom.getHash());
 					
 					failedRequest = true;
 				}
@@ -439,10 +439,10 @@ public final class StateHandler implements Service
 		this.executionQueue = new LinkedBlockingQueue<PendingAtom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 		this.certificatesToProcessQueue = new MappedBlockingQueue<Hash, StateCertificate>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 
-		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL);
 //		stateLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
@@ -1178,7 +1178,7 @@ public final class StateHandler implements Service
 		return false;
 	}
 	
-	void add(final PendingAtom pendingAtom)
+	boolean add(final PendingAtom pendingAtom)
 	{
 		Objects.requireNonNull(pendingAtom, "Pending atom is null");
 		
@@ -1197,7 +1197,11 @@ public final class StateHandler implements Service
 					else if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 						cerbyLog.debug(this.context.getName()+": Added state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
 				}
+				
+				return true;
 			}
+			
+			return false;
 		}
 		finally
 		{
@@ -1466,7 +1470,7 @@ public final class StateHandler implements Service
 				if (event.isSynced() == true)
 				{
 					cerbyLog.info(StateHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known state handler state");
-/*					for (long height = Math.max(0, StateHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= StateHandler.this.context.getLedger().getHead().getHeight() ; height++)
+					for (long height = Math.max(0, StateHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= StateHandler.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try
 						{
@@ -1479,8 +1483,7 @@ public final class StateHandler implements Service
 									continue;
 								
 								pendingAtom.setCertificate(atomCertificate);
-								pendingAtom.setStatus(CommitStatus.PROVISIONING, CommitStatus.PROVISIONED);
-								pendingAtom.setStatus(CommitStatus.PROVISIONED, CommitStatus.EXECUTED);
+								atomCertificate.getAll().forEach(sc -> pendingAtom.addCertificate(sc));
 								add(pendingAtom);
 							}
 						}
@@ -1488,7 +1491,7 @@ public final class StateHandler implements Service
 						{
 							cerbyLog.error(StateHandler.this.context.getName()+": Failed to load atom certificate for state handler at height "+height, ex);
 						}
-					}*/
+					}
 					
 					for (long height = Math.max(0, StateHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= StateHandler.this.context.getLedger().getHead().getHeight() ; height++)
 					{
@@ -1498,14 +1501,15 @@ public final class StateHandler implements Service
 							for (Hash item : items)
 							{
 								StateCertificate stateCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateCertificate.class);
-								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(stateCertificate.getAtom(), CommitStatus.NONE);
+								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(stateCertificate.getAtom(), CommitStatus.ACCEPTED);
 								if (pendingAtom == null)
 									continue;
 								
-//								if (pendingAtom.getCertificate() != null)
-//									continue;
+								if (pendingAtom.getCertificate() != null)
+									continue;
 								
 								add(pendingAtom);
+									
 								CertificateStatus status = process(stateCertificate);
 								if (status == CertificateStatus.SKIPPED)
 								{

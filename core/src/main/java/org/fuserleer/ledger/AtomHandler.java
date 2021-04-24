@@ -607,7 +607,7 @@ public class AtomHandler implements Service
 							Collection<Hash> items = AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
 							for (Hash item : items)
 							{
-								PendingAtom pendingAtom = AtomHandler.this.get(item, CommitStatus.ACCEPTED);
+								PendingAtom pendingAtom = AtomHandler.this.get(item, CommitStatus.NONE);
 								if (pendingAtom == null)
 								{
 									Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);

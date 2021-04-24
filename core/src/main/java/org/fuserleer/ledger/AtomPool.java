@@ -935,11 +935,7 @@ public final class AtomPool implements Service
 					{
 						try
 						{
-							Collection<Hash> items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
-							for (Hash item : items)
-								AtomPool.this.context.getLedger().getAtomHandler().get(item, CommitStatus.NONE);
-							
-							items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class);
+							Collection<Hash> items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class);
 							for (Hash item : items)
 							{
 								AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);

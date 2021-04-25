@@ -72,6 +72,10 @@ public class Ledger extends Function
 			if (verbose) statePoolPending.forEach(p -> printStream.println(p.toString()));
 			printStream.println(statePoolPending.size()+" pending in state pool "+statePoolPending.stream().reduce((a, b) -> Hash.from(a,b)));
 			
+			Collection<Hash> stateInputsProvisioned = context.getLedger().getStateHandler().provisioned();
+			if (verbose) stateInputsProvisioned.forEach(p -> printStream.println(p.toString()));
+			printStream.println(stateInputsProvisioned.size()+" provisioned state inputs "+stateInputsProvisioned.stream().reduce((a, b) -> Hash.from(a,b)));
+
 			Collection<Hash> stateAccumulatorLocked = context.getLedger().getStateAccumulator().locked();
 			if (verbose) stateAccumulatorLocked.forEach(p -> printStream.println(p.toString()));
 			printStream.println(stateAccumulatorLocked.size()+" locked in accumulator "+stateAccumulatorLocked.stream().reduce((a, b) -> Hash.from(a,b)));

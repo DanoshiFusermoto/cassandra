@@ -261,6 +261,9 @@ public final class Context implements Service
 		this.metaData = new SystemMetaData(this);
 		this.network = new Network(this);
 		this.ledger = new Ledger(this);
+		
+		if (Boolean.parseBoolean(System.getProperty("testing.unit", "false")) == true)
+			node.setSynced(true);
 	}
 	
 	@Override

@@ -618,27 +618,20 @@ public class AtomHandler implements Service
 			{
 				if (event.isSynced() == true)
 				{
-/*					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom handler state");
+					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom handler state");
 					for (long height = Math.max(0, AtomHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= AtomHandler.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try
 						{
 							Collection<Hash> items = AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
 							for (Hash item : items)
-							{
-								PendingAtom pendingAtom = AtomHandler.this.get(item, CommitStatus.NONE);
-								if (pendingAtom == null)
-								{
-									Atom atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
-									submit(atom);
-								}
-							}
+								AtomHandler.this.get(item, CommitStatus.ACCEPTED);
 						}
 						catch (Exception ex)
 						{
 							atomsLog.error(AtomHandler.this.context.getName()+": Failed to load state for atom handler at height "+height, ex);
 						}
-					}*/
+					}
 				}
 				else
 				{

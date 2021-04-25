@@ -30,10 +30,6 @@ public final class StateCertificate extends VoteCertificate
 	@DsonOutput(Output.ALL)
 	private Hash block;
 
-	@JsonProperty("producer")
-	@DsonOutput(Output.ALL)
-	private BLSPublicKey producer;
-
 	@JsonProperty("atom")
 	@DsonOutput(Output.ALL)
 	private Hash atom;
@@ -53,6 +49,11 @@ public final class StateCertificate extends VoteCertificate
 	@JsonProperty("execution")
 	@DsonOutput(Output.ALL)
 	private Hash execution;
+
+	// FIXME need to implement some way to have agreement on producers as maybe weakly-subjective and dishonest actors can attempt to inject vote power
+	@JsonProperty("producer")
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	private BLSPublicKey producer;
 
 	// FIXME merkle and audit are for remote block proofing
 	//		 not included in certificate hash currently so that aggregated state vote signatures can be verified

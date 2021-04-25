@@ -58,7 +58,6 @@ import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Longs;
-import com.sleepycat.je.OperationStatus;
 
 public class SyncHandler implements Service
 {
@@ -989,17 +988,17 @@ public class SyncHandler implements Service
 					this.context.getLedger().getStateHandler().provision(pendingAtom, stateKeysToProvision);
 				}
 
-				// Tell all sync peers we're synced
-				for (ConnectedPeer syncPeer : syncPeers)
+				// Tell all peers we're synced
+				for (ConnectedPeer connectedPeer : this.context.getNetwork().get(StandardPeerFilter.build(this.context).setStates(PeerState.CONNECTED)))
 				{
 					try
 					{
 						NodeMessage nodeMessage = new NodeMessage(SyncHandler.this.context.getNode());
-						this.context.getNetwork().getMessaging().send(nodeMessage, syncPeer);
+						this.context.getNetwork().getMessaging().send(nodeMessage, connectedPeer);
 					}
 					catch (IOException ioex)
 					{
-						syncLog.error("Could not send synced declaration to "+syncPeer, ioex);
+						syncLog.error("Could not send synced declaration to "+connectedPeer, ioex);
 					}
 				}
 				

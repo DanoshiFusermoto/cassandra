@@ -214,6 +214,32 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 
 	// PRIMITIVES //
 	@SuppressWarnings("unchecked")
+	public OperationStatus delete(final Hash hash, final Class<? extends Primitive> primitive) throws IOException
+	{
+		try
+        {
+			DatabaseEntry key = new DatabaseEntry(hash.toByteArray());
+			
+			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || 
+				Vote.class.isAssignableFrom(primitive) == true || Certificate.class.isAssignableFrom(primitive) == true || 
+				StateInputs.class.isAssignableFrom(primitive) == true)
+			{
+				return this.primitives.delete(null, key);
+			}
+			else 
+				throw new IllegalArgumentException();
+        }
+		catch (Exception ex)
+		{
+			if (ex instanceof IOException)
+				throw ex;
+			else
+				throw new DatabaseException(ex);
+		}
+	}
+
+	
+	@SuppressWarnings("unchecked")
 	public <T extends Primitive> T get(final Hash hash, final Class<T> primitive) throws IOException
 	{
 		try

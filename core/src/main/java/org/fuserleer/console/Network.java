@@ -82,10 +82,11 @@ public class Network extends Function
 		{
 			// TODO paginate this
 			Collection<Peer> knownPeers = context.getNetwork().getPeerStore().get(0, Short.MAX_VALUE, new NotLocalPeersFilter(context.getNode()));
+			long numShardGroups = context.getLedger().numShardGroups();
 			for (Peer knownPeer : knownPeers)
-				printStream.println(knownPeer.toString());
+				printStream.println("S-"+(ShardMapper.toShardGroup(knownPeer.getNode().getIdentity(), numShardGroups))+" <- "+knownPeer.toString());
 		}
-		else if (commandLine.hasOption("known") == true)
+		else if (commandLine.hasOption("stats") == true)
 		{
 			printStream.println("Bandwidth:");
 			printStream.println("In bytes: "+context.getNetwork().getMessaging().getBytesIn());
@@ -101,6 +102,7 @@ public class Network extends Function
 		}
 		else
 		{
+			long numShardGroups = context.getLedger().numShardGroups();
 			long shardGroup = ShardMapper.toShardGroup(context.getNode().getIdentity(), context.getLedger().numShardGroups());
 			printStream.println("Sync:");
 			for (ConnectedPeer peer : context.getNetwork().get(StandardPeerFilter.build(context).setStates(PeerState.CONNECTED)))

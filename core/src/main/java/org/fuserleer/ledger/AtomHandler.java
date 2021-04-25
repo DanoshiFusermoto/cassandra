@@ -162,30 +162,7 @@ public class AtomHandler implements Service
 	@Override
 	public void start() throws StartupException 
 	{
-		// Prune atoms there were not accepted in atom pool
-		// TODO move this to AtomHandler
-		for (long height = Math.max(0, this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= this.context.getLedger().getHead().getHeight() ; height++)
-		{
-			try
-			{
-				Collection<Hash> items = this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
-				for (Hash item : items)
-				{
-					Commit atomCommit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, item));
-					if (atomCommit != null)
-						continue;
-
-					if (atomsLog.hasLevel(Logging.DEBUG) == true)
-						atomsLog.debug(this.context.getName()+": Pruning un-accepted atom "+item+" at inventory height "+height);
-					
-					this.context.getLedger().getLedgerStore().delete(item, Atom.class);
-				}
-			}
-			catch (Exception ex)
-			{
-				atomsLog.error(this.context.getName()+": Failed to prune un-accepted atoms at height "+height, ex);
-			}
-		}
+		prune();
 		
 		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipFilter(this.context) 
 		{
@@ -360,6 +337,33 @@ public class AtomHandler implements Service
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncChangeListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
+	}
+	
+	private void prune()
+	{
+		// Prune atoms there were not accepted in atom pool
+		for (long height = Math.max(0, this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= this.context.getLedger().getHead().getHeight() ; height++)
+		{
+			try
+			{
+				Collection<Hash> items = this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
+				for (Hash item : items)
+				{
+					Commit atomCommit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, item));
+					if (atomCommit != null)
+						continue;
+
+					if (atomsLog.hasLevel(Logging.DEBUG) == true)
+						atomsLog.debug(this.context.getName()+": Pruning un-accepted atom "+item+" at inventory height "+height);
+					
+					this.context.getLedger().getLedgerStore().delete(item, Atom.class);
+				}
+			}
+			catch (Exception ex)
+			{
+				atomsLog.error(this.context.getName()+": Failed to prune un-accepted atoms at height "+height, ex);
+			}
+		}
 	}
 	
 	public int numQueued()
@@ -619,6 +623,9 @@ public class AtomHandler implements Service
 				if (event.isSynced() == true)
 				{
 					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom handler state");
+					
+					prune();
+					
 					for (long height = Math.max(0, AtomHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= AtomHandler.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try

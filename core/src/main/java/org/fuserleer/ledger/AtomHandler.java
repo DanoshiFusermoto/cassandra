@@ -162,6 +162,31 @@ public class AtomHandler implements Service
 	@Override
 	public void start() throws StartupException 
 	{
+		// Prune atoms there were not accepted in atom pool
+		// TODO move this to AtomHandler
+		for (long height = Math.max(0, this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= this.context.getLedger().getHead().getHeight() ; height++)
+		{
+			try
+			{
+				Collection<Hash> items = this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
+				for (Hash item : items)
+				{
+					Commit atomCommit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, item));
+					if (atomCommit != null)
+						continue;
+
+					if (atomsLog.hasLevel(Logging.DEBUG) == true)
+						atomsLog.debug(this.context.getName()+": Pruning un-accepted atom "+item+" at inventory height "+height);
+					
+					this.context.getLedger().getLedgerStore().delete(item, Atom.class);
+				}
+			}
+			catch (Exception ex)
+			{
+				atomsLog.error(this.context.getName()+": Failed to prune un-accepted atoms at height "+height, ex);
+			}
+		}
+		
 		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipFilter(this.context) 
 		{
 			@Override
@@ -390,39 +415,33 @@ public class AtomHandler implements Service
 			if (pendingAtom != null)
 				return pendingAtom;
 			
-			Atom persistedAtom = null;
 			BlockHeader persistedBlock = null;
-			if (pendingAtom == null)
-			{
-				persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
-				if (condition.equals(CommitStatus.NONE) == true && persistedAtom != null)
-					return null;
+			final Atom persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
+			if (condition.equals(CommitStatus.NONE) == true && persistedAtom != null)
+				return null;
 
-				// This acts as a load, mainly for the sync transition to participation 
-				if (condition.equals(CommitStatus.ACCEPTED) == true)
-				{
-					Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom));
-					if (commit == null)
-						return null;
+			// This acts as a load, mainly for the sync transition to participation 
+			if (condition.equals(CommitStatus.ACCEPTED) == true)
+			{
+				Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom));
+				if (commit == null)
+					return null;
+				
+				if (commit.getPath().get(Elements.CERTIFICATE) != null)
+					return null;
 					
-					if (commit.getPath().get(Elements.CERTIFICATE) != null)
-						return null;
-						
-					if (commit.isTimedout() == true)
-						return null;
-						
-					persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
-					if (persistedAtom == null)
-						throw new IllegalStateException("Expected to find persisted atom "+atom+" for condition "+condition);
-						
-					persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
-					if (persistedBlock == null)
-						throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom+" for condition "+condition);
-				}
+				if (commit.isTimedout() == true)
+					return null;
+					
+				if (persistedAtom == null)
+					throw new IllegalStateException("Expected to find persisted atom "+atom+" for condition "+condition);
+
+				persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
+				if (persistedBlock == null)
+					throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom+" for condition "+condition);
 			}
 
 			pendingAtom = PendingAtom.create(this.context, atom);
-			
 			if (persistedAtom != null)
 			{
 				pendingAtom.setAtom(persistedAtom);
@@ -599,7 +618,7 @@ public class AtomHandler implements Service
 			{
 				if (event.isSynced() == true)
 				{
-					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom handler state");
+/*					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom handler state");
 					for (long height = Math.max(0, AtomHandler.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= AtomHandler.this.context.getLedger().getHead().getHeight() ; height++)
 					{
 						try
@@ -619,7 +638,7 @@ public class AtomHandler implements Service
 						{
 							atomsLog.error(AtomHandler.this.context.getName()+": Failed to load state for atom handler at height "+height, ex);
 						}
-					}
+					}*/
 				}
 				else
 				{

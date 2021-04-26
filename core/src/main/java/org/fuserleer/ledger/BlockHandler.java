@@ -37,7 +37,9 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
+import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.PendingBranch.Type;
+import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.BlockCommitEvent;
@@ -410,6 +412,10 @@ public class BlockHandler implements Service
 					if (push(blockHeader) == true)
 						BlockHandler.this.context.getNetwork().getGossipHandler().broadcast(blockHeader);
 				}
+				catch (ValidationException | CryptoException ex)
+				{
+					blocksLog.error(BlockHandler.this.context.getName()+": Validation of block header "+blockHeader+" failed", ex);
+				}
 				finally
 				{
 					BlockHandler.this.lock.writeLock().unlock();
@@ -725,7 +731,7 @@ public class BlockHandler implements Service
 		return this.pendingBlocks.size();
 	}
 	
-	private boolean push(final BlockHeader header) throws IOException
+	private boolean push(final BlockHeader header) throws IOException, ValidationException, CryptoException
 	{
 		Objects.requireNonNull(header, "Block header is null");
 		BlockHandler.this.lock.writeLock().lock();
@@ -741,15 +747,55 @@ public class BlockHandler implements Service
 			long localShardGroup = ShardMapper.toShardGroup(BlockHandler.this.context.getNode().getIdentity(), BlockHandler.this.context.getLedger().numShardGroups(header.getHeight()));
 			if (blockShardGroup != localShardGroup)
 			{
-				blocksLog.warn(BlockHandler.this.context.getName()+": Block header is for shard group "+blockShardGroup+" but expected local shard group "+localShardGroup);
+				blocksLog.warn(this.context.getName()+": Block header is for shard group "+blockShardGroup+" but expected local shard group "+localShardGroup);
 				// TODO disconnect and ban;
 				return false;
 			}
+			
+			if (header.verify(header.getOwner()) == false)
+				throw new ValidationException("Signature is invalid for block header "+header);
+
+			// Validate
+			for (Hash atomHash : header.getInventory(InventoryType.ATOMS))
+			{
+				PendingAtom pendingAtom = this.context.getLedger().getAtomHandler().get(atomHash);
+				if (pendingAtom != null)
+					continue;
+				
+				Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atomHash));
+				if (commit.isTimedout() == true)
+					throw new ValidationException("Atom "+atomHash+" is timed out in block "+header);
+				if (commit.getPath().get(Elements.BLOCK) != null)
+					throw new ValidationException("Atom "+atomHash+" is already accepted into block "+commit.getPath().get(Elements.BLOCK)+" but referenced in block "+header);
+				if (commit.getPath().get(Elements.CERTIFICATE) != null)
+					throw new ValidationException("Atom "+atomHash+" is already committed with certificate "+commit.getPath().get(Elements.CERTIFICATE)+" but referenced in block "+header);
+			}
+
+			// TODO validate certificates and referenced atoms
+			/*
+			for (Hash certificateHash : header.getInventory(InventoryType.CERTIFICATES))
+			{
+				AtomCertificate certificate = BlockHandler.this.context.getLedger().getStateHandler().getCertificate(certificateHash, AtomCertificate.class);
+				if (certificate != null)
+					continue;
+
+				PendingAtom pendingAtom = this.context.getLedger().getAtomHandler().get(certificate.g);
+				if (pendingAtom != null)
+					continue;
+				
+				Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atomHash));
+				if (commit.isTimedout() == true)
+					throw new ValidationException("Atom "+atomHash+" is timed out in block "+header);
+				if (commit.getPath().get(Elements.BLOCK) != null)
+					throw new ValidationException("Atom "+atomHash+" is already accepted into block "+commit.getPath().get(Elements.BLOCK)+" but referenced in block "+header);
+				if (commit.getPath().get(Elements.CERTIFICATE) != null)
+					throw new ValidationException("Atom "+atomHash+" is already committed with certificate "+commit.getPath().get(Elements.CERTIFICATE)+" but referenced in block "+header);
+			}*/
 					
 			if (blocksLog.hasLevel(Logging.DEBUG) == true)
-				blocksLog.debug(BlockHandler.this.context.getName()+": Block header "+header.getHash());
+				blocksLog.debug(this.context.getName()+": Block header "+header.getHash());
 						
-			return BlockHandler.this.upsertBlock(header);
+			return this.upsertBlock(header);
 		}
 		finally
 		{
@@ -833,7 +879,7 @@ public class BlockHandler implements Service
 		return branchVotes;
 	}
 	
-	private PendingBlock build(final BlockHeader head, final PendingBranch branch) throws IOException
+	private PendingBlock build(final BlockHeader head, final PendingBranch branch) throws IOException, CryptoException
 	{
 		final Set<Hash> branchCertificateExclusions = (branch == null || branch.isEmpty() == true) ? Collections.emptySet() : new HashSet<Hash>();
 		if (branch != null && branch.isEmpty() == false)
@@ -960,7 +1006,10 @@ public class BlockHandler implements Service
 		}
 		
 		if (strongestBlock != null)
+		{
+			strongestBlock.getHeader().sign(this.context.getNode().getKeyPair());
 			this.context.getLedger().getLedgerStore().store(strongestBlock.getBlock());
+		}
 		
 		return strongestBlock;
 	}
@@ -1053,7 +1102,7 @@ public class BlockHandler implements Service
 						{
 							if (pendingBlock.containsAtom(atomHash) == false)
 							{
-								PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomHandler().get(atomHash, CommitStatus.NONE);
+								PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomHandler().get(atomHash);
 								if (pendingAtom != null)
 								{
 									pendingAtom.lock();
@@ -1503,8 +1552,15 @@ public class BlockHandler implements Service
 								
 								BlockHandler.this.push(blockHeader);
 							}
-							
-							items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class);
+						}
+						catch (IOException | ValidationException | CryptoException ex)
+						{
+							blocksLog.error(BlockHandler.this.context.getName()+": Failed to load block headers state for block handler at height "+height, ex);
+						}
+						
+						try
+						{
+							Collection<Hash> items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class);
 							for (Hash item : items)
 							{
 								BlockVote blockVote = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockVote.class);
@@ -1516,7 +1572,7 @@ public class BlockHandler implements Service
 						}
 						catch (IOException ex)
 						{
-							blocksLog.error(BlockHandler.this.context.getName()+": Failed to load state for block handler at height "+height, ex);
+							blocksLog.error(BlockHandler.this.context.getName()+": Failed to load block vote state for block handler at height "+height, ex);
 						}
 					}
 				}

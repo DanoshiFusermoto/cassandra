@@ -627,7 +627,7 @@ public class PendingBranch
 				}
 			}
 			
-			return null;
+			return highestSuper;
 		}
 		finally
 		{
@@ -661,7 +661,7 @@ public class PendingBranch
 				{
 					PendingAtom pendingAtom = block.getAtom(certificate.getAtom());
 					if (pendingAtom == null)
-						pendingAtom = PendingBranch.this.context.getLedger().getAtomHandler().get(certificate.getAtom(), CommitStatus.NONE);
+						pendingAtom = PendingBranch.this.context.getLedger().getAtomHandler().get(certificate.getAtom());
 					if (pendingAtom == null)
 						throw new IllegalStateException("Pending atom "+certificate.getAtom()+" referenced in certificate not found for state unlock");
 					

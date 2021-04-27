@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -84,7 +85,10 @@ public final class Path
 			else
 				elements.put(element, endpoint);
 		}
-		return new Path(endpoint, elements);
+		if (elements.isEmpty() == true)
+			return new Path(endpoint);
+		else
+			return new Path(endpoint, elements);
 	}
 	
 	// Placeholder for the serializer ID
@@ -101,9 +105,13 @@ public final class Path
 	@JsonDeserialize(as=LinkedHashMap.class)
 	private Map<Elements, Hash> elements;
 	
-	Path()
+	Path(final Hash endpoint)
 	{
-		// FOR SERIALIZER
+		Objects.requireNonNull(endpoint, "Endpoint is null");
+		Hash.notZero(endpoint, "Endpoint is ZERO");
+
+		this.elements = Collections.emptyMap();
+		this.endpoint = endpoint;
 	}
 	
 	Path(final Hash endpoint, final Map<Elements, Hash> elements)

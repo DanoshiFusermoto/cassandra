@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.SerializerConstants;
@@ -33,7 +34,8 @@ public final class Commit
 		dis.read(pathBytes);
 		Path path = Path.from(pathBytes);
 		
-		boolean timedout = dis.readBoolean();
+		boolean acceptTimedout = dis.readBoolean();
+		boolean commitTimedout = dis.readBoolean();
 		long timestamp = dis.readLong();
 		
 		int auditSize = dis.readShort();
@@ -49,7 +51,10 @@ public final class Commit
 			}
 		}
 		
-		return new Commit(index, path, audit, timestamp, timedout);
+		if (index == -1)
+			return new Commit(path.endpoint(), timestamp);
+		else
+			return new Commit(index, path, audit, timestamp, acceptTimedout, commitTimedout);
 	}
 
 	// Placeholder for the serializer ID
@@ -69,35 +74,49 @@ public final class Commit
 	@DsonOutput(Output.ALL)
 	private long timestamp;
 
-	// FIXME this is a massive fudge for now until timeout certificates are implemented
-	@JsonProperty("timedout")
+	@JsonProperty("accept_timedout")
 	@DsonOutput(Output.ALL)
-	private boolean timedout;
+	private boolean acceptTimedout;
+
+	@JsonProperty("commit_timedout")
+	@DsonOutput(Output.ALL)
+	private boolean commitTimedout;
 
 	@JsonProperty("merkle_proof")
 	@DsonOutput(Output.ALL)
 	private List<MerkleProof> merkleProof;
 	
-	@SuppressWarnings("unused")
 	private Commit()
 	{
 		// FOR SERIALIZER
 		this.merkleProof = Collections.emptyList();
 	}
 
-	public Commit(final long index, final Path path, final List<MerkleProof> merkleProof, final long timestamp, final boolean timedout)
+	public Commit(final Hash endpoint, final long timestamp)
+	{
+		this();
+		Numbers.isNegative(timestamp, "Timestamp is negative");
+		
+		this.index = -1;
+		this.path = new Path(endpoint);
+		this.commitTimedout = false;
+		this.acceptTimedout = false;
+		this.timestamp = timestamp;
+		this.merkleProof = Collections.emptyList();
+	}
+
+	public Commit(final long index, final Path path, final List<MerkleProof> merkleProof, final long timestamp, final boolean acceptTimedout, final boolean commitTimedout)
 	{
 		Objects.requireNonNull(path);
 		Objects.requireNonNull(merkleProof);
 		Numbers.isNegative(index , "Index is negative");
 		Numbers.isNegative(timestamp, "Timestamp is negative");
-//		if (merkleProof.isEmpty() == true)
-//			throw new IllegalArgumentException("Merkle proof is empty");
 		
 		this.index = index;
 		this.path = path;
 		this.merkleProof = new ArrayList<MerkleProof>(merkleProof);
-		this.timedout = timedout;
+		this.acceptTimedout = acceptTimedout;
+		this.commitTimedout = commitTimedout;
 		this.timestamp = timestamp;
 	}
 	
@@ -135,14 +154,24 @@ public final class Commit
 		return this.index;
 	}
 	
-	public boolean isTimedout()
+	public boolean isAcceptTimedout()
 	{
-		return this.timedout;
+		return this.acceptTimedout;
 	}
 	
-	void setTimedOut()
+	void setAcceptTimedOut()
 	{
-		this.timedout = true;
+		this.acceptTimedout = true;
+	}
+
+	public boolean isCommitTimedout()
+	{
+		return this.commitTimedout;
+	}
+	
+	void setCommitTimedOut()
+	{
+		this.commitTimedout = true;
 	}
 
 	public long getTimestamp()
@@ -179,7 +208,10 @@ public final class Commit
 			if (this.index != ((Commit)other).index)
 				return false;
 
-			if (this.timedout != ((Commit)other).timedout)
+			if (this.acceptTimedout != ((Commit)other).acceptTimedout)
+				return false;
+
+			if (this.commitTimedout != ((Commit)other).commitTimedout)
 				return false;
 
 			if (this.timestamp != ((Commit)other).timestamp)
@@ -200,7 +232,7 @@ public final class Commit
 	@Override
 	public String toString()
 	{
-		return this.index+" "+this.path+" "+" "+this.timestamp+":"+this.timedout+" "+this.merkleProof;
+		return this.index+" "+this.path+" "+" "+this.timestamp+" "+this.acceptTimedout+":"+this.commitTimedout+" "+this.merkleProof;
 	}
 	
 	public final byte[] toByteArray() throws IOException
@@ -212,7 +244,8 @@ public final class Commit
 		byte[] pathBytes = this.path.toByteArray();
 		dos.writeShort(pathBytes.length);
 		dos.write(pathBytes);
-		dos.writeBoolean(this.timedout);
+		dos.writeBoolean(this.acceptTimedout);
+		dos.writeBoolean(this.commitTimedout);
 		dos.writeLong(this.timestamp);
 		
 		int auditSize = this.merkleProof.size();

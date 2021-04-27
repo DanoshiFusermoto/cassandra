@@ -123,8 +123,8 @@ abstract class Vote<T, KP extends KeyPair<?, K, S>, K extends PublicKey, S exten
 		return this.signature;
 	}
 	
-	public String toString()
+	public final String toString()
 	{
-		return super.toString()+" "+this.owner;
+		return super.toString()+" "+this.getObject()+" <- "+this.owner;
 	}
 }

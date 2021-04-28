@@ -119,7 +119,7 @@ public final class AtomPool implements Service
 									
 									if (process(atomVote.getValue()) == true)
 									{
-										PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getValue().getAtom(), CommitStatus.NONE);
+										PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getValue().getAtom());
 										if (pendingAtom != null)
 										{
 											if (pendingAtom.getStatus().greaterThan(CommitStatus.NONE) == true)
@@ -248,8 +248,8 @@ public final class AtomPool implements Service
 			location += BUCKET_SPAN;
 		}
 
-		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -262,7 +262,7 @@ public final class AtomPool implements Service
 			public Set<Long> filter(Primitive object) throws Throwable
 			{
 				Set<Long> shardGroups = new HashSet<Long>();
-				PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(((AtomVote)object).getAtom(), CommitStatus.NONE);
+				PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(((AtomVote)object).getAtom());
 				shardGroups.addAll(ShardMapper.toShardGroups(pendingAtom.getShards(), AtomPool.this.context.getLedger().numShardGroups()));
 				return shardGroups;
 			}
@@ -322,7 +322,7 @@ public final class AtomPool implements Service
 					AtomPool.this.context.getLedger().getLedgerStore().has(vote.getHash()) == true)
 					return;
 
-				PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(vote.getAtom(), CommitStatus.NONE);
+				PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(vote.getAtom());
 				if (pendingAtom != null)
 				{
 					AtomPool.this.votesToCountQueue.put(vote.getHash(), vote);
@@ -415,7 +415,7 @@ public final class AtomPool implements Service
 		PendingAtom pendingAtom = null;
 		try
 		{
-			pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom(), CommitStatus.NONE);
+			pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
 			if (pendingAtom == null)
 			{
 				// Pending atom null is likely the atom has already been committed / timedout
@@ -862,24 +862,6 @@ public final class AtomPool implements Service
 						continue;
 					}
 				}
-				
-				// Timeout atoms on progress
-				// Don't process timeouts until after the entire branch has been committed as 
-				// pending atoms that would timeout may be committed somewhere on the branch ahead of this commit.
-				// TODO atoms should be witnessed and timedout based on agreed ledger time
-				long systemTime = Time.getSystemTime();
-				List<AtomDiscardedEvent> timedout = new ArrayList<AtomDiscardedEvent>();
-				for (PendingAtom pendingAtom : AtomPool.this.pending.values())
-				{
-					if (pendingAtom.lockCount() == 0 && systemTime > pendingAtom.getInclusionTimeout() && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
-						timedout.add(new AtomDiscardedEvent(pendingAtom, "Timed out"));
-				}
-				
-				if (timedout.isEmpty() == false)
-					timedout.forEach(ade -> 
-					{
-						AtomPool.this.context.getEvents().post(ade);	// TODO ensure no synchronous event processing happens on this!
-					});
 			}
 			finally
 			{
@@ -900,24 +882,7 @@ public final class AtomPool implements Service
 		@Subscribe
 		public void on(AtomExceptionEvent event)
 		{
-			if (event.getException() instanceof StateLockedException)
-			{
-				PendingAtom pendingAtom = AtomPool.this.pending.get(event.getAtom().getHash());
-				if (pendingAtom == null)
-					return;
-				
-				pendingAtom.setInclusionDelay(Math.max(TimeUnit.SECONDS.toMillis(10), pendingAtom.getInclusionDelay() * 2));
-				
-				if (Time.getSystemTime() > pendingAtom.getInclusionTimeout())
-				{
-					if (AtomPool.this.remove(event.getAtom().getHash()) != null)
-						AtomPool.this.context.getEvents().post(new AtomDiscardedEvent(event.getPendingAtom(), event.getException().getMessage()));
-					
-					return;
-				}
-			}
-			else
-				AtomPool.this.remove(event.getAtom().getHash());
+			AtomPool.this.remove(event.getAtom().getHash());
 		}
 
 		@Subscribe
@@ -953,8 +918,12 @@ public final class AtomPool implements Service
 							for (Hash item : items)
 							{
 								AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);
-								if (AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom(), CommitStatus.NONE) != null)
-									AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
+								PendingAtom atom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
+								if (atom == null || atom.getBlock() != null)
+									continue;
+
+								AtomPool.this.add(atom);
+								AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
 							}
 						}
 						catch (Exception ex)

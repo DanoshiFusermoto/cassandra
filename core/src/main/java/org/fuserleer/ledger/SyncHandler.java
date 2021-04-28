@@ -12,7 +12,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.Map.Entry;
 import java.util.NavigableSet;
@@ -52,7 +51,6 @@ import org.fuserleer.network.peers.events.PeerConnectedEvent;
 import org.fuserleer.network.peers.events.PeerDisconnectedEvent;
 import org.fuserleer.network.peers.filters.StandardPeerFilter;
 import org.fuserleer.node.Node;
-import org.fuserleer.utils.UInt256;
 
 import com.google.common.collect.Ordering;
 import com.google.common.collect.TreeMultimap;
@@ -506,7 +504,7 @@ public class SyncHandler implements Service
 	
 						// TODO need a block validation / verification processor
 	
-						SyncHandler.this.context.getLedger().getLedgerStore().store(syncBlockMessage.getBlock());
+						SyncHandler.this.context.getLedger().getLedgerStore().store(SyncHandler.this.context.getLedger().getHead().getHeight(), syncBlockMessage.getBlock());
 						SyncHandler.this.blocks.put(syncBlockMessage.getBlock().getHash(), syncBlockMessage.getBlock());
 						SyncHandler.this.blocksRequested.remove(syncBlockMessage.getBlock().getHash());
 					}
@@ -767,9 +765,6 @@ public class SyncHandler implements Service
 		while(blockIterator.hasNext() == true)
 		{
 			Block block = blockIterator.next();
-			this.context.getLedger().getLedgerStore().commit(block);
-			committedBlocks.add(block);
-
 			// Provision any missing atoms required by certificates
 			for (AtomCertificate certificate : block.getCertificates())
 			{
@@ -807,6 +802,9 @@ public class SyncHandler implements Service
 				pendingAtom.accepted();
 				pendingAtom.provision(block.getHeader());
 			}
+			
+			this.context.getLedger().getLedgerStore().commit(block);
+			committedBlocks.add(block);
 
 			//  Process certificates contained in block
 			final List<CommitOperation> atomCommitOperations = new ArrayList<CommitOperation>();
@@ -820,7 +818,12 @@ public class SyncHandler implements Service
 				
 				this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), certificate);
 				for (StateCertificate stateCertificate : certificate.getAll())
+				{
 					this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), stateCertificate);
+					StateInput stateInput = new StateInput(stateCertificate.getBlock(), stateCertificate.getAtom(), stateCertificate.getState(), stateCertificate.getInput());
+					if (this.context.getLedger().getLedgerStore().has(stateInput.getHash()) == false)
+						this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), stateInput);
+				}
 				
 				atomCommitOperations.add(pendingAtom.getCommitOperation());
 				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
@@ -840,7 +843,7 @@ public class SyncHandler implements Service
 					continue;
 			
 				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
-				this.context.getLedger().getLedgerStore().timedOut(pendingAtom.getHash());
+				this.context.getLedger().getLedgerStore().commitTimedOut(pendingAtom.getHash());
 				atomsIterator.remove();
 			}
 		}
@@ -936,18 +939,13 @@ public class SyncHandler implements Service
 				// Determine which pending atoms have been provisioned and can be executed
 				for (PendingAtom pendingAtom : pendingAtoms)
 				{
-					final StateInputs stateInputs = this.context.getLedger().getLedgerStore().get(new StateAddress(StateInputs.class, pendingAtom.getHash()).get(), StateInputs.class);
-					if (stateInputs == null || stateInputs.getBlock().equals(pendingAtom.getBlock()) == false)
-						continue;
-
 					for (StateKey<?,?> stateKey : pendingAtom.getStateKeys())
 					{
-						Optional<UInt256> value = stateInputs.getInput(stateKey);
-						// Partial provision?
-						if (value == null)
+						final StateInput stateInput = this.context.getLedger().getLedgerStore().get(Hash.from(pendingAtom.getHash(), stateKey.get()), StateInput.class);
+						if (stateInput == null)
 							continue;
-						
-						pendingAtom.provision(stateKey, value.orElse(null));
+
+						pendingAtom.provision(stateKey, stateInput.getValue());
 					}
 					
 					if (pendingAtom.isProvisioned() == true)
@@ -959,14 +957,15 @@ public class SyncHandler implements Service
 				// Finally signal provisioning of atom state inputs
 				for (PendingAtom pendingAtom : pendingAtoms)
 				{
-					if (pendingAtom.isProvisioned() == true)
+					boolean provisioned = pendingAtom.isProvisioned();
+					if (provisioned == true)
 						continue;
 
 					// Atom certificates may have been loaded on sync event change
 					if (pendingAtom.getCertificate() != null)
 					{
 						for (StateCertificate stateCertificate : pendingAtom.getCertificate().getAll())
-							pendingAtom.provision(stateCertificate.getState(), stateCertificate.getInput());
+							provisioned = pendingAtom.provision(stateCertificate.getState(), stateCertificate.getInput());
 						
 						pendingAtom.execute();
 						continue;
@@ -982,10 +981,11 @@ public class SyncHandler implements Service
 						if (stateCertificate == null)
 							stateKeysToProvision.add(stateKey);
 						else
-							pendingAtom.provision(stateKey, stateCertificate.getInput());
+							provisioned = pendingAtom.provision(stateKey, stateCertificate.getInput());
 					}
 					
-					this.context.getLedger().getStateHandler().provision(pendingAtom, stateKeysToProvision);
+					if (provisioned == false)
+						this.context.getLedger().getStateHandler().provision(pendingAtom, stateKeysToProvision);
 				}
 
 				// Tell all peers we're synced

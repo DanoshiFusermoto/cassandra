@@ -17,6 +17,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -106,7 +107,12 @@ public final class StatePool implements Service
 									
 									StateVoteStatus status = process(stateVote.getValue());
 									if (status == StateVoteStatus.SUCCESS)
+									{
+										if (statePoolLog.hasLevel(Logging.DEBUG) == true)
+											statePoolLog.debug(StatePool.this.context.getName()+": Processed state vote "+stateVote.getValue().getHash()+" for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
+
 										stateVotesToBroadcast.add(stateVote.getValue());
+									}
 									else if (status == StateVoteStatus.SKIPPED)
 									{
 										if (statePoolLog.hasLevel(Logging.DEBUG) == true)
@@ -135,7 +141,7 @@ public final class StatePool implements Service
 							{
 								try
 								{
-									PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(pendingState.getAtom(), CommitStatus.NONE);
+									PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(pendingState.getAtom());
 									if (pendingAtom == null)
 									{
 										statePoolLog.error(StatePool.this.context.getName()+": Pending atom "+pendingState.getAtom()+" for pending state "+pendingState.getKey()+" not found");
@@ -240,8 +246,8 @@ public final class StatePool implements Service
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, StateVote>(this.context.getConfiguration().get("ledger.state.queue", 1<<20));
 		this.votesToCountDelayed = Collections.synchronizedMap(new HashMap<Hash, StateVote>());
 		
-		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		statePoolLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -385,6 +391,17 @@ public final class StatePool implements Service
 					@Override
 					public void execute()
 					{
+						long numShardGroups = StatePool.this.context.getLedger().numShardGroups();
+						long localShardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), numShardGroups);
+						long remoteShardGroup = ShardMapper.toShardGroup(peer.getNode().getIdentity(), numShardGroups);
+
+						if (remoteShardGroup != localShardGroup)
+						{
+							statePoolLog.error(StatePool.this.context.getName()+": Received SyncAcquiredMessage from "+peer+" in shard group "+remoteShardGroup+" but local is "+localShardGroup);
+							// Disconnect and ban?
+							return;
+						}
+						
 						StatePool.this.lock.readLock().lock();
 						try
 						{
@@ -458,6 +475,21 @@ public final class StatePool implements Service
 		try
 		{
 			List<Hash> pending = new ArrayList<Hash>(this.states.keySet());
+			Collections.sort(pending);
+			return pending;
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+	}
+
+	public Collection<Hash> votes()
+	{
+		this.lock.readLock().lock();
+		try
+		{
+			List<Hash> pending = new ArrayList<Hash>(this.states.values().stream().flatMap(s -> s.votes().stream()).map(sv -> sv.getHash()).collect(Collectors.toList()));
 			Collections.sort(pending);
 			return pending;
 		}
@@ -690,7 +722,7 @@ public final class StatePool implements Service
 		try
 		{
 			Hash stateAtomBlockHash = Hash.from(stateVote.getState().get(), stateVote.getAtom(), stateVote.getBlock());
-			pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom(), CommitStatus.ACCEPTED);
+			pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
 			if (pendingAtom == null)
 			{
 				Commit commit = StatePool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateVote.getAtom()));
@@ -864,7 +896,7 @@ public final class StatePool implements Service
 					Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>();
 					for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
 					{
-						PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(atom.getHash(), CommitStatus.NONE);
+						PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(atom.getHash());
 						if (pendingAtom == null)
 						{
 							statePoolLog.warn(StatePool.this.context.getName()+": Pending atom "+atom.getHash()+" state appears invalid.");
@@ -928,7 +960,7 @@ public final class StatePool implements Service
 							for (Hash item : items)
 							{
 								StateVote stateVote = StatePool.this.context.getLedger().getLedgerStore().get(item, StateVote.class);
-								PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom(), CommitStatus.ACCEPTED);
+								PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().load(stateVote.getAtom());
 								if (pendingAtom == null)
 									continue;
 								

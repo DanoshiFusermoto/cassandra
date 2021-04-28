@@ -67,14 +67,18 @@ public class Ledger extends Function
 			Collection<Hash> stateHandlerPending = context.getLedger().getStateHandler().pending();
 			if (verbose) stateHandlerPending.forEach(p -> printStream.println(p.toString()));
 			printStream.println(stateHandlerPending.size()+" pending in state handler "+stateHandlerPending.stream().reduce((a, b) -> Hash.from(a,b)));
+
+			Collection<Hash> stateHandlerCertificates = context.getLedger().getStateHandler().certificates();
+			if (verbose) stateHandlerCertificates.forEach(p -> printStream.println(p.toString()));
+			printStream.println(stateHandlerCertificates.size()+" certificates in state handler "+stateHandlerCertificates.stream().reduce((a, b) -> Hash.from(a,b)));
 			
 			Collection<Hash> statePoolPending = context.getLedger().getStatePool().pending();
 			if (verbose) statePoolPending.forEach(p -> printStream.println(p.toString()));
 			printStream.println(statePoolPending.size()+" pending in state pool "+statePoolPending.stream().reduce((a, b) -> Hash.from(a,b)));
 			
-			Collection<Hash> stateInputsProvisioned = context.getLedger().getStateHandler().provisioned();
-			if (verbose) stateInputsProvisioned.forEach(p -> printStream.println(p.toString()));
-			printStream.println(stateInputsProvisioned.size()+" provisioned state inputs "+stateInputsProvisioned.stream().reduce((a, b) -> Hash.from(a,b)));
+			Collection<Hash> statePoolVotes = context.getLedger().getStatePool().votes();
+			if (verbose) statePoolVotes.forEach(p -> printStream.println(p.toString()));
+			printStream.println(statePoolVotes.size()+" votes in state pool "+statePoolVotes.stream().reduce((a, b) -> Hash.from(a,b)));
 
 			Collection<Hash> stateAccumulatorLocked = context.getLedger().getStateAccumulator().locked();
 			if (verbose) stateAccumulatorLocked.forEach(p -> printStream.println(p.toString()));

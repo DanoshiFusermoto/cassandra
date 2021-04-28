@@ -21,6 +21,7 @@ import org.fuserleer.exceptions.QueueFullException;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executable;
+import org.fuserleer.ledger.messages.SyncAcquiredMessage;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.network.messages.HandshakeMessage;
@@ -197,6 +198,15 @@ public class Messaging
 						}
 					}
 					
+					// Handle this here directly to ensure that any processors that might reference 
+					// the node object know the sync status is updated
+					if (inboundMessage.getMessage() instanceof SyncAcquiredMessage)
+					{
+						inboundMessage.getPeer().getNode().setHead(((SyncAcquiredMessage)inboundMessage.getMessage()).getHead());
+						inboundMessage.getPeer().getNode().setSynced(true);
+						messagingLog.info(Messaging.this.context.getName()+": Received SyncAcquiredMessage with block header "+((SyncAcquiredMessage)inboundMessage.getMessage()).getHead()+" for "+inboundMessage.getPeer());
+					}
+					
 					// FIXME why is this failing??
 					if (inboundMessage.getMessage().verify(inboundMessage.getPeer().getEphemeralRemotePublicKey()) == false)
 					{
@@ -319,7 +329,7 @@ public class Messaging
 		this.sent = Collections.synchronizedMap(new HashMap<Class<?>, AtomicLong>());
 
 		// GOT IT!
-		messagingLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.WARN);
+		messagingLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
 	}
 
 	public void start() throws StartupException

@@ -223,7 +223,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			
 			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || 
 				Vote.class.isAssignableFrom(primitive) == true || Certificate.class.isAssignableFrom(primitive) == true || 
-				StateInputs.class.isAssignableFrom(primitive) == true)
+				StateInput.class.isAssignableFrom(primitive) == true)
 			{
 				return this.primitives.delete(null, key);
 			}
@@ -250,7 +250,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			
 			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || 
 				Vote.class.isAssignableFrom(primitive) == true || Certificate.class.isAssignableFrom(primitive) == true || 
-				StateInputs.class.isAssignableFrom(primitive) == true)
+				StateInput.class.isAssignableFrom(primitive) == true)
 			{
 				OperationStatus status = this.primitives.get(null, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -579,33 +579,22 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    return OperationStatus.SUCCESS;
 	}
 
-	final OperationStatus store(final StateInputs stateInputs) throws IOException 
+	final OperationStatus store(final long height, final StateInput stateInput) throws IOException 
 	{
-		Objects.requireNonNull(stateInputs, "State inputs is null");
+		Objects.requireNonNull(stateInput, "State input is null");
 		
 		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
 		try 
 		{
-			DatabaseEntry key = new DatabaseEntry(stateInputs.getHash().toByteArray());
-			DatabaseEntry value = new DatabaseEntry(Serialization.getInstance().toDson(stateInputs, DsonOutput.Output.PERSIST));
-			boolean overwrite = false;
-			OperationStatus status = this.primitives.get(transaction, key, null, LockMode.RMW); 
-			if (status.equals(OperationStatus.KEYEXIST) == true)
-			{
-				overwrite = true;
-	    		databaseLog.warn(this.context.getName()+": State inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" are being overwritten");
-			}
-
-			status = this.primitives.put(transaction, key, value);
+			DatabaseEntry key = new DatabaseEntry(stateInput.getHash().toByteArray());
+			DatabaseEntry value = new DatabaseEntry(Serialization.getInstance().toDson(stateInput, DsonOutput.Output.PERSIST));
+			OperationStatus status = this.primitives.putNoOverwrite(transaction, key, value);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
-	    		throw new DatabaseException("Failed to store state inputs for atom "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" due to "+status.name());
+	    		throw new DatabaseException("Failed to store state input "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom()+" due to "+status.name());
 
-		    if (overwrite == false)
-		    {
-				status = storeSyncInventory(transaction, Longs.fromByteArray(stateInputs.getBlock().toByteArray()), stateInputs.getHash(), StateInputs.class);
-			    if (status.equals(OperationStatus.SUCCESS) == false) 
-		    		throw new DatabaseException("Failed to store state inputs for "+stateInputs.getAtom()+" in block "+stateInputs.getBlock()+" in sync inventory due to "+status.name());
-		    }
+			status = storeSyncInventory(transaction, height, stateInput.getHash(), StateInput.class);
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+	    		throw new DatabaseException("Failed to store sync inventory state input for "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom()+" due to "+status.name());
 		    
 		    transaction.commit();
 		    return OperationStatus.SUCCESS;

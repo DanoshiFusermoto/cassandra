@@ -1,11 +1,6 @@
 package org.fuserleer.ledger;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
@@ -14,15 +9,12 @@ import org.fuserleer.serialization.SerializerConstants;
 import org.fuserleer.serialization.SerializerDummy;
 import org.fuserleer.serialization.SerializerId2;
 import org.fuserleer.serialization.DsonOutput.Output;
-import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.state.inputs")
-class StateInputs implements Primitive
+class StateInput implements Primitive
 {
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
@@ -37,22 +29,23 @@ class StateInputs implements Primitive
 	@DsonOutput(Output.ALL)
 	private Hash atom;
 		
-	@JsonProperty("inputs")
-	@JsonInclude(Include.ALWAYS)
+	@JsonProperty("key")
 	@DsonOutput(Output.ALL)
-	private Map<Hash, Optional<UInt256>> inputs;
+	private StateKey<?, ?> key;
 	
+	@JsonProperty("value")
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	private UInt256 value;
 	
 	@SuppressWarnings("unused")
-	private StateInputs()
+	private StateInput()
 	{
 		// FOR SERIALIZER
 	}
 	
-	StateInputs(final Hash block, final Hash atom, final Map<StateKey<?, ?>, Optional<UInt256>> inputs)
+	StateInput(final Hash block, final Hash atom, final StateKey<?, ?> key, final UInt256 value)
 	{
-		Objects.requireNonNull(inputs, "State inputs is null");
-		Numbers.isZero(inputs.size(), "State inputs is empty");
+		Objects.requireNonNull(key, "State key is null");
 		Objects.requireNonNull(atom, "Atom is null");
 		Hash.notZero(atom, "Atom hash is zero");
 		Objects.requireNonNull(block, "Block is null");
@@ -60,13 +53,14 @@ class StateInputs implements Primitive
 
 		this.atom = atom;
 		this.block = block;
-		this.inputs = inputs.entrySet().stream().collect(Collectors.toMap(e -> e.getKey().get(), e -> e.getValue()));
+		this.key = key;
+		this.value = value;
 	}
 	
 	@Override
 	public Hash getHash()
 	{
-		return new StateAddress(StateInputs.class, this.atom).get();
+		return Hash.from(this.atom, this.key.get());
 	}
 
 	public Hash getBlock()
@@ -79,14 +73,13 @@ class StateInputs implements Primitive
 		return this.atom;
 	}
 	
-	public Optional<UInt256> getInput(final StateKey<?, ?> stateKey)
+	public StateKey<?, ?> getKey()
 	{
-		Objects.requireNonNull(stateKey, "State key is null");
-		return this.inputs.getOrDefault(stateKey.get(), null);
+		return this.key;
 	}
 
-	public boolean isEmpty()
+	public UInt256 getValue()
 	{
-		return this.inputs.isEmpty();
+		return this.value;
 	}
 }

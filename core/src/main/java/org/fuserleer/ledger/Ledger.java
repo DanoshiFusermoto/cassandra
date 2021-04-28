@@ -88,7 +88,9 @@ public final class Ledger implements Service, LedgerInterface
 
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
 
-		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 	
 	@Override
@@ -170,7 +172,7 @@ public final class Ledger implements Service, LedgerInterface
 			if (headHash.equals(Universe.getDefault().getGenesis().getHeader().getHash()) == true && this.ledgerStore.has(headHash) == false)
 			{
 				// Store the genesis block primitive
-				this.ledgerStore.store(Universe.getDefault().getGenesis());
+				this.ledgerStore.store(0, Universe.getDefault().getGenesis());
 	
 				// Commit the genesis block
 				// Some simple manual actions here with regard to provisioning as don't want to complicate the flow with a special case for genesis
@@ -202,7 +204,7 @@ public final class Ledger implements Service, LedgerInterface
 					throw new UnsupportedOperationException("Integrity recovery not implemented");
 				}
 				
-				// TODO clean up vote power if needed after recovery as could be in a compromised state 
+				// TODO clean up vote power if needed after recovery as could be in a compromised state
 			}
 		}
 		finally
@@ -277,7 +279,7 @@ public final class Ledger implements Service, LedgerInterface
 			Set<PendingAtom> acceptedPendingAtoms = new HashSet<PendingAtom>();
 			for (Atom atom : block.getAtoms())
 			{
-				PendingAtom pendingAtom = getAtomHandler().get(atom.getHash(), CommitStatus.NONE);
+				PendingAtom pendingAtom = getAtomHandler().get(atom.getHash());
 				if (pendingAtom == null)
 					throw new IllegalStateException("Pending atom "+atom.getHash()+" state appears invalid.");
 				
@@ -290,7 +292,7 @@ public final class Ledger implements Service, LedgerInterface
 			Set<PendingAtom> committedPendingAtoms = new HashSet<PendingAtom>();
 			for (AtomCertificate atomCertificate : block.getCertificates())
 			{
-				PendingAtom pendingAtom = getAtomHandler().get(atomCertificate.getAtom(), CommitStatus.ACCEPTED);
+				PendingAtom pendingAtom = getAtomHandler().get(atomCertificate.getAtom());
 				if (pendingAtom == null)
 					throw new IllegalStateException("Pending atom certificate "+atomCertificate.getAtom()+" state appears invalid.");
 				

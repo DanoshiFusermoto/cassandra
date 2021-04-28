@@ -408,30 +408,6 @@ public final class PendingAtom implements Hashable
 		}
 	}
 
-	StateInputs getInputs()
-	{
-		this.lock.readLock().lock();
-		try
-		{
-			Map<StateKey<?, ?>, Optional<UInt256>> inputs = new HashMap<StateKey<?, ?>, Optional<UInt256>>();
-			for (StateKey<?, ?> stateKey : this.stateMachine.getStateKeys())
-			{
-				Optional<UInt256> input = this.stateMachine.getInput(stateKey);
-				if (input == null)
-					continue;
-				
-				inputs.put(stateKey, input);
-			}
-			
-			return new StateInputs(this.block, this.getHash(), inputs);
-		}
-		finally
-		{
-			this.lock.readLock().unlock();
-		}
-	}
-
-	
 	Optional<UInt256> getOutput(final StateKey<?, ?> key)
 	{
 		this.lock.readLock().lock();

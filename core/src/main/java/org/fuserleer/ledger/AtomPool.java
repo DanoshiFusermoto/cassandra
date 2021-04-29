@@ -44,7 +44,6 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.CustomInteger;
@@ -80,28 +79,6 @@ public final class AtomPool implements Service
 	
 						if (AtomPool.this.context.getLedger().isSynced() == false)
 							continue;
-
-						if (AtomPool.this.votesToSyncQueue.isEmpty() == false)
-						{
-							Entry<Hash, AtomVote> atomVote;
-							while((atomVote = AtomPool.this.votesToSyncQueue.peek()) != null)
-							{
-								try
-								{
-									if (process(atomVote.getValue()) == false)
-										atomsLog.warn(AtomPool.this.context.getName()+": Syncing atom vote "+atomVote.getValue().getHash()+" returned false by "+atomVote.getValue().getOwner());
-								}
-								catch (Exception ex)
-								{
-									atomsLog.error(AtomPool.this.context.getName()+": Error syncing atom vote "+atomVote.getValue(), ex);
-								}
-								finally
-								{
-									if (AtomPool.this.votesToSyncQueue.remove(atomVote.getKey(), atomVote.getValue()) == false)
-										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
-								}
-							}
-						}
 
 						Multimap<AtomVote, Long> atomVotesToBroadcast = HashMultimap.create();
 						if (AtomPool.this.votesToCountQueue.isEmpty() == false)
@@ -230,14 +207,12 @@ public final class AtomPool implements Service
 	private final Map<Long, Set<PendingAtom>> buckets = new HashMap<Long, Set<PendingAtom>>();
 
 	private final BlockingQueue<PendingAtom> votesToCastQueue;
-	private final MappedBlockingQueue<Hash, AtomVote> votesToSyncQueue;
 	private final MappedBlockingQueue<Hash, AtomVote> votesToCountQueue;
 	
 	public AtomPool(final Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.votesToCastQueue = new LinkedBlockingQueue<PendingAtom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
-		this.votesToSyncQueue = new MappedBlockingQueue<Hash, AtomVote>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 		this.votesToCountQueue = new MappedBlockingQueue<Hash, AtomVote>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 
 		long location = Long.MIN_VALUE;
@@ -271,12 +246,6 @@ public final class AtomPool implements Service
 		this.context.getNetwork().getGossipHandler().register(AtomVote.class, new GossipInventory() 
 		{
 			@Override
-			public int requestLimit()
-			{
-				return GetInventoryItemsMessage.MAX_ITEMS;
-			}
-
-			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws Throwable
 			{
 				AtomPool.this.lock.readLock().lock();
@@ -285,8 +254,7 @@ public final class AtomPool implements Service
 					Set<Hash> required = new HashSet<Hash>();
 					for (Hash item : items)
 					{
-						if (AtomPool.this.votesToSyncQueue.contains(item) == true || 
-							AtomPool.this.votesToCountQueue.contains(item) == true || 
+						if (AtomPool.this.votesToCountQueue.contains(item) == true || 
 							AtomPool.this.context.getLedger().getLedgerStore().has(item) == true)
 							continue;
 						
@@ -317,8 +285,7 @@ public final class AtomPool implements Service
 				// the pool, not knowing it already voted previously until it receives the vote from
 				// a sync peer.  The duplicate will get caught in the votesToCountQueue processor
 				// outputting a lot of warnings which is undesirable.
-				if (AtomPool.this.votesToSyncQueue.contains(vote.getHash()) == true || 
-					AtomPool.this.votesToCountQueue.contains(vote.getHash()) == true || 
+				if (AtomPool.this.votesToCountQueue.contains(vote.getHash()) == true || 
 					AtomPool.this.context.getLedger().getLedgerStore().has(vote.getHash()) == true)
 					return;
 
@@ -397,7 +364,6 @@ public final class AtomPool implements Service
 			this.pending.clear();
 			this.states.clear();
 			this.votesToCastQueue.clear();
-			this.votesToSyncQueue.clear();
 			this.votesToCountQueue.clear();
 		}
 		finally
@@ -471,7 +437,7 @@ public final class AtomPool implements Service
 			
 		return response;
 	}
-	
+
 	public List<Atom> get()
 	{
 		this.lock.readLock().lock();
@@ -923,7 +889,8 @@ public final class AtomPool implements Service
 									continue;
 
 								AtomPool.this.add(atom);
-								AtomPool.this.votesToSyncQueue.put(atomVote.getHash(), atomVote);
+								if (process(atomVote) == false)
+									atomsLog.warn(AtomPool.this.context.getName()+": Syncing atom vote "+atomVote.getHash()+" returned false by "+atomVote.getOwner());
 							}
 						}
 						catch (Exception ex)

@@ -331,7 +331,7 @@ public class BlockHandler implements Service
 		this.commitBranch = null;
 		
 //		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		blocksLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -799,28 +799,36 @@ public class BlockHandler implements Service
 			blocksLog.error(BlockHandler.this.context.getName()+": Block vote failed verification for "+blockVote.getOwner());
 			return false;
 		}
-
-		// If the block is already committed as state then just skip and silently return true
-		final StateAddress blockStateAddress = new StateAddress(Block.class, blockVote.getBlock());
-		if (BlockHandler.this.context.getLedger().getLedgerStore().search(blockStateAddress) == null)
+		
+		BlockHandler.this.lock.writeLock().lock();
+		try
 		{
-			BlockHandler.this.upsertBlock(blockVote.getBlock());
-			PendingBlock pendingBlock = BlockHandler.this.getBlock(blockVote.getBlock());
-			// If already have a vote recorded for the identity, then vote was already seen possibly selected and broadcast
-			if (pendingBlock.voted(blockVote.getOwner()) == false)
+			// If the block is already committed as state then just skip and silently return true
+			final StateAddress blockStateAddress = new StateAddress(Block.class, blockVote.getBlock());
+			if (BlockHandler.this.context.getLedger().getLedgerStore().search(blockStateAddress) == null)
 			{
-				if (blocksLog.hasLevel(Logging.DEBUG) == true)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Block vote "+blockVote.getHash()+"/"+blockVote.getBlock()+" for "+blockVote.getOwner());
-
-				pendingBlock.vote(blockVote);
-
-				return true;
+				BlockHandler.this.upsertBlock(blockVote.getBlock());
+				PendingBlock pendingBlock = BlockHandler.this.getBlock(blockVote.getBlock());
+				// If already have a vote recorded for the identity, then vote was already seen possibly selected and broadcast
+				if (pendingBlock.voted(blockVote.getOwner()) == false)
+				{
+					if (blocksLog.hasLevel(Logging.DEBUG) == true)
+						blocksLog.debug(BlockHandler.this.context.getName()+": Block vote "+blockVote.getHash()+"/"+blockVote.getBlock()+" for "+blockVote.getOwner());
+	
+					pendingBlock.vote(blockVote);
+	
+					return true;
+				}
+				
+				return false;
 			}
 			
-			return false;
+			return true;
 		}
-		
-		return true;
+		finally
+		{
+			BlockHandler.this.lock.writeLock().unlock();
+		}
 	}
 	
 	private List<BlockVote> vote(final PendingBranch branch) throws IOException, CryptoException, ValidationException
@@ -1400,7 +1408,6 @@ public class BlockHandler implements Service
 		try
 		{
 			PendingBranch buildBranch = null;
-			Map<PendingBlock, PendingBranch> committable = new HashMap<PendingBlock, PendingBranch>();
 			for (PendingBranch pendingBranch : this.pendingBranches)
 			{
 				if (pendingBranch.getLow().getHeader().getPrevious().equals(this.context.getLedger().getHead().getHash()) == false)
@@ -1413,24 +1420,24 @@ public class BlockHandler implements Service
 				
 				// Short circuit on any branch that has a commit possible
 				// If not full constructed will commit the portion that is
-				PendingBlock committableBlock = pendingBranch.commitable();
-				if (committableBlock != null)
-				{
-					committable.put(committableBlock, pendingBranch);
-					continue;
-				}
-				
-				// Need fully constructed branches in order to select them!
+
+				// Test for supers in the branch, if no supers is it still a candidate? Need fully constructed branches in order to select them!
 				// NOTE disable this to promote a stall on liveness when critical gossip / connectivity issues
-				if (pendingBranch.isConstructed() == false)
+				List<PendingBlock> supers = pendingBranch.supers();
+				if (supers.isEmpty() == true && pendingBranch.isConstructed() == false)
 					continue;
 
+				if (buildBranch != null && buildBranch.supers().size() < supers.size())
+				{
+					buildBranch = pendingBranch;
+					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected build branch (supers) "+buildBranch.getHigh().getHeader());
+				}
 				// TODO need a lower probability tiebreaker here
 				// TODO what happens if the branch has many un-constructable blocks which satisfy the below condition?
 				//      possible situation for a liveness break?  is this an attack surface that needs to be countered?
-				if (buildBranch == null || 
-					buildBranch.getHigh().getHeader().getAverageStep() < pendingBranch.getHigh().getHeader().getAverageStep() ||
-					(buildBranch.getHigh().getHeader().getAverageStep() == pendingBranch.getHigh().getHeader().getAverageStep() && buildBranch.getHigh().getHeader().getStep() < pendingBranch.getHigh().getHeader().getStep()))
+				else if (buildBranch == null ||
+						 buildBranch.getHigh().getHeader().getAverageStep() < pendingBranch.getHigh().getHeader().getAverageStep() ||
+						 (buildBranch.getHigh().getHeader().getAverageStep() == pendingBranch.getHigh().getHeader().getAverageStep() && buildBranch.getHigh().getHeader().getStep() < pendingBranch.getHigh().getHeader().getStep()))
 				{
 					buildBranch = pendingBranch;
 					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected build branch "+buildBranch.getHigh().getHeader());
@@ -1447,49 +1454,45 @@ public class BlockHandler implements Service
 			// The solution is to require a minimum of 2 super-majority blocks per branch, with the latter acting as a confirmation chain of the first.
 			// However this will add at least one additional block production of latency to block commits, but will most certainly be secure!
 			// TODO can round of latency be optimised?
-			if (committable.isEmpty() == false)
+			PendingBranch commitBranch = null;
+			int	commitBranchSuperBlocks = 0;
+			for (PendingBranch pendingBranch : this.pendingBranches)
 			{
-				if (committable.size() == 1)
-					blocksLog.debug(BlockHandler.this.context.getName()+": Discovered committable branch "+committable);
-				else 
-					blocksLog.debug(BlockHandler.this.context.getName()+": Discovered multiple committable branches "+committable);
-
-				PendingBranch commitBranch = null;
-				int	commitBranchSuperBlocks = 0;
-				for (Entry<PendingBlock, PendingBranch> c : committable.entrySet())
-				{
-					int superBlocks = 0;
-					for (PendingBlock pendingBlock : c.getValue().getBlocks())
-					{
-						long blockWeight = c.getValue().getWeight(pendingBlock.getHeight());
-						long votePowerThresholdAtBlock = c.getValue().getVotePowerThreshold(pendingBlock.getHeight());
-						
-						if (blockWeight < votePowerThresholdAtBlock)
-							continue;
-						
-						superBlocks++;
-					}
-					
-					if (superBlocks > commitBranchSuperBlocks)
-					{
-						commitBranchSuperBlocks = superBlocks;
-						commitBranch = c.getValue();
-						blocksLog.debug(BlockHandler.this.context.getName()+": Preselected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());
-					}
-					else if (superBlocks == commitBranchSuperBlocks)
-						commitBranch = null;
-				}
+				PendingBlock committable = pendingBranch.commitable();
+				if (committable == null)
+					continue;
 				
-				if (commitBranch != null)
+				int superBlocks = 0;
+				for (PendingBlock pendingBlock : pendingBranch.getBlocks())
 				{
-					// Always select the best commit branch as the build branch
-					this.buildBranch = commitBranch;
+					long blockWeight = pendingBranch.getWeight(pendingBlock.getHeight());
+					long votePowerThresholdAtBlock = pendingBranch.getVotePowerThreshold(pendingBlock.getHeight());
+					
+					if (blockWeight < votePowerThresholdAtBlock)
+						continue;
+					
+					superBlocks++;
+				}
+					
+				if (superBlocks > commitBranchSuperBlocks)
+				{
+					commitBranchSuperBlocks = superBlocks;
+					commitBranch = pendingBranch;
+					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());
+				}
+				else if (superBlocks == commitBranchSuperBlocks)
+					commitBranch = null;
+			}
+				
+			if (commitBranch != null)
+			{
+				// Always select the best commit branch as the build branch
+				this.buildBranch = commitBranch;
 
-					if (commitBranchSuperBlocks >= 2)
-					{
-						this.commitBranch = commitBranch;
-						blocksLog.debug(BlockHandler.this.context.getName()+": Selected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());
-					}
+				if (commitBranchSuperBlocks >= 2)
+				{
+					this.commitBranch = commitBranch;
+					blocksLog.debug(BlockHandler.this.context.getName()+": Selected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());
 				}
 			}
 	

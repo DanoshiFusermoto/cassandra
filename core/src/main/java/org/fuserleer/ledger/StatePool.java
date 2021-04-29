@@ -49,7 +49,6 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
@@ -266,12 +265,6 @@ public final class StatePool implements Service
 
 		this.context.getNetwork().getGossipHandler().register(StateVote.class, new GossipInventory() 
 		{
-			@Override
-			public int requestLimit()
-			{
-				return GetInventoryItemsMessage.MAX_ITEMS;
-			}
-
 			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
 			{

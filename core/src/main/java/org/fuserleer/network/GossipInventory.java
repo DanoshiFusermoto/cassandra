@@ -7,6 +7,5 @@ import org.fuserleer.crypto.Hash;
 
 public interface GossipInventory
 {
-	public int	requestLimit();
 	public Collection<Hash> required(final Class<? extends Primitive> type, final Collection<Hash> items) throws Throwable;
 }

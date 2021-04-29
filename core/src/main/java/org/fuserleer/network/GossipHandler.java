@@ -493,7 +493,7 @@ public class GossipHandler implements Service
 							
 							toRequest.add(item);
 							
-							if (toRequest.size() == inventoryProcessor.requestLimit())
+							if (toRequest.size() == GetInventoryItemsMessage.MAX_ITEMS)
 								break;
 						}
 					}

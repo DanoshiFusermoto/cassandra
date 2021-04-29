@@ -55,7 +55,6 @@ import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
-import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.Message;
 import org.fuserleer.network.messaging.MessageProcessor;
@@ -364,12 +363,6 @@ public class BlockHandler implements Service
 		this.context.getNetwork().getGossipHandler().register(BlockHeader.class, new GossipInventory() 
 		{
 			@Override
-			public int requestLimit()
-			{
-				return 8;
-			}
-
-			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws Throwable
 			{
 				if (type.equals(BlockHeader.class) == false)
@@ -482,12 +475,6 @@ public class BlockHandler implements Service
 
 		this.context.getNetwork().getGossipHandler().register(BlockVote.class, new GossipInventory() 
 		{
-			@Override
-			public int requestLimit()
-			{
-				return GetInventoryItemsMessage.MAX_ITEMS;
-			}
-
 			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
 			{

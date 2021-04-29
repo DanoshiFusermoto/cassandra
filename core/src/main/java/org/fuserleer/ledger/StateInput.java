@@ -82,4 +82,9 @@ class StateInput implements Primitive
 	{
 		return this.value;
 	}
+	
+	public final String toString()
+	{
+		return getHash()+" "+getBlock()+" "+getAtom()+" "+getKey();
+	}
 }

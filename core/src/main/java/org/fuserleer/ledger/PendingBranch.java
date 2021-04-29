@@ -633,6 +633,30 @@ public class PendingBranch
 		}
 	}
 
+	List<PendingBlock> supers() throws IOException, StateLockedException
+	{
+		this.lock.lock();
+		try
+		{
+			List<PendingBlock> supers = new ArrayList<PendingBlock>();
+			Iterator<PendingBlock> vertexIterator = this.blocks.iterator();
+			while(vertexIterator.hasNext())
+			{
+				PendingBlock vertex = vertexIterator.next();
+				long weight = getWeight(vertex.getHeight());
+				long threshold = getVotePowerThreshold(vertex.getHeight());
+				if (weight >= threshold)
+					supers.add(vertex);
+			}
+			
+			return supers;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
 	void apply(final PendingBlock block) throws IOException, StateLockedException
 	{
 		Objects.requireNonNull(block, "Pending block is null");

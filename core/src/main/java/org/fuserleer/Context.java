@@ -236,6 +236,7 @@ public final class Context implements Service
 	private final SystemMetaData 	metaData;
 	private final DatabaseEnvironment environment;
 	
+	private long startedTimestamp = 0, stoppedTimestamp = 0;
 	private transient Future<?> metaDataTaskFuture;
 
 	/** A null Context used for unit testing */
@@ -269,6 +270,7 @@ public final class Context implements Service
 	@Override
 	public void start() throws StartupException
 	{
+		this.startedTimestamp = System.currentTimeMillis();
 		this.events.start();
 		this.metaData.start();		
 		if (this.metaData.has("node.local") == true) 
@@ -322,6 +324,7 @@ public final class Context implements Service
 		this.metaDataTaskFuture.cancel(false);
 		this.metaData.stop();
 		this.events.stop();
+		this.stoppedTimestamp = System.currentTimeMillis();
 	}
 	
 	public void clean() throws IOException
@@ -329,6 +332,24 @@ public final class Context implements Service
 		this.ledger.clean();
 		this.network.clean();
 		this.metaData.clean();
+	}
+	
+	public long startedAt()
+	{
+		return this.startedTimestamp;
+	}
+
+	public long stoppedAt()
+	{
+		return this.stoppedTimestamp;
+	}
+
+	public long uptime()
+	{
+		if (this.stoppedTimestamp < this.startedTimestamp)
+			return System.currentTimeMillis() - this.startedTimestamp;
+		else
+			return this.stoppedTimestamp - this.startedTimestamp;
 	}
 
 	public Configuration getConfiguration()

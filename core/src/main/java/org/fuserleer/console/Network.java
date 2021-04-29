@@ -4,6 +4,7 @@ import java.io.PrintStream;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map.Entry;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
@@ -89,8 +90,8 @@ public class Network extends Function
 		else if (commandLine.hasOption("stats") == true)
 		{
 			printStream.println("Bandwidth:");
-			printStream.println("In bytes: "+context.getNetwork().getMessaging().getBytesIn());
-			printStream.println("Out bytes: "+context.getNetwork().getMessaging().getBytesOut());
+			printStream.println("In bytes: "+context.getNetwork().getMessaging().getBytesIn()+" "+(context.getNetwork().getMessaging().getBytesIn() / TimeUnit.MILLISECONDS.toSeconds(context.uptime()))+" b/s");
+			printStream.println("Out bytes: "+context.getNetwork().getMessaging().getBytesOut()+" "+(context.getNetwork().getMessaging().getBytesOut() / TimeUnit.MILLISECONDS.toSeconds(context.uptime()))+" b/s");
 
 			printStream.println("Sent messages: "+context.getNetwork().getMessaging().getTotalSent());
 			for (Entry<Class<?>, Long> sent : context.getNetwork().getMessaging().getSentByType())

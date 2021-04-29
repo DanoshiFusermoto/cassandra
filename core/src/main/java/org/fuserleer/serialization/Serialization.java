@@ -3,9 +3,16 @@ package org.fuserleer.serialization;
 import static org.fuserleer.serialization.mapper.DsonFieldFilter.filterProviderFor;
 
 import java.io.IOException;
+import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collector;
@@ -55,10 +62,13 @@ public class Serialization {
 
 	private final FilterProvider allProvider;
 	private final FilterProvider noneProvider;
+	
+	private final Map<Class<?>, Entry<Long, Long>> statistics;
 
 	// Constructor set up to be dependency injection capable at some future date
 	@VisibleForTesting
-	Serialization(SerializerIds idLookup, SerializationPolicy policy) {
+	Serialization(SerializerIds idLookup, SerializationPolicy policy) 
+	{
 		this.idLookup = idLookup;
 
 		EnumSet<Output> availableOutputs = EnumSet.allOf(Output.class);
@@ -86,6 +96,22 @@ public class Serialization {
 		jsonBuilder.put(Output.NONE, JacksonJsonMapper.create(idLookup, noneProvider));
 		jsonBuilder.put(Output.ALL, JacksonJsonMapper.create(idLookup, allProvider));
 		jsonMappers = jsonBuilder.build();
+		
+		this.statistics = Collections.synchronizedMap(new HashMap<Class<?>, Entry<Long, Long>>());
+	}
+	
+	public Collection<Entry<Class<?>, Entry<Long, Long>>> statistics()
+	{
+		List<Entry<Class<?>, Entry<Long, Long>>> statistics = new ArrayList<Entry<Class<?>, Entry<Long, Long>>>(this.statistics.entrySet());
+		Collections.sort(statistics, new Comparator<Entry<Class<?>, Entry<Long, Long>>>() 
+		{
+			@Override
+			public int compare(Entry<Class<?>, Entry<Long, Long>> o1, Entry<Class<?>, Entry<Long, Long>> o2)
+			{
+				return o1.getKey().getCanonicalName().compareToIgnoreCase(o2.getKey().getCanonicalName());
+			}
+		});
+		return statistics;
 	}
 
 	/**
@@ -97,10 +123,22 @@ public class Serialization {
 	 * @return The serialized object as a DSON byte array
 	 * @throws SerializationException if something goes wrong with serialization
 	 */
-	public byte[] toDson(Object o, DsonOutput.Output output) throws SerializationException {
-		try {
-			return dsonMapper(output).writeValueAsBytes(o);
-		} catch (JsonProcessingException ex) {
+	public byte[] toDson(final Object o, final DsonOutput.Output output) throws SerializationException 
+	{
+		try 
+		{
+			final byte[] serialized = dsonMapper(output).writeValueAsBytes(o);
+			this.statistics.compute(o.getClass(), (k, v) -> 
+			{
+				if (v == null)
+					return new AbstractMap.SimpleEntry<Long, Long>(1l, (long) serialized.length);
+				
+				return new AbstractMap.SimpleEntry<Long, Long>(v.getKey()+1, serialized.length+v.getValue());
+			}); 
+			return serialized;
+		} 
+		catch (JsonProcessingException ex) 
+		{
 			throw new SerializationException("Error converting to DSON", ex);
 		}
 	}

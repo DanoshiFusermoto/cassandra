@@ -236,6 +236,7 @@ public final class Context implements Service
 	private final SystemMetaData 	metaData;
 	private final DatabaseEnvironment environment;
 	
+	private boolean isStarted = false, isStopped = false;
 	private long startedTimestamp = 0, stoppedTimestamp = 0;
 	private transient Future<?> metaDataTaskFuture;
 
@@ -270,61 +271,84 @@ public final class Context implements Service
 	@Override
 	public void start() throws StartupException
 	{
-		this.startedTimestamp = System.currentTimeMillis();
-		this.events.start();
-		this.metaData.start();		
-		if (this.metaData.has("node.local") == true) 
+		if (this.isStarted == true)
+			throw new StartupException("Context "+this.getName()+" is already started");
+	
+		try
 		{
-			try 
-			{
-				byte[] nodeBytes = this.metaData.get("node.local", (byte[]) null);
-				if (nodeBytes == null)
-					throw new IllegalStateException("Expected node.local bytes but got null");
-				
-				Node persisted = Serialization.getInstance().fromDson(nodeBytes, Node.class);
-
-				if (persisted.getIdentity().equals(Context.this.node.getIdentity()) == false) // TODO what happens if has changed?  Dump everything?
-					log.warn("Node key has changed from "+persisted.getIdentity()+" to "+Context.this.node.getIdentity());
-				
-				Context.this.node.fromPersisted(persisted);
-			} 
-			catch (IOException ex) 
-			{
-				log.error("Could not load persisted system state from SystemMetaData", ex);
-			}
-		}
-		
-		this.network.start();
-		this.ledger.start();
-		
-		this.node.setHead(this.ledger.getHead());
-		this.metaDataTaskFuture = Executor.getInstance().scheduleAtFixedRate(new ScheduledExecutable(1, 1, TimeUnit.SECONDS)
-		{
-			@Override
-			public void execute()
+			this.events.start();
+			this.metaData.start();		
+			if (this.metaData.has("node.local") == true) 
 			{
 				try 
 				{
-					byte[] nodeBytes = Serialization.getInstance().toDson(Context.this.getNode(), Output.PERSIST);
-					Context.this.metaData.put("node.local", nodeBytes);
+					byte[] nodeBytes = this.metaData.get("node.local", (byte[]) null);
+					if (nodeBytes == null)
+						throw new IllegalStateException("Expected node.local bytes but got null");
+					
+					Node persisted = Serialization.getInstance().fromDson(nodeBytes, Node.class);
+	
+					if (persisted.getIdentity().equals(Context.this.node.getIdentity()) == false) // TODO what happens if has changed?  Dump everything?
+						log.warn("Node key has changed from "+persisted.getIdentity()+" to "+Context.this.node.getIdentity());
+					
+					Context.this.node.fromPersisted(persisted);
 				} 
-				catch (IOException e) 
+				catch (IOException ex) 
 				{
-					log.error("Could not persist local node state", e);
+					log.error("Could not load persisted system state from SystemMetaData", ex);
 				}
 			}
-		});
+			
+			this.network.start();
+			this.ledger.start();
+			
+			this.node.setHead(this.ledger.getHead());
+			this.metaDataTaskFuture = Executor.getInstance().scheduleAtFixedRate(new ScheduledExecutable(1, 1, TimeUnit.SECONDS)
+			{
+				@Override
+				public void execute()
+				{
+					try 
+					{
+						byte[] nodeBytes = Serialization.getInstance().toDson(Context.this.getNode(), Output.PERSIST);
+						Context.this.metaData.put("node.local", nodeBytes);
+					} 
+					catch (IOException e) 
+					{
+						log.error("Could not persist local node state", e);
+					}
+				}
+			});
+		}
+		finally
+		{
+			this.isStopped = false;
+			this.stoppedTimestamp = 0;
+			this.isStarted = true;
+			this.startedTimestamp = System.currentTimeMillis();
+		}
 	}
 	
 	@Override
 	public void stop() throws TerminationException
 	{
-		this.ledger.stop();
-		this.network.stop();
-		this.metaDataTaskFuture.cancel(false);
-		this.metaData.stop();
-		this.events.stop();
-		this.stoppedTimestamp = System.currentTimeMillis();
+		try
+		{
+			if (this.isStopped == true)
+				throw new TerminationException("Context "+this.getName()+" is already stopped");
+	
+			this.ledger.stop();
+			this.network.stop();
+			this.metaDataTaskFuture.cancel(false);
+			this.metaData.stop();
+			this.events.stop();
+		}
+		finally
+		{
+			this.isStarted = false;
+			this.isStopped = true;
+			this.stoppedTimestamp = System.currentTimeMillis();
+		}
 	}
 	
 	public void clean() throws IOException
@@ -342,6 +366,16 @@ public final class Context implements Service
 	public long stoppedAt()
 	{
 		return this.stoppedTimestamp;
+	}
+	
+	public boolean isStarted()
+	{
+		return this.isStarted;
+	}
+
+	public boolean isStopped()
+	{
+		return this.isStopped;
 	}
 
 	public long uptime()

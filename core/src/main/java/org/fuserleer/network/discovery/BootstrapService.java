@@ -197,6 +197,9 @@ public class BootstrapService extends Executable
 				{
 					// NO NOTHING //
 				}
+				
+				if (this.context.isStopped() == true)
+					break;
 			}
 		}		
 		

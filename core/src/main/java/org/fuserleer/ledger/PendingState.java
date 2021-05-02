@@ -224,7 +224,7 @@ final class PendingState
 			this.certificate = certificate;
 			
 			if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-				statePoolLog.debug(this.context.getName()+": State certificate "+certificate.getHash()+" for state "+this.majorityStateVote.getState()+" in atom "+this.majorityStateVote.getAtom()+" has "+this.majorityStateVote.getDecision()+" agreement with "+this.agreedVotePower+"/"+this.totalVotePower);
+				statePoolLog.debug(this.context.getName()+": State certificate "+certificate.getHash()+" for state "+this.majorityStateVote.getState()+" in atom "+this.majorityStateVote.getAtom()+" executed as "+this.majorityStateVote.getInput()+":"+this.majorityStateVote.getOutput()+" -> "+this.majorityStateVote.getExecution()+" has "+this.majorityStateVote.getDecision()+" agreement with "+this.agreedVotePower+"/"+this.totalVotePower);
 			
 			return this.certificate;
 		}

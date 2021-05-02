@@ -14,7 +14,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public abstract class VoteCertificate extends Certificate
 {
 	@JsonProperty("signers")
-	@DsonOutput(Output.ALL)
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private Bloom signers;
 
 	@JsonProperty("signature")

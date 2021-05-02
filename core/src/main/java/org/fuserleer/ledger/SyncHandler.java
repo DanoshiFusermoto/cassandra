@@ -832,14 +832,13 @@ public class SyncHandler implements Service
 			if (atomCommitOperations.isEmpty() == false)
 				this.context.getLedger().getLedgerStore().commit(atomCommitOperations);
 			
-			// Timeouts
+			// Commit timeouts
 			Iterator<PendingAtom> atomsIterator = this.atoms.values().iterator();
 			while(atomsIterator.hasNext() == true)
 			{
 				PendingAtom pendingAtom = atomsIterator.next();
 
-				if (block.getHeader().getHeight() < pendingAtom.getCommitBlockTimeout() && 
-					block.getHeader().getTimestamp() < pendingAtom.getInclusionTimeout())
+				if (block.getHeader().getHeight() <= pendingAtom.getCommitBlockTimeout())
 					continue;
 			
 				this.context.getLedger().getStateAccumulator().unlock(pendingAtom);
@@ -912,9 +911,7 @@ public class SyncHandler implements Service
 					strongestPeer = syncPeer;
 			}
 			
-			if (strongestPeer != null && 
-				(this.context.getNode().isInSyncWith(strongestPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true ||
-				 this.context.getNode().isAheadOf(strongestPeer.getNode(), Math.max(1, Node.OOS_RESOLVED_LIMIT)) == true))
+			if (strongestPeer != null && this.context.getNode().isAheadOf(strongestPeer.getNode(), 0) == true)
 				syncAcquired = true;
 			
 			// Is block processing completed and local replica considered in sync?
@@ -965,7 +962,16 @@ public class SyncHandler implements Service
 					if (pendingAtom.getCertificate() != null)
 					{
 						for (StateCertificate stateCertificate : pendingAtom.getCertificate().getAll())
+						{
+							if (this.context.getLedger().getLedgerStore().has(stateCertificate.getHash()) == false)
+								this.context.getLedger().getLedgerStore().store(this.context.getLedger().getHead().getHeight(), stateCertificate);
+							
+							StateInput stateInput = new StateInput(stateCertificate.getBlock(), stateCertificate.getAtom(), stateCertificate.getState(), stateCertificate.getInput());
+							if (this.context.getLedger().getLedgerStore().has(stateInput.getHash()) == false)
+								this.context.getLedger().getLedgerStore().store(this.context.getLedger().getHead().getHeight(), stateInput);
+
 							provisioned = pendingAtom.provision(stateCertificate.getState(), stateCertificate.getInput());
+						}
 						
 						pendingAtom.execute();
 						continue;
@@ -1044,7 +1050,7 @@ public class SyncHandler implements Service
 			current = this.context.getLedger().getLedgerStore().get(current.getHeader().getPrevious(), Block.class);
 		}
 		while (current.getHash().equals(Universe.getDefault().getGenesis().getHash()) == false && 
-			   current.getHeader().getHeight() > this.context.getLedger().getHead().getHeight() - PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS);
+			   current.getHeader().getHeight() >= this.context.getLedger().getHead().getHeight() - PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS);
 		
 		Collections.reverse(recentBlocks);
 		

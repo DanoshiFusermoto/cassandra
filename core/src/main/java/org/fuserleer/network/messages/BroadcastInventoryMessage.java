@@ -16,7 +16,7 @@ import org.fuserleer.serialization.Serialization;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.messages.gossip.inventory.broadcast")
+@SerializerId2("gossip.inventory.broadcast")
 public final class BroadcastInventoryMessage extends Message
 {
 	public final static int MAX_ITEMS = 64;

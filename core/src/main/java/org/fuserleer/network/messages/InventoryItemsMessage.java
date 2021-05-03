@@ -17,7 +17,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.messages.gossip.inventory.items")
+@SerializerId2("gossip.inventory.items")
 public class InventoryItemsMessage extends Message
 {
 	public static final int TRANSMIT_AT_SIZE = 1<<20;	// Transmit if size is 1M or greater

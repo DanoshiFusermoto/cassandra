@@ -13,7 +13,7 @@ import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-@SerializerId2("ledger.messages.gossip.inventory.item")
+@SerializerId2("gossip.inventory.item")
 public class InventoryItemMessage extends Message
 {
 	@JsonProperty("type")

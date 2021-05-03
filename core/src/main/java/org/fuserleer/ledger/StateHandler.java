@@ -34,6 +34,7 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.LedgerStore.SyncInventoryType;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
@@ -56,7 +57,6 @@ import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
 import org.fuserleer.network.messages.BroadcastInventoryMessage;
-import org.fuserleer.network.messages.GetInventoryItemsMessage;
 import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
@@ -85,8 +85,11 @@ public final class StateHandler implements Service
 	private final Map<StateKey<?, ?>, PendingAtom> states = new HashMap<StateKey<?, ?>, PendingAtom>();
 
 	private final BlockingQueue<PendingAtom> executionQueue;
+	private final Map<Hash, StateInput> remoteProvisionDelayed;
+	private final MappedBlockingQueue<Hash, StateInput> remoteProvisionQueue;
 	private final MappedBlockingQueue<StateKey<?, ?>, PendingAtom> localProvisionQueue;
 
+	private final Map<Hash, StateCertificate> certificatesToProcessDelayed;
 	private final MappedBlockingQueue<Hash, StateCertificate> certificatesToProcessQueue;
 
 	private Executable provisioningProcessor = new Executable()
@@ -143,7 +146,9 @@ public final class StateHandler implements Service
 								finally
 								{
 									if (StateHandler.this.certificatesToProcessQueue.remove(stateCertificate.getKey(), stateCertificate.getValue()) == false)
-										throw new IllegalStateException("State certificate process peek/remove failed for "+stateCertificate.getValue());
+										// FIXME sync state can initially flip/flop between ... annoying, so just throw these as warns for now (theres are in all queue handlers!)
+										cerbyLog.warn(StateHandler.this.context.getName()+": State certificate process peek/remove failed for "+stateCertificate.getValue());
+//										throw new IllegalStateException("State certificate process peek/remove failed for "+stateCertificate.getValue());
 								}
 							}
 						}
@@ -217,10 +222,10 @@ public final class StateHandler implements Service
 
 											StateInput stateInput = new StateInput(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey, value); 
 											if (stateLog.hasLevel(Logging.DEBUG))
-												stateLog.debug(StateHandler.this.context.getName()+": Storing provisioned state information for atom "+pendingAtom.getHash()+" for state recovery");
+												stateLog.debug(StateHandler.this.context.getName()+": Storing local provisioned state "+stateKey+" for atom "+pendingAtom.getHash()+" for state recovery");
 
 								    		if (StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), stateInput).equals(OperationStatus.SUCCESS) == false)
-												stateLog.warn(StateHandler.this.context.getName()+": Already stored provisioned state inputs for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock());
+												stateLog.warn(StateHandler.this.context.getName()+": Already stored provisioned state "+stateKey+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock());
 								    		
 											Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
 											if (provisionShardGroup == localShardGroup)
@@ -241,6 +246,8 @@ public final class StateHandler implements Service
 					            					if (stateInput == null)
 					            						continue;
 
+					            					StateHandler.this.remoteProvisionQueue.remove(stateInput.getHash());
+					            					StateHandler.this.remoteProvisionDelayed.remove(stateInput.getHash());
 					            					provision(pendingAtom, stateInput.getKey(), stateInput.getValue());
 					            					
 													provisionShardGroup = ShardMapper.toShardGroup(provisionedStateKey.get(), numShardGroups);
@@ -265,9 +272,100 @@ public final class StateHandler implements Service
 							finally
 							{
 								if (StateHandler.this.localProvisionQueue.remove(stateToProvision.getKey(), stateToProvision.getValue()) == false)
-									throw new IllegalStateException("State provisioning queue peek/remove failed for "+stateToProvision.getKey());
+									// FIXME sync state can initially flip/flop between ... annoying, so just throw these as warns for now (theres are in all queue handlers!)
+									cerbyLog.warn(StateHandler.this.context.getName()+": State provisioning queue peek/remove failed for "+stateToProvision.getKey());
+//									throw new IllegalStateException("State provisioning queue peek/remove failed for "+stateToProvision.getKey());
 							}
 						}
+							
+						Entry<Hash, StateInput> stateInput;
+						while((stateInput = StateHandler.this.remoteProvisionQueue.peek()) != null)
+						{
+							try
+							{
+								if (stateLog.hasLevel(Logging.DEBUG))
+									stateLog.debug(StateHandler.this.context.getName()+": Storing remote provisioned state "+stateInput.getValue().getKey()+" for atom "+stateInput.getValue().getAtom()+" for state recovery");
+
+					    		if (StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), stateInput.getValue()).equals(OperationStatus.SUCCESS) == false)
+					    		{
+									stateLog.warn(StateHandler.this.context.getName()+": Already stored provisioned state "+stateInput.getValue().getKey()+" for atom "+stateInput.getValue().getAtom());
+									continue;
+					    		}
+
+								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(stateInput.getValue().getAtom());
+								if (pendingAtom == null)
+								{
+									cerbyLog.warn(StateHandler.this.context.getName()+": Pending atom not found for state input "+stateInput.getValue()+".  Possibly committed");
+									continue;
+								}
+
+								if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == true && pendingAtom.getInput(stateInput.getValue().getKey()) == null)
+								{
+									provision(pendingAtom, stateInput.getValue().getKey(), stateInput.getValue().getValue());
+								
+									long numShardGroups = StateHandler.this.context.getLedger().numShardGroups();
+									long stateShardGroup = ShardMapper.toShardGroup(stateInput.getValue().getKey().get(), numShardGroups);
+									long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
+									Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
+									if (stateShardGroup == localShardGroup)
+										shardGroups.remove(stateShardGroup);
+									if (shardGroups.isEmpty() == false)
+										StateHandler.this.context.getNetwork().getGossipHandler().broadcast(stateInput.getValue(), shardGroups);
+								}
+							}
+							catch (Exception ex)
+							{
+								stateLog.error(StateHandler.this.context.getName()+": Error processing state input "+stateInput.getValue(), ex);
+							}
+							finally
+							{
+								if (StateHandler.this.remoteProvisionQueue.remove(stateInput.getKey(), stateInput.getValue()) == false)
+									// FIXME sync state can initially flip/flop between ... annoying, so just throw these as warns for now (theres are in all queue handlers!)
+									cerbyLog.warn(StateHandler.this.context.getName()+": State provisioning queue peek/remove failed for "+stateInput.getValue());
+//									throw new IllegalStateException("State input process peek/remove failed for "+stateInput.getValue());
+							}
+						}
+						
+						// Delayed state certificates
+						final List<Hash> certificateRemovals = new ArrayList<Hash>();
+						StateHandler.this.certificatesToProcessDelayed.forEach((h,sc) -> 
+						{
+							try
+							{
+								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(sc.getAtom());
+								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.ACCEPTED) == true)
+								{
+									StateHandler.this.certificatesToProcessQueue.put(sc.getHash(), sc);
+									certificateRemovals.add(h);
+								}
+							}
+							catch (IOException ioex)
+							{
+								cerbyLog.error(StateHandler.this.context.getName()+": Failed to process certificate delayed for atom "+sc.getAtom(), ioex);
+							}
+						});
+						synchronized(StateHandler.this.certificatesToProcessDelayed) { StateHandler.this.certificatesToProcessDelayed.keySet().removeAll(certificateRemovals); }
+						
+						// Delayed state inputs 
+						final List<Hash> inputRemovals = new ArrayList<Hash>();
+						StateHandler.this.remoteProvisionDelayed.forEach((h,si) -> 
+						{
+							try
+							{
+								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(si.getAtom());
+								if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.ACCEPTED) == true)
+								{
+									StateHandler.this.remoteProvisionQueue.put(si.getHash(), si);
+									inputRemovals.add(h);
+								}
+							}
+							catch (IOException ioex)
+							{
+								cerbyLog.error(StateHandler.this.context.getName()+": Failed to process provision delayed for atom "+si.getAtom(), ioex);
+							}
+						});
+						synchronized(StateHandler.this.remoteProvisionDelayed) { StateHandler.this.remoteProvisionDelayed.keySet().removeAll(inputRemovals); }
+
 					} 
 					catch (InterruptedException e) 
 					{
@@ -337,8 +435,11 @@ public final class StateHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
 		this.localProvisionQueue = new MappedBlockingQueue<StateKey<?, ?>, PendingAtom>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.remoteProvisionDelayed = Collections.synchronizedMap(new HashMap<Hash, StateInput>());
+		this.remoteProvisionQueue = new MappedBlockingQueue<Hash, StateInput>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.executionQueue = new LinkedBlockingQueue<PendingAtom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 		this.certificatesToProcessQueue = new MappedBlockingQueue<Hash, StateCertificate>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.certificatesToProcessDelayed = Collections.synchronizedMap(new HashMap<Hash, StateCertificate>());
 
 //		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
 //		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
@@ -454,12 +555,6 @@ public final class StateHandler implements Service
 		this.context.getNetwork().getGossipHandler().register(StateCertificate.class, new GossipInventory() 
 		{
 			@Override
-			public int requestLimit()
-			{
-				return 8;
-			}
-
-			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
 			{
 				if (type.equals(StateCertificate.class) == false)
@@ -475,6 +570,7 @@ public final class StateHandler implements Service
 					for (Hash item : items)
 					{
 						if (StateHandler.this.certificatesToProcessQueue.contains(item) == true || 
+							StateHandler.this.certificatesToProcessDelayed.containsKey(item) == true ||
 							StateHandler.this.context.getLedger().getLedgerStore().has(item) == true)
 							continue;
 					
@@ -508,7 +604,11 @@ public final class StateHandler implements Service
 					return;
 				}
 
-				StateHandler.this.certificatesToProcessQueue.put(stateCertificate.getHash(), stateCertificate);
+				PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(stateCertificate.getAtom());
+				if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true)
+					StateHandler.this.certificatesToProcessQueue.put(stateCertificate.getHash(), stateCertificate);
+				else
+					StateHandler.this.certificatesToProcessDelayed.put(stateCertificate.getHash(), stateCertificate);
 			}
 		});
 					
@@ -523,7 +623,12 @@ public final class StateHandler implements Service
 					Set<StateCertificate> fetched = new HashSet<StateCertificate>();
 					for (Hash item : items)
 					{
-						StateCertificate stateCertificate = getCertificate(item, StateCertificate.class);
+						StateCertificate stateCertificate = StateHandler.this.certificatesToProcessQueue.get(item);
+						if (stateCertificate == null)
+							stateCertificate = StateHandler.this.certificatesToProcessDelayed.get(item);
+						if (stateCertificate == null)
+							stateCertificate = getCertificate(item, StateCertificate.class);
+						
 						if (stateCertificate == null)
 						{
 							stateLog.error(StateHandler.this.context.getName()+": Requested state certificate "+item+" not found");
@@ -580,12 +685,6 @@ public final class StateHandler implements Service
 		this.context.getNetwork().getGossipHandler().register(StateInput.class, new GossipInventory() 
 		{
 			@Override
-			public int requestLimit()
-			{
-				return GetInventoryItemsMessage.MAX_ITEMS;
-			}
-
-			@Override
 			public Collection<Hash> required(Class<? extends Primitive> type, Collection<Hash> items) throws IOException
 			{
 				if (type.equals(StateInput.class) == false)
@@ -600,7 +699,9 @@ public final class StateHandler implements Service
 					Set<Hash> required = new HashSet<Hash>();
 					for (Hash item : items)
 					{
-						if (StateHandler.this.context.getLedger().getLedgerStore().has(item) == true)
+						if (StateHandler.this.remoteProvisionQueue.contains(item) == true ||
+							StateHandler.this.remoteProvisionDelayed.containsKey(item) == true ||
+							StateHandler.this.context.getLedger().getLedgerStore().has(item) == true)
 							continue;
 					
 						if (stateLog.hasLevel(Logging.DEBUG) == true)
@@ -628,7 +729,8 @@ public final class StateHandler implements Service
 				long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
 				if (stateShardGroup == localShardGroup)
 				{
-					stateLog.error(StateHandler.this.context.getName()+": Received state input "+stateInput.getKey()+" for local shard");
+					if (stateLog.hasLevel(Logging.DEBUG) == true)
+						stateLog.debug(StateHandler.this.context.getName()+": Received state input "+stateInput.getKey()+" for local shard (possible consequence of gossip");
 					// 	Disconnected and ban
 					return;
 				}
@@ -636,49 +738,11 @@ public final class StateHandler implements Service
 				if (stateLog.hasLevel(Logging.DEBUG) == true)
 					stateLog.debug(StateHandler.this.context.getName()+": Received state input "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom());
 
-				StateHandler.this.lock.writeLock().lock();
-				try
-				{
-					PendingAtom atom = StateHandler.this.atoms.get(stateInput.getAtom());
-					if (atom == null)
-					{
-						Commit commit = StateHandler.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateInput.getAtom()));
-						if (commit != null)
-						{
-							if (commit.isCommitTimedout() == true || commit.getPath().get(Elements.CERTIFICATE) != null)
-							{
-								stateLog.warn(StateHandler.this.context.getName()+": Received unexpected state input "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom());
-								return;
-							}
-						}
-					}
-					
-					if (stateLog.hasLevel(Logging.DEBUG))
-						stateLog.debug(StateHandler.this.context.getName()+": Storing provisioned state input "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom());
-
-		    		if (StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), stateInput).equals(OperationStatus.SUCCESS) == false)
-						stateLog.warn(StateHandler.this.context.getName()+": Already stored provisioned state inputs "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom());
-					
-					if (atom != null && atom.getStatus().equals(CommitStatus.PROVISIONING) == true && atom.getInput(stateInput.getKey()) == null)
-					{
-						provision(atom, stateInput.getKey(), stateInput.getValue());
-					
-						long provisionShardGroup = ShardMapper.toShardGroup(stateInput.getKey().get(), numShardGroups);
-						Set<Long> shardGroups = ShardMapper.toShardGroups(atom.getShards(), numShardGroups);
-						if (provisionShardGroup == localShardGroup)
-							shardGroups.remove(provisionShardGroup);
-						if (shardGroups.isEmpty() == false)
-							StateHandler.this.context.getNetwork().getGossipHandler().broadcast(stateInput, shardGroups);
-					}
-				}
-				catch (Exception ex)
-				{
-					cerbyLog.error(StateHandler.this.context.getName()+": Failed to apply provisioned state input "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom(), ex);
-				}
-				finally
-				{
-					StateHandler.this.lock.writeLock().unlock();
-				}
+				PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(stateInput.getAtom());
+				if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true)
+					StateHandler.this.remoteProvisionQueue.put(stateInput.getHash(), stateInput);
+				else
+					StateHandler.this.remoteProvisionDelayed.put(stateInput.getHash(), stateInput);
 			}
 		});
 					
@@ -693,7 +757,12 @@ public final class StateHandler implements Service
 					Set<StateInput> fetched = new HashSet<StateInput>();
 					for (Hash item : items)
 					{
-						StateInput stateInput = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateInput.class);
+						StateInput stateInput = StateHandler.this.remoteProvisionQueue.get(item); 
+						if (stateInput == null)
+							stateInput = StateHandler.this.remoteProvisionDelayed.get(item);
+						if (stateInput == null)
+							stateInput = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateInput.class);
+						
 						if (stateInput == null)
 						{
 							stateLog.error(StateHandler.this.context.getName()+": Requested state input "+item+" not found");
@@ -742,11 +811,12 @@ public final class StateHandler implements Service
 							final Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(StateHandler.this.atoms.values());
 							final Set<Hash> stateCertificateInventory = new LinkedHashSet<Hash>();
 							final Set<Hash> stateInputInventory = new LinkedHashSet<Hash>();
+							StateHandler.this.certificatesToProcessQueue.forEach((h, sc) -> stateCertificateInventory.add(h));
+							StateHandler.this.certificatesToProcessDelayed.forEach((h, sc) -> stateCertificateInventory.add(h));
+							StateHandler.this.remoteProvisionQueue.forEach((h, si) -> stateInputInventory.add(h));
+							StateHandler.this.remoteProvisionDelayed.forEach((h, si) -> stateInputInventory.add(h));
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
-								if (pendingAtom.getCertificate() != null)
-									continue;
-								
 								for (StateCertificate stateCertificate : pendingAtom.getCertificates())
 								{
 									remoteShardGroup = ShardMapper.toShardGroup(peer.getNode().getIdentity(), numShardGroups);
@@ -776,10 +846,10 @@ public final class StateHandler implements Service
 							}
 							
 							long height = StateHandler.this.context.getLedger().getHead().getHeight();
-							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_TRIGGER_LIMIT))
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() -1))
 							{
 								// TODO optimise
-								for (Hash stateCertificateHash : StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateCertificate.class))
+								for (Hash stateCertificateHash : StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateCertificate.class, SyncInventoryType.COMMIT))
 								{
 									StateCertificate stateCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(stateCertificateHash, StateCertificate.class);
 									remoteShardGroup = ShardMapper.toShardGroup(peer.getNode().getIdentity(), numShardGroups);
@@ -792,7 +862,7 @@ public final class StateHandler implements Service
 									stateCertificateInventory.add(stateCertificate.getHash());
 								}
 								
-								for (Hash stateInputHash : StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateInput.class))
+								for (Hash stateInputHash : StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateInput.class, SyncInventoryType.COMMIT))
 								{
 									StateInput stateInput = StateHandler.this.context.getLedger().getLedgerStore().get(stateInputHash, StateInput.class);
 									remoteShardGroup = ShardMapper.toShardGroup(peer.getNode().getIdentity(), numShardGroups);
@@ -808,7 +878,7 @@ public final class StateHandler implements Service
 							}
 							
 							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
-								cerbyLog.debug(StateHandler.this.context.getName()+": Broadcasting about "+stateCertificateInventory+" pool state certificates to "+peer);
+								cerbyLog.debug(StateHandler.this.context.getName()+": Broadcasting about "+stateCertificateInventory+" state certificates to "+peer);
 
 							while(stateCertificateInventory.isEmpty() == false)
 							{
@@ -1055,15 +1125,58 @@ public final class StateHandler implements Service
 		{
 			if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 				cerbyLog.debug(this.context.getName()+": Removing states for "+pendingAtom+" in block "+pendingAtom.getBlock());
+			
+			if (pendingAtom.getCertificate() != null)
+				this.context.getLedger().getLedgerStore().storeSyncInventory(this.context.getLedger().getHead().getHeight(), pendingAtom.getCertificate().getHash(), AtomCertificate.class, SyncInventoryType.COMMIT);
+
+			for (StateCertificate stateCertificate : pendingAtom.getCertificates())
+				this.context.getLedger().getLedgerStore().storeSyncInventory(this.context.getLedger().getHead().getHeight(), stateCertificate.getHash(), StateCertificate.class, SyncInventoryType.COMMIT);
+			
+			if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true)
+			{
+				for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
+				{
+					Optional<UInt256> value = pendingAtom.getInput(stateKey);
+					if (value == null)
+						continue;
+					
+					StateInput stateInput = new StateInput(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey, value.orElse(null));
+					this.context.getLedger().getLedgerStore().storeSyncInventory(this.context.getLedger().getHead().getHeight(), stateInput.getHash(), StateInput.class, SyncInventoryType.COMMIT);
+				}
+				
+				pendingAtom.getStateKeys().forEach(sk -> {
+					if (StateHandler.this.states.remove(sk, pendingAtom) == true && cerbyLog.hasLevel(Logging.DEBUG))
+						cerbyLog.debug(this.context.getName()+": Removed state "+sk+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
+				});
+
+				pendingAtom.getStateKeys().forEach(sk -> StateHandler.this.localProvisionQueue.remove(sk, pendingAtom));
+			}
+
+			final List<Hash> certificateRemovals = new ArrayList<Hash>();
+			this.certificatesToProcessDelayed.forEach((h,sc) -> {
+				if (pendingAtom.getHash().equals(sc.getAtom()) == true)
+					certificateRemovals.add(h);
+			});
+			this.certificatesToProcessQueue.forEach((h,sc) -> {
+				if (pendingAtom.getHash().equals(sc.getAtom()) == true)
+					certificateRemovals.add(h);
+			});
+			this.certificatesToProcessQueue.removeAll(certificateRemovals);
+			synchronized(this.certificatesToProcessDelayed) { this.certificatesToProcessDelayed.keySet().removeAll(certificateRemovals); }
+			
+			final List<Hash> inputRemovals = new ArrayList<Hash>();
+			this.remoteProvisionDelayed.forEach((h,si) -> {
+				if (pendingAtom.getHash().equals(si.getAtom()) == true)
+					inputRemovals.add(h);
+			});
+			this.remoteProvisionQueue.forEach((h,si) -> {
+				if (pendingAtom.getHash().equals(si.getAtom()) == true)
+					inputRemovals.add(h);
+			});
+			this.remoteProvisionQueue.removeAll(inputRemovals);
+			synchronized(this.remoteProvisionDelayed) { this.remoteProvisionDelayed.keySet().removeAll(inputRemovals); }
 
 			boolean removed = pendingAtom.equals(StateHandler.this.atoms.remove(pendingAtom.getHash()));
-			pendingAtom.getStateKeys().forEach(sk -> {
-				if (StateHandler.this.states.remove(sk, pendingAtom) == true && cerbyLog.hasLevel(Logging.DEBUG))
-					cerbyLog.debug(this.context.getName()+": Removed state "+sk+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
-			});
-
-			pendingAtom.getStateKeys().forEach(sk -> StateHandler.this.localProvisionQueue.remove(sk, pendingAtom));
-			
 			if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) && removed == false)
 				throw new IllegalStateException("Expected pending atom "+pendingAtom.getHash()+" but was not found");
 		}
@@ -1305,7 +1418,7 @@ public final class StateHandler implements Service
 					{
 						try
 						{
-							Collection<Hash> items = StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomCertificate.class);
+							Collection<Hash> items = StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomCertificate.class, SyncInventoryType.SEEN);
 							for (Hash item : items)
 							{
 								AtomCertificate atomCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(item, AtomCertificate.class);
@@ -1328,15 +1441,12 @@ public final class StateHandler implements Service
 					{
 						try
 						{
-							Collection<Hash> items = StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateCertificate.class);
+							Collection<Hash> items = StateHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, StateCertificate.class, SyncInventoryType.SEEN);
 							for (Hash item : items)
 							{
 								StateCertificate stateCertificate = StateHandler.this.context.getLedger().getLedgerStore().get(item, StateCertificate.class);
 								PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().load(stateCertificate.getAtom());
 								if (pendingAtom == null)
-									continue;
-								
-								if (pendingAtom.getCertificate() != null)
 									continue;
 								
 								add(pendingAtom);
@@ -1365,8 +1475,11 @@ public final class StateHandler implements Service
 					StateHandler.this.atoms.clear();
 					StateHandler.this.executionQueue.clear();
 					StateHandler.this.localProvisionQueue.clear();
+					StateHandler.this.remoteProvisionQueue.clear();
+					StateHandler.this.remoteProvisionDelayed.clear();
 					StateHandler.this.states.clear();
 					StateHandler.this.certificatesToProcessQueue.clear();
+					StateHandler.this.certificatesToProcessDelayed.clear();
 				}
 			}
 			finally

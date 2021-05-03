@@ -37,6 +37,7 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
+import org.fuserleer.ledger.LedgerStore.SyncInventoryType;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.PendingBranch.Type;
 import org.fuserleer.ledger.atoms.Atom;
@@ -654,10 +655,10 @@ public class BlockHandler implements Service
 							}
 							
 							long height = BlockHandler.this.context.getLedger().getHead().getHeight();
-							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_RESOLVED_LIMIT))
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - 1))
 							{
-								pendingBlockInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class));
-								blockVoteInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class));
+								pendingBlockInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class, SyncInventoryType.SEEN));
+								blockVoteInventory.addAll(BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class, SyncInventoryType.SEEN));
 								height--;
 							}
 							
@@ -1543,7 +1544,7 @@ public class BlockHandler implements Service
 					{
 						try
 						{
-							Collection<Hash> items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class);
+							Collection<Hash> items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockHeader.class, SyncInventoryType.SEEN);
 							for (Hash item : items)
 							{
 								BlockHeader blockHeader = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockHeader.class);
@@ -1560,7 +1561,7 @@ public class BlockHandler implements Service
 						
 						try
 						{
-							Collection<Hash> items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class);
+							Collection<Hash> items = BlockHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, BlockVote.class, SyncInventoryType.SEEN);
 							for (Hash item : items)
 							{
 								BlockVote blockVote = BlockHandler.this.context.getLedger().getLedgerStore().get(item, BlockVote.class);

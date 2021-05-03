@@ -28,6 +28,7 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
+import org.fuserleer.ledger.LedgerStore.SyncInventoryType;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
@@ -60,7 +61,8 @@ public class AtomHandler implements Service
 
 	private final Context context;
 	
-	private final Map<Hash, PendingAtom> pendingAtoms = Collections.synchronizedMap(new HashMap<>());
+	private final Map<Hash, PendingAtom> pendingAtoms = Collections.synchronizedMap(new HashMap<Hash, PendingAtom>());
+	private final Map<Hash, Long> atomTimeouts = Collections.synchronizedMap(new HashMap<Hash, Long>());
 	private final MappedBlockingQueue<Hash, Atom> atomQueue;
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
@@ -157,6 +159,10 @@ public class AtomHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context);
 		this.atomQueue = new MappedBlockingQueue<Hash, Atom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
+
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -250,7 +256,6 @@ public class AtomHandler implements Service
 							// TODO will cause problems when pool is BIG
 							Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(AtomHandler.this.pendingAtoms.values());
 							final Set<Hash> pendingAtomInventory = new LinkedHashSet<Hash>();
-							final Set<Hash> atomVoteInventory = new LinkedHashSet<Hash>();
 							
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
@@ -262,16 +267,12 @@ public class AtomHandler implements Service
 			                		continue;
 
 			                	pendingAtomInventory.add(pendingAtom.getHash());
-								
-								for (AtomVote atomVote : pendingAtom.votes())
-									atomVoteInventory.add(atomVote.getHash());
 							}
 							
 							long height = AtomHandler.this.context.getLedger().getHead().getHeight();
-							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - Node.OOS_TRIGGER_LIMIT))
+							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - 1))
 							{
-								pendingAtomInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class));
-								atomVoteInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class));
+								pendingAtomInventory.addAll(AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class, SyncInventoryType.COMMIT));
 								height--;
 							}
 							
@@ -283,16 +284,6 @@ public class AtomHandler implements Service
 								SyncInventoryMessage pendingAtomInventoryMessage = new SyncInventoryMessage(pendingAtomInventory, 0, Math.min(SyncInventoryMessage.MAX_ITEMS, pendingAtomInventory.size()), Atom.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(pendingAtomInventoryMessage, peer);
 								pendingAtomInventory.removeAll(pendingAtomInventoryMessage.getItems());
-							}
-
-							if (atomsLog.hasLevel(Logging.DEBUG) == true)
-								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting "+atomVoteInventory.size()+" / "+atomVoteInventory+" pool atom votes to "+peer);
-
-							while(atomVoteInventory.isEmpty() == false)
-							{
-								SyncInventoryMessage atomVoteInventoryMessage = new SyncInventoryMessage(atomVoteInventory, 0, Math.min(SyncInventoryMessage.MAX_ITEMS, atomVoteInventory.size()),  AtomVote.class);
-								AtomHandler.this.context.getNetwork().getMessaging().send(atomVoteInventoryMessage, peer);
-								atomVoteInventory.removeAll(atomVoteInventoryMessage.getItems());
 							}
 						}
 						catch (Exception ex)
@@ -371,76 +362,81 @@ public class AtomHandler implements Service
 		// TODO dont think this is needed now
 		if (this.context.getNode().isSynced() == false)
 			throw new IllegalStateException("Sync state is false!  AtomHandler::get called");
-		
-		AtomHandler.this.lock.writeLock().lock();
-		try
+
+		// Dont use the atom handler lock here.  
+		// Just sync on the pending atoms object as this function is called from many places
+		synchronized(this.pendingAtoms)
 		{
 			PendingAtom pendingAtom = this.pendingAtoms.get(atom);
 			if (pendingAtom != null)
 				return pendingAtom;
 			
-			final BlockHeader persistedBlock;
-			final Atom persistedAtom;
-			Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom));
-			if (commit != null)
+			// ReadWriteLock doesn't support upgrades, so sync on pending atoms for thw "write"
+			synchronized(this.pendingAtoms)
 			{
-				if (commit.getPath().get(Elements.CERTIFICATE) != null)
-					return null;
-					
-				if (commit.isCommitTimedout() == true)
-					return null;
-				
-				if (commit.isAcceptTimedout() == true)
-					return null;
-
-//				if (Time.getSystemTime() - PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS > commit.getTimestamp())
-//					return null;
-					
-				persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
-				if (persistedAtom == null)
-					throw new IllegalStateException("Expected to find persisted atom "+atom);
-
-				if (commit.getPath().get(Elements.BLOCK) != null)
+				final BlockHeader persistedBlock;
+				final Atom persistedAtom;
+				Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom));
+				if (commit != null)
 				{
-					persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
-					if (persistedBlock == null)
-						throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom);
+					if (commit.getPath().get(Elements.CERTIFICATE) != null)
+						return null;
+						
+					if (commit.isCommitTimedout() == true)
+						return null;
+					
+					if (commit.isAcceptTimedout() == true)
+						return null;
+	
+	//				if (Time.getSystemTime() - PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS > commit.getTimestamp())
+	//					return null;
+						
+					persistedAtom = this.context.getLedger().getLedgerStore().get(atom, Atom.class);
+					if (persistedAtom == null)
+						throw new IllegalStateException("Expected to find persisted atom "+atom);
+	
+					if (commit.getPath().get(Elements.BLOCK) != null)
+					{
+						persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
+						if (persistedBlock == null)
+							throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom);
+					}
+					else
+						persistedBlock = null;
 				}
 				else
+				{
 					persistedBlock = null;
-			}
-			else
-			{
-				persistedBlock = null;
-				persistedAtom = null;
-			}
-
-			pendingAtom = PendingAtom.create(this.context, atom);
-			if (persistedAtom != null)
-			{
-				pendingAtom.setAtom(persistedAtom);
-				try
+					persistedAtom = null;
+				}
+	
+				pendingAtom = PendingAtom.create(this.context, atom);
+				if (persistedAtom != null)
 				{
-					pendingAtom.prepare();
-					if (persistedBlock != null)
+					pendingAtom.setAtom(persistedAtom);
+					try
 					{
-						pendingAtom.accepted();
-						pendingAtom.provision(persistedBlock);
+						pendingAtom.prepare();
+						if (persistedBlock != null)
+						{
+							pendingAtom.accepted();
+							pendingAtom.provision(persistedBlock);
+						}
+						
 					}
-					
+					catch (ValidationException vex)
+					{
+						throw new IOException("Loading of persisted atom "+atom+" failed", vex);
+					}
 				}
-				catch (ValidationException vex)
-				{
-					throw new IOException("Loading of persisted atom "+atom+" failed", vex);
-				}
+				
+				this.pendingAtoms.put(atom, pendingAtom);
+				
+				if (atomsLog.hasLevel(Logging.DEBUG) == true)
+					atomsLog.debug(this.context.getName()+": Pending atom "+atom+" creation stack", new Exception());
 			}
 			
-			this.pendingAtoms.put(atom, pendingAtom);
 			return pendingAtom;
-		}
-		finally
-		{
-			AtomHandler.this.lock.writeLock().unlock();
 		}
 	}
 	
@@ -460,8 +456,9 @@ public class AtomHandler implements Service
 		if (this.context.getNode().isSynced() == false)
 			throw new IllegalStateException("Sync state is false!  AtomHandler::get called");
 		
-		AtomHandler.this.lock.writeLock().lock();
-		try
+		// Dont use the atom handler lock here.  
+		// Just sync on the pending atoms object as this function is called from many places
+		synchronized(this.pendingAtoms)
 		{
 			PendingAtom pendingAtom = this.pendingAtoms.get(atom);
 			if (pendingAtom != null)
@@ -481,7 +478,7 @@ public class AtomHandler implements Service
 
 				if (commit.getPath().get(Elements.BLOCK) != null)
 				{
-					persistedBlock = this.context.getLedger().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
+					persistedBlock = this.context.getLedger().getLedgerStore().get(commit.getPath().get(Elements.BLOCK), BlockHeader.class);
 					if (persistedBlock == null)
 						throw new IllegalStateException("Expected to find block "+commit.getPath().get(Elements.BLOCK)+" containing atom "+atom);
 				}
@@ -519,11 +516,11 @@ public class AtomHandler implements Service
 			}
 			
 			this.pendingAtoms.put(atom, pendingAtom);
+			
+			if (atomsLog.hasLevel(Logging.DEBUG) == true)
+				atomsLog.debug(this.context.getName()+": Pending atom "+atom+" creation stack", new Exception());
+
 			return pendingAtom;
-		}
-		finally
-		{
-			AtomHandler.this.lock.writeLock().unlock();
 		}
 	}
 
@@ -535,17 +532,14 @@ public class AtomHandler implements Service
 		if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == false)
 			throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" for injection must be in PROVISIONING state");
 		
-		AtomHandler.this.lock.writeLock().lock();
-		try
+		// Dont use the atom handler lock here.  
+		// Just sync on the pending atoms object as this function is called from many places
+		synchronized(this.pendingAtoms)
 		{
 			if (this.pendingAtoms.containsKey(pendingAtom.getHash()) == true)
 				throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" is already present");
 			
 			this.pendingAtoms.put(pendingAtom.getHash(), pendingAtom);
-		}
-		finally
-		{
-			AtomHandler.this.lock.writeLock().unlock();
 		}
 	}
 
@@ -553,14 +547,11 @@ public class AtomHandler implements Service
 	{
 		Objects.requireNonNull(pendingAtom, "Pending atom for injection is null");
 		
-		AtomHandler.this.lock.writeLock().lock();
-		try
+		// Dont use the atom handler lock here.  
+		// Just sync on the pending atoms object as this function is called from many places
+		synchronized(this.pendingAtoms)
 		{
 			this.pendingAtoms.remove(pendingAtom.getHash());
-		}
-		finally
-		{
-			AtomHandler.this.lock.writeLock().unlock();
 		}
 	}
 
@@ -627,10 +618,13 @@ public class AtomHandler implements Service
 				// TODO atoms should be witnessed and timedout based on agreed ledger time
 				long systemTime = Time.getSystemTime();
 				List<AtomDiscardedEvent> timedout = new ArrayList<AtomDiscardedEvent>();
-				for (PendingAtom pendingAtom : AtomHandler.this.pendingAtoms.values())
+				synchronized(AtomHandler.this.pendingAtoms)
 				{
-					if (pendingAtom.lockCount() == 0 && systemTime > pendingAtom.getInclusionTimeout() && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
-						timedout.add(new AtomDiscardedEvent(pendingAtom, "Timed out"));
+					for (PendingAtom pendingAtom : AtomHandler.this.pendingAtoms.values())
+					{
+						if (pendingAtom.lockCount() == 0 && systemTime > pendingAtom.getInclusionTimeout() && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
+							timedout.add(new AtomDiscardedEvent(pendingAtom, "Timed out"));
+					}
 				}
 				
 				if (timedout.isEmpty() == false)
@@ -650,15 +644,17 @@ public class AtomHandler implements Service
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final AtomAcceptedEvent event) 
+		public void on(final AtomAcceptedEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
+			AtomHandler.this.context.getLedger().getLedgerStore().storeSyncInventory(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom().getHash(), Atom.class, SyncInventoryType.COMMIT);
 		}
 
 		@Subscribe
-		public void on(final AtomRejectedEvent event) 
+		public void on(final AtomRejectedEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
+			AtomHandler.this.context.getLedger().getLedgerStore().storeSyncInventory(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom().getHash(), Atom.class, SyncInventoryType.COMMIT);
 		}
 
 		@Subscribe
@@ -672,7 +668,9 @@ public class AtomHandler implements Service
 		public void on(final AtomDiscardedEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
-			AtomHandler.this.context.getLedger().getLedgerStore().acceptTimedOut(event.getPendingAtom().getHash());
+			// TODO Phantom pending atoms appear here after sync
+//			if (event.getPendingAtom().getStatus().greaterThan(CommitStatus.NONE) == true)
+				AtomHandler.this.context.getLedger().getLedgerStore().acceptTimedOut(event.getPendingAtom().getHash());
 		}
 		
 		@Subscribe
@@ -713,7 +711,7 @@ public class AtomHandler implements Service
 					{
 						try
 						{
-							Collection<Hash> items = AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class);
+							Collection<Hash> items = AtomHandler.this.context.getLedger().getLedgerStore().getSyncInventory(height, Atom.class, SyncInventoryType.SEEN);
 							for (Hash item : items)
 								AtomHandler.this.load(item);
 						}

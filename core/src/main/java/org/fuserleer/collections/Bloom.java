@@ -20,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.util.BitSet;
+import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -141,6 +142,23 @@ public class Bloom
         this(Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2))) / Math.log(2), // c = k / ln(2)
              expectedNumberOfElements,
              (int)Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2)))); // k = ceil(-log_2(false prob.))
+    }
+
+    /**
+     * Constructs a new Bloom filter containing the provided collection with a given false positive probability. The number of bits per
+     * element and the number of hash functions is estimated to match the false positive probability.
+     *
+     * @param falsePositiveProbability is the desired false positive probability.
+     * @param elements is the collection of elements to add to the Bloom filter.
+     */
+    public Bloom(final double falsePositiveProbability, final Collection<byte[]> elements) 
+    {
+        this(Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2))) / Math.log(2), // c = k / ln(2)
+        	 elements.size(),
+             (int)Math.ceil(-(Math.log(falsePositiveProbability) / Math.log(2)))); // k = ceil(-log_2(false prob.))
+        
+        for (byte[] element : elements)
+        	add(element);
     }
 
     /**

@@ -320,7 +320,7 @@ public class GossipHandler implements Service
 						if (broadcastQueue.isEmpty() == true)
 							continue;
 
-						if (broadcastQueue.size() < 32 && System.currentTimeMillis() - GossipHandler.this.broadcastedAt.getOrDefault(type, 0l) < 250)
+						if (broadcastQueue.size() < BroadcastInventoryMessage.MAX_ITEMS && System.currentTimeMillis() - GossipHandler.this.broadcastedAt.getOrDefault(type, 0l) < 250)
 							continue;
 						
 						for (Broadcast broadcast : broadcastQueue)
@@ -803,11 +803,11 @@ public class GossipHandler implements Service
 							for (Primitive item : requested)
 								GossipHandler.this.receiverProcessors.get(inventoryItemsMessage.getType()).receive(item);
 							
-							// Cleanup here AFTER processor to prevent multiple requests 
+							// Cleanup requested received here AFTER processor to prevent multiple requests 
 							GossipHandler.this.lock.writeLock().lock();
 							try
 							{
-								for (Primitive item : inventoryItemsMessage.getItems())
+								for (Primitive item : requested)
 								{
 									Long nonce = GossipHandler.this.itemsRequested.remove(item.getHash());  
 									GossipHandler.this.received(item, nonce);

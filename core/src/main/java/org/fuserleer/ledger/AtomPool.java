@@ -44,7 +44,6 @@ import org.fuserleer.network.GossipFetcher;
 import org.fuserleer.network.GossipFilter;
 import org.fuserleer.network.GossipInventory;
 import org.fuserleer.network.GossipReceiver;
-import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 import org.fuserleer.utils.CustomInteger;
 import org.fuserleer.utils.Longs;
@@ -57,6 +56,11 @@ import com.sleepycat.je.OperationStatus;
 public final class AtomPool implements Service
 {
 	private static final Logger atomsLog = Logging.getLogger("atoms");
+
+	private enum AtomVoteStatus
+	{
+		SUCCESS, FAILED, SKIPPED;
+	}
 
 	private final static int 	NUM_BUCKETS = 4096;
 	private final static long 	BUCKET_SPAN = -(Long.MIN_VALUE / 2) / (NUM_BUCKETS / 4);
@@ -83,7 +87,7 @@ public final class AtomPool implements Service
 						Multimap<AtomVote, Long> atomVotesToBroadcast = HashMultimap.create();
 						if (AtomPool.this.votesToCountQueue.isEmpty() == false)
 						{
-							Entry<Hash, AtomVote> atomVote = AtomPool.this.votesToCountQueue.peek();
+							Entry<Hash, AtomVote> atomVote;
 							while((atomVote = AtomPool.this.votesToCountQueue.peek()) != null)
 							{
 								try
@@ -94,7 +98,8 @@ public final class AtomPool implements Service
 										continue;
 									}
 									
-									if (process(atomVote.getValue()) == true)
+									AtomVoteStatus status = process(atomVote.getValue()); 
+									if (status.equals(AtomVoteStatus.SUCCESS) == true)
 									{
 										PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getValue().getAtom());
 										if (pendingAtom != null)
@@ -108,8 +113,13 @@ public final class AtomPool implements Service
 										else
 											atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getValue().getAtom()+" is gone after applying vote "+atomVote.getValue()+" from "+atomVote.getValue().getOwner());
 									}
+									else if (status.equals(AtomVoteStatus.SKIPPED) == true)
+									{
+										if (atomsLog.hasLevel(Logging.DEBUG) == true)
+											atomsLog.debug(AtomPool.this.context.getName()+": Processing of atom vote "+atomVote.getValue().getHash()+" was skipped for atom "+atomVote.getValue().getAtom()+" by "+atomVote.getValue().getOwner());
+									}
 									else
-										atomsLog.warn(AtomPool.this.context.getName()+": Processing of atom vote "+atomVote.getValue().getAtom()+" returned false "+atomVote.getValue().getOwner());
+										atomsLog.warn(AtomPool.this.context.getName()+": Processing of atom vote "+atomVote.getValue().getHash()+" failed for atom "+atomVote.getValue().getAtom()+" by "+atomVote.getValue().getOwner());
 								}
 								catch (Exception ex)
 								{
@@ -118,7 +128,9 @@ public final class AtomPool implements Service
 								finally
 								{
 									if (AtomPool.this.votesToCountQueue.remove(atomVote.getKey(), atomVote.getValue()) == false)
-										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
+										// FIXME sync state can initially flip/flop between ... annoying, so just throw these as warns for now (theres are in all queue handlers!)
+										atomsLog.warn(AtomPool.this.context.getName()+": Atom pool vote peek/remove failed for "+atomVote.getValue());
+//										throw new IllegalStateException("Atom pool vote peek/remove failed for "+atomVote.getValue());
 								}
 							}
 						}
@@ -139,7 +151,8 @@ public final class AtomPool implements Service
 	
 										if (AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote).equals(OperationStatus.SUCCESS) == true)
 										{
-											if (process(atomVote) == true)
+											AtomVoteStatus status = process(atomVote); 
+											if (status.equals(AtomVoteStatus.SUCCESS) == true)
 											{
 												if (atomsLog.hasLevel(Logging.DEBUG))
 													atomsLog.debug(AtomPool.this.context.getName()+": Voted on atom "+atomVote.getAtom()+" with vote "+atomVote.getHash());
@@ -164,7 +177,9 @@ public final class AtomPool implements Service
 								finally
 								{
 									if (pendingAtom.equals(AtomPool.this.votesToCastQueue.poll()) == false)
-										throw new IllegalStateException("Atom pool vote cast peek/pool failed for "+pendingAtom.getHash());
+										// FIXME sync state can initially flip/flop between ... annoying, so just throw these as warns for now (theres are in all queue handlers!)
+										atomsLog.warn(AtomPool.this.context.getName()+": Atom pool cast vote peek/remove failed for "+pendingAtom.getHash());
+//										throw new IllegalStateException("Atom pool vote cast peek/pool failed for "+pendingAtom.getHash());
 								}
 							}
 						}
@@ -222,10 +237,6 @@ public final class AtomPool implements Service
 			this.buckets.put(bucket, new HashSet<PendingAtom>());
 			location += BUCKET_SPAN;
 		}
-
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -372,12 +383,12 @@ public final class AtomPool implements Service
 		}
 	}
 	
-	private boolean process(final AtomVote atomVote) throws IOException, CryptoException, ValidationException
+	private AtomVoteStatus process(final AtomVote atomVote) throws IOException, CryptoException, ValidationException
 	{
 		Objects.requireNonNull(atomVote, "Atom vote is null");
 		
 		AtomPool.this.lock.writeLock().lock();
-		boolean response = false;
+		AtomVoteStatus response = AtomVoteStatus.FAILED;
 		PendingAtom pendingAtom = null;
 		try
 		{
@@ -392,15 +403,20 @@ public final class AtomPool implements Service
 					if (atomsLog.hasLevel(Logging.WARN) == true) 
 						atomsLog.warn(AtomPool.this.context.getName()+": Pending atom "+atomVote.getAtom()+" not found for vote "+atomVote+" for "+atomVote.getOwner());
 
-					return false;
+					return AtomVoteStatus.FAILED;
 				}
 	
-				return true;
+				return AtomVoteStatus.SKIPPED;
 			}
 					
 			long votePower = AtomPool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), atomVote.getOwner());
-			if (votePower > 0 && pendingAtom.vote(atomVote, votePower) == true)
-				response = true;
+			if (votePower > 0)
+			{
+				if (pendingAtom.vote(atomVote, votePower) == true)
+					response = AtomVoteStatus.SUCCESS;
+			}
+			else
+				response = AtomVoteStatus.SKIPPED;
 		}
 		finally
 		{
@@ -408,7 +424,7 @@ public final class AtomPool implements Service
 		}
 		
 		// See if threshold vote power is met, verify aggregate signatures 
-		if (response == true)
+		if (response.equals(AtomVoteStatus.SUCCESS))
 		{
 			// Don't build certificates from cast votes received until executed locally
 			if (pendingAtom.getStatus().greaterThan(CommitStatus.NONE) == false)
@@ -848,19 +864,19 @@ public final class AtomPool implements Service
 		@Subscribe
 		public void on(AtomExceptionEvent event)
 		{
-			AtomPool.this.remove(event.getAtom().getHash());
+			AtomPool.this.remove(event.getPendingAtom().getHash());
 		}
 
 		@Subscribe
 		public void on(AtomDiscardedEvent event)
 		{
-			AtomPool.this.remove(event.getAtom().getHash());
+			AtomPool.this.remove(event.getPendingAtom().getHash());
 		}
 
 		@Subscribe
 		public void on(AtomCommitTimeoutEvent event)
 		{
-			AtomPool.this.remove(event.getAtom().getHash());
+			AtomPool.this.remove(event.getPendingAtom().getHash());
 		}
 	};
 
@@ -873,38 +889,7 @@ public final class AtomPool implements Service
 			AtomPool.this.lock.writeLock().lock();
 			try
 			{
-				if (event.isSynced() == true)
-				{
-					atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to "+event.isSynced()+", loading known atom pool state");
-					for (long height = Math.max(0, AtomPool.this.context.getLedger().getHead().getHeight() - Node.OOS_TRIGGER_LIMIT) ; height <= AtomPool.this.context.getLedger().getHead().getHeight() ; height++)
-					{
-						try
-						{
-							Collection<Hash> items = AtomPool.this.context.getLedger().getLedgerStore().getSyncInventory(height, AtomVote.class);
-							for (Hash item : items)
-							{
-								AtomVote atomVote = AtomPool.this.context.getLedger().getLedgerStore().get(item, AtomVote.class);
-								PendingAtom atom = AtomPool.this.context.getLedger().getAtomHandler().get(atomVote.getAtom());
-								if (atom == null || atom.getBlock() != null)
-									continue;
-
-								AtomPool.this.add(atom);
-								if (process(atomVote) == false)
-									atomsLog.warn(AtomPool.this.context.getName()+": Syncing atom vote "+atomVote.getHash()+" returned false by "+atomVote.getOwner());
-							}
-						}
-						catch (Exception ex)
-						{
-							atomsLog.error(AtomPool.this.context.getName()+": Failed to load state for atom pool at height "+height, ex);
-						}
-					}
-					
-					synchronized(AtomPool.this.voteProcessor)
-					{
-						AtomPool.this.voteProcessor.notify();
-					}
-				}
-				else
+				if (event.isSynced() == false)
 				{
 					atomsLog.info(AtomPool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom pool");
 					reset();

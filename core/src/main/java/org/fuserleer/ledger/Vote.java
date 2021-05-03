@@ -26,7 +26,7 @@ abstract class Vote<T, KP extends KeyPair<?, K, S>, K extends PublicKey, S exten
 	private StateDecision decision;
 
 	@JsonProperty("owner")
-	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	@DsonOutput(Output.ALL)
 	private K owner;
 
 	@JsonProperty("signature")

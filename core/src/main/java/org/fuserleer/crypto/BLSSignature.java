@@ -41,8 +41,9 @@ public final class BLSSignature extends Signature
 	@DsonOutput(Output.ALL)
 	private short version = 100;
 
-	private G1Point point;
 	private byte[] bytes;
+
+	private transient G1Point point;
 
 	@SuppressWarnings("unused")
 	private BLSSignature()
@@ -90,8 +91,11 @@ public final class BLSSignature extends Signature
 		return new BLSSignature(g1Point().sub(signature.g1Point()));
 	}
 
-  	G1Point g1Point() 
+  	synchronized G1Point g1Point() 
   	{
+  		if (this.point == null)
+  			this.point = G1Point.fromBytes(this.bytes);
+  		
   		return new G1Point(this.point);
   	}
   
@@ -105,7 +109,6 @@ public final class BLSSignature extends Signature
 	@JsonProperty("point")
 	private void setJsonPoint(byte[] point) 
 	{
-		this.point = G1Point.fromBytes(point);
 		this.bytes = Arrays.clone(point);
 	}
 	

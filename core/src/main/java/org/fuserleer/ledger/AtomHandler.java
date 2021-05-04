@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +18,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
+import org.fuserleer.Universe;
 import org.fuserleer.collections.MappedBlockingQueue;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
@@ -33,10 +35,11 @@ import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomDiscardedEvent;
+import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
 import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
@@ -62,7 +65,7 @@ public class AtomHandler implements Service
 	private final Context context;
 	
 	private final Map<Hash, PendingAtom> pendingAtoms = Collections.synchronizedMap(new HashMap<Hash, PendingAtom>());
-	private final Map<Hash, Long> atomTimeouts = Collections.synchronizedMap(new HashMap<Hash, Long>());
+	private final Map<Hash, Long> timedout = Collections.synchronizedMap(new HashMap<Hash, Long>());
 	private final MappedBlockingQueue<Hash, Atom> atomQueue;
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
@@ -109,14 +112,15 @@ public class AtomHandler implements Service
 									
 									if (pendingAtom.getAtom() == null)
 										pendingAtom.setAtom(atom.getValue());
+
+									// Store all valid atoms even if they aren't within the local shard group.
+									// Those atoms will be broadcast the the relevant groups and it needs to be stored
+									// to be able to serve the requests for it.  Such atoms can be pruned per epoch
+									if (pendingAtom.getStatus().equals(CommitStatus.NONE))
+										AtomHandler.this.context.getLedger().getLedgerStore().store(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.getAtom());  // TODO handle failure
 	
 									pendingAtom.prepare();
 									
-				                	// Store all valid atoms even if they aren't within the local shard group.
-									// Those atoms will be broadcast the the relevant groups and it needs to be stored
-									// to be able to serve the requests for it.  Such atoms can be pruned per epoch
-				                	AtomHandler.this.context.getLedger().getLedgerStore().store(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.getAtom());  // TODO handle failure
-				                	
 				                	shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
 				                	if (shardGroups.contains(localShardGroup) == false)
 				                		AtomHandler.this.pendingAtoms.remove(pendingAtom.getHash(), pendingAtom);
@@ -161,7 +165,7 @@ public class AtomHandler implements Service
 		this.atomQueue = new MappedBlockingQueue<Hash, Atom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 
 //		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -347,6 +351,49 @@ public class AtomHandler implements Service
 		}
 	}
 
+	public Collection<Hash> timedout()
+	{
+		AtomHandler.this.lock.readLock().lock();
+		try
+		{
+			List<Hash> timeouts = new ArrayList<Hash>(this.timedout.keySet());
+			Collections.sort(timeouts);
+			return timeouts;
+		}
+		finally
+		{
+			AtomHandler.this.lock.readLock().unlock();
+		}
+	}
+	
+	public List<PendingAtom> timedout(final int limit, final Collection<Hash> exclusions)
+	{
+		final List<PendingAtom> timedout = new ArrayList<PendingAtom>();
+		this.lock.readLock().lock();
+		try
+		{
+			for (Hash timeout : this.timedout.keySet())
+			{
+				if (exclusions.contains(timeout) == true)
+					continue;
+				
+				if (this.pendingAtoms.containsKey(timeout) == false)
+					continue;
+				
+				timedout.add(this.pendingAtoms.get(timeout));
+				if (timedout.size() == limit)
+					break;
+			}
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+		
+		return timedout;
+	}
+
+
 	/**
 	 * Returns an existing pending atom or creates it providing that it is not timed out or committed.
 	 * 
@@ -358,6 +405,10 @@ public class AtomHandler implements Service
 	{
 		Objects.requireNonNull(atom, "Atom hash is null");
 		Hash.notZero(atom, "Atom hash is zero");
+
+		// TODO bit hacky ... quick fix to prevent genesis atoms being loaded into pending atom flow on startup 
+		if (Universe.getDefault().getGenesis().contains(atom) == true)
+			return null;
 
 		// TODO dont think this is needed now
 		if (this.context.getNode().isSynced() == false)
@@ -451,6 +502,10 @@ public class AtomHandler implements Service
 	{
 		Objects.requireNonNull(atom, "Atom hash is null");
 		Hash.notZero(atom, "Atom hash is zero");
+		
+		// TODO bit hacky ... quick fix to prevent genesis atoms being loaded into pending atom flow on startup 
+		if (Universe.getDefault().getGenesis().contains(atom) == true)
+			return null;
 
 		// TODO dont think this is needed now
 		if (this.context.getNode().isSynced() == false)
@@ -553,6 +608,9 @@ public class AtomHandler implements Service
 		{
 			this.pendingAtoms.remove(pendingAtom.getHash());
 		}
+		
+		this.timedout.remove(pendingAtom.getHash());
+		this.atomQueue.remove(pendingAtom.getHash());
 	}
 
 	boolean submit(final Atom atom) throws InterruptedException
@@ -598,7 +656,7 @@ public class AtomHandler implements Service
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(BlockCommitEvent blockCommitEvent)
+		public void on(final BlockCommitEvent blockCommitEvent)
 		{
 			AtomHandler.this.lock.writeLock().lock();
 			try
@@ -607,31 +665,75 @@ public class AtomHandler implements Service
 				{
 					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(atom);
 					if (pendingAtom == null)
-						throw new IllegalStateException("Pending atom "+atom+" in block commit "+blockCommitEvent.getBlock().getHeader()+" not found");
+						throw new IllegalStateException("Pending atom "+atom+" accepted in block commit "+blockCommitEvent.getBlock().getHeader()+" not found");
 					
 					pendingAtom.accepted();
+					AtomHandler.this.timedout.remove(pendingAtom.getHash());
 				}
 				
-				// Timeout atoms on progress
+				for (Hash atom : blockCommitEvent.getBlock().getHeader().getInventory(InventoryType.TIMEOUTS))
+				{
+					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(atom);
+					if (pendingAtom == null)
+						throw new IllegalStateException("Pending atom "+atom+" accept timed out in block commit "+blockCommitEvent.getBlock().getHeader()+" not found");
+					
+					if (pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
+						AtomHandler.this.context.getEvents().post(new AtomAcceptedTimeoutEvent(pendingAtom));
+					else if (pendingAtom.getStatus().greaterThan(CommitStatus.EXECUTED) == false)
+						AtomHandler.this.context.getEvents().post(new AtomCommitTimeoutEvent(pendingAtom));
+				}
+			}
+			finally
+			{
+				AtomHandler.this.lock.writeLock().unlock();
+			}
+		}
+
+		@Subscribe
+		public void on(final BlockCommittedEvent blockCommittedEvent)
+		{
+			AtomHandler.this.lock.writeLock().lock();
+			try
+			{
+				// Timeout atoms
 				// Don't process timeouts until after the entire branch has been committed as 
 				// pending atoms that would timeout may be committed somewhere on the branch ahead of this commit.
 				// TODO atoms should be witnessed and timedout based on agreed ledger time
 				long systemTime = Time.getSystemTime();
-				List<AtomDiscardedEvent> timedout = new ArrayList<AtomDiscardedEvent>();
 				synchronized(AtomHandler.this.pendingAtoms)
 				{
 					for (PendingAtom pendingAtom : AtomHandler.this.pendingAtoms.values())
 					{
-						if (pendingAtom.lockCount() == 0 && systemTime > pendingAtom.getInclusionTimeout() && pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
-							timedout.add(new AtomDiscardedEvent(pendingAtom, "Timed out"));
+						if (pendingAtom.getStatus().equals(CommitStatus.NONE) == true && systemTime > pendingAtom.getWitnessedAt() + TimeUnit.SECONDS.toMillis(PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS))
+						{
+							AtomHandler.this.context.getEvents().post(new AtomUnpreparedTimeoutEvent(pendingAtom));
+						}
+						else if (pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
+						{
+							if (pendingAtom.lockCount() == 0 && systemTime > pendingAtom.getInclusionTimeout())
+								AtomHandler.this.timedout.put(pendingAtom.getHash(), blockCommittedEvent.getBlock().getHeader().getHeight());
+						}
+						else if (pendingAtom.getStatus().greaterThan(CommitStatus.EXECUTED) == false)
+						{
+							if (blockCommittedEvent.getBlock().getHeader().getHeight() > pendingAtom.getCommitBlockTimeout() && 
+								systemTime > pendingAtom.getAcceptedAt() + TimeUnit.SECONDS.toMillis(PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS))
+								AtomHandler.this.timedout.put(pendingAtom.getHash(), blockCommittedEvent.getBlock().getHeader().getHeight());
+						}
 					}
 				}
 				
-				if (timedout.isEmpty() == false)
-					timedout.forEach(ade -> 
-					{
-						AtomHandler.this.context.getEvents().post(ade);	// TODO ensure no synchronous event processing happens on this!
-					});
+				// Timeout housekeeping
+				// TODO I think timeout housekeeping is required here.  Locally may have considered an atom timed out due to weak-subjectivity/latency,
+				// but the network never agrees with the local opinion and the atom is accepted into a block or escalates to a commit timeout.
+				Iterator<Entry<Hash, Long>> acceptedTimeoutsIterator = AtomHandler.this.timedout.entrySet().iterator();
+				while(acceptedTimeoutsIterator.hasNext() == true)
+				{
+					Entry<Hash, Long> acceptedTimeout = acceptedTimeoutsIterator.next();
+					if (acceptedTimeout.getValue() > AtomHandler.this.context.getLedger().getHead().getHeight() - PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS)
+						continue;
+					
+					acceptedTimeoutsIterator.remove();
+				}
 			}
 			finally
 			{
@@ -658,6 +760,12 @@ public class AtomHandler implements Service
 		}
 
 		@Subscribe
+		public void on(final AtomUnpreparedTimeoutEvent event) throws IOException 
+		{
+			remove(event.getPendingAtom());
+		}
+
+		@Subscribe
 		public void on(final AtomCommitTimeoutEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
@@ -665,12 +773,10 @@ public class AtomHandler implements Service
 		}
 		
 		@Subscribe
-		public void on(final AtomDiscardedEvent event) throws IOException 
+		public void on(final AtomAcceptedTimeoutEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
-			// TODO Phantom pending atoms appear here after sync
-//			if (event.getPendingAtom().getStatus().greaterThan(CommitStatus.NONE) == true)
-				AtomHandler.this.context.getLedger().getLedgerStore().acceptTimedOut(event.getPendingAtom().getHash());
+			AtomHandler.this.context.getLedger().getLedgerStore().acceptTimedOut(event.getPendingAtom().getHash());
 		}
 		
 		@Subscribe
@@ -683,10 +789,6 @@ public class AtomHandler implements Service
 					return;
 				
 				pendingAtom.setInclusionDelay(Math.max(TimeUnit.SECONDS.toMillis(10), pendingAtom.getInclusionDelay() * 2));
-				
-				if (Time.getSystemTime() > pendingAtom.getInclusionTimeout())
-					AtomHandler.this.context.getEvents().post(new AtomDiscardedEvent(event.getPendingAtom(), event.getException().getMessage()));
-					
 				return;
 			}
 			else
@@ -726,6 +828,7 @@ public class AtomHandler implements Service
 					atomsLog.info(AtomHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing atom handler");
 					AtomHandler.this.atomQueue.clear();
 					AtomHandler.this.pendingAtoms.clear();
+					AtomHandler.this.timedout.clear();
 				}
 			}
 			finally

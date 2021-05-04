@@ -6,7 +6,6 @@ import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Options;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.crypto.KeyPair;
-import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.crypto.BLSKeyPair;
 import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.ECKeyPair;
@@ -170,7 +169,8 @@ public final class GenerateUniverses
 		// TODo want to actually save this or something?
 		final BLSKeyPair ephemeralValidator = new BLSKeyPair();
 		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
-		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 4096) * 4095), UInt256.ZERO, 0, timestamp, ephemeralValidator.getPublicKey(), atoms, Collections.emptyList());
+		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 4096) * 4095), UInt256.ZERO, 0, timestamp, ephemeralValidator.getPublicKey(), 
+									   atoms, Collections.emptyList(), Collections.emptyList());
 		genesisBlock.getHeader().sign(ephemeralValidator);
 		return genesisBlock;
 	}

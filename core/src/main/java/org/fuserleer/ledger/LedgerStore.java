@@ -1,5 +1,6 @@
 package org.fuserleer.ledger;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -10,7 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import org.bouncycastle.util.Arrays;
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
 import org.fuserleer.collections.LRUCacheMap;
@@ -51,6 +51,11 @@ import com.sleepycat.je.TransactionConfig;
 public class LedgerStore extends DatabaseStore implements LedgerProvider
 {
 	private static final Logger databaseLog = Logging.getLogger("database");
+	
+	enum SyncInventoryType
+	{
+		SEEN, COMMIT
+	}
 	
 	private final Context context;
 
@@ -326,6 +331,28 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 					atoms.add(atom);
 				}
 				
+				List<Atom> timedOut = new ArrayList<Atom>();
+				for (Hash atomHash : header.getInventory(InventoryType.TIMEOUTS))
+				{
+					key = new DatabaseEntry(atomHash.toByteArray());
+					status = this.primitives.get(null, key, value, LockMode.DEFAULT);
+					if (status.equals(OperationStatus.SUCCESS) != true)
+						throw new IllegalStateException("Found block header "+hash+" but timedout atom "+atomHash+" is missing");
+
+					Atom atom;
+					try
+					{
+						atom = Serialization.getInstance().fromDson(value.getData(), Atom.class);
+					}
+					// FIXME Hack to catch this and convert to a SerializationException that is easier to handle.
+					catch (IllegalArgumentException iaex)
+					{
+						throw new SerializationException(iaex.getMessage());
+					}
+					
+					timedOut.add(atom);
+				}
+
 				List<AtomCertificate> certificates = new ArrayList<AtomCertificate>();
 				for (Hash certificateHash : header.getInventory(InventoryType.CERTIFICATES))
 				{
@@ -348,7 +375,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 					certificates.add(certificate);
 				}
 
-				return (T) new Block(header, atoms, certificates);
+				return (T) new Block(header, atoms, certificates, timedOut);
 			}
 			else 
 				throw new IllegalArgumentException();
@@ -410,7 +437,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			    		throw new DatabaseException("Failed to store " + blockHeader.getHash() + " due to " + status.name());
 			    } 
 			    
-				status = storeSyncInventory(transaction, height, blockHeader.getHash(), BlockHeader.class);
+				status = storeSyncInventory(transaction, height, blockHeader.getHash(), BlockHeader.class, SyncInventoryType.SEEN);
 			    if (status.equals(OperationStatus.SUCCESS) == false) 
 		    		throw new DatabaseException("Failed to store block header "+blockHeader.getHash()+" in sync inventory due to "+status.name());
 
@@ -434,6 +461,23 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 				}
 		    }
 		    
+		    for (Atom atom : block.getTimedout())
+		    {
+				if (this.primitiveLRW.containsKey(atom.getHash()) == false)
+				{
+					status = store(transaction, block.getHeader().getHeight(), atom);
+				    if (status.equals(OperationStatus.SUCCESS) == false) 
+				    {
+				    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+				    		databaseLog.warn(this.context.getName()+": Atom "+atom.getHash()+" in block "+blockHeader + " is already present");
+				    	else 
+				    		throw new DatabaseException("Failed to store atom "+atom.getHash()+" in block "+blockHeader + " due to " + status.name());
+				    }
+				    
+				    LRWItems.put(atom.getHash(), atom.getHash());
+				}
+		    }
+
 		    for (AtomCertificate certificate : block.getCertificates())
 		    {
 				if (this.primitiveLRW.containsKey(certificate.getHash()) == false)
@@ -498,7 +542,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store " + blockHeader.getHash() + " due to " + status.name());
 		    } 
 		    
-			status = storeSyncInventory(transaction, height, blockHeader.getHash(), BlockHeader.class);
+			status = storeSyncInventory(transaction, height, blockHeader.getHash(), BlockHeader.class, SyncInventoryType.SEEN);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store block header "+blockHeader.getHash()+" in sync inventory due to "+status.name());
 
@@ -572,7 +616,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 	    if (status.equals(OperationStatus.SUCCESS) == false) 
     		throw new DatabaseException("Failed to store atom commit "+atom.getHash()+" due to "+status.name());
 
-		status = storeSyncInventory(transaction, height, atom.getHash(), Atom.class);
+		status = storeSyncInventory(transaction, height, atom.getHash(), Atom.class, SyncInventoryType.SEEN);
 	    if (status.equals(OperationStatus.SUCCESS) == false) 
     		throw new DatabaseException("Failed to store atom "+atom.getHash()+" in sync inventory due to "+status.name());
 
@@ -592,7 +636,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store state input "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom()+" due to "+status.name());
 
-			status = storeSyncInventory(transaction, height, stateInput.getHash(), StateInput.class);
+			status = storeSyncInventory(transaction, height, stateInput.getHash(), StateInput.class, SyncInventoryType.SEEN);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store sync inventory state input for "+stateInput.getKey()+":"+stateInput.getValue()+" for atom "+stateInput.getAtom()+" due to "+status.name());
 		    
@@ -647,7 +691,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store atom pool votes "+vote.getHash()+" due to "+status.name());
 		    } 
 		    
-			status = storeSyncInventory(transaction, height, vote.getHash(), AtomVote.class);
+			status = storeSyncInventory(transaction, height, vote.getHash(), AtomVote.class, SyncInventoryType.SEEN);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store atom vote "+vote.getHash()+" in sync inventory due to "+status.name());
 
@@ -688,7 +732,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store block votes "+vote.getHash()+" due to "+status.name());
 		    } 
 
-			status = storeSyncInventory(transaction, height, vote.getHash(), BlockVote.class);
+			status = storeSyncInventory(transaction, height, vote.getHash(), BlockVote.class, SyncInventoryType.SEEN);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store block vote "+vote.getHash()+" in sync inventory due to "+status.name());
 
@@ -729,7 +773,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store state vote "+vote.getHash()+" due to "+status.name());
 		    } 
 
-			status = storeSyncInventory(transaction, height, vote.getHash(), StateVote.class);
+			status = storeSyncInventory(transaction, height, vote.getHash(), StateVote.class, SyncInventoryType.SEEN);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store state vote "+vote.getHash()+" in sync inventory due to "+status.name());
 
@@ -770,7 +814,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store state certificate "+certificate.getHash()+" due to "+status.name());
 		    } 
 
-			status = storeSyncInventory(transaction, height, certificate.getHash(), StateCertificate.class);
+			status = storeSyncInventory(transaction, height, certificate.getHash(), StateCertificate.class, SyncInventoryType.SEEN);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store state certificate "+certificate.getHash()+" in sync inventory due to "+status.name());
 		    
@@ -811,7 +855,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		throw new DatabaseException("Failed to store certificate "+certificate.getHash()+" due to "+status.name());
 		    } 
 		    
-			status = storeSyncInventory(transaction, height, certificate.getHash(), AtomCertificate.class);
+			status = storeSyncInventory(transaction, height, certificate.getHash(), AtomCertificate.class, SyncInventoryType.SEEN);
 		    if (status.equals(OperationStatus.SUCCESS) == false) 
 	    		throw new DatabaseException("Failed to store atom certificate "+certificate.getHash()+" in sync inventory due to "+status.name());
 
@@ -986,14 +1030,13 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    {
 		    	StateAddress	atomStateAddress = new StateAddress(Atom.class, atom.getHash());
 		    	Path 			atomPath = new Path(atomStateAddress.get(), ImmutableMap.of(Elements.BLOCK, block.getHeader().getHash(), Elements.ATOM, atom.getHash()));
-		    	Commit			atomCommit = null;
 	    		DatabaseEntry 	atomCommitValue = new DatabaseEntry();
 	    		DatabaseEntry 	atomStateAddressKey = new DatabaseEntry(atomStateAddress.get().toByteArray());
 	    		status = this.stateCommits.get(transaction, atomStateAddressKey, atomCommitValue, LockMode.DEFAULT);
 			    if (status.equals(OperationStatus.SUCCESS) != true) 
 		    		throw new DatabaseException("Failed to get atom commit "+atom.getHash()+" in block "+block.getHash()+" due to "+status.name());
 			    
-			    atomCommit = Commit.from(atomCommitValue.getData());
+			    Commit atomCommit = Commit.from(atomCommitValue.getData());
 		    	atomCommit = new Commit(block.getHeader().getIndexOf(InventoryType.ATOMS, atom.getHash()), atomPath, Collections.emptyList(), atomCommit.getTimestamp(), false, false);
 	    		atomCommitValue = new DatabaseEntry(atomCommit.toByteArray());
 				status = this.stateCommits.put(transaction, atomStateAddressKey, atomCommitValue);
@@ -1007,7 +1050,6 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    for (AtomCertificate certificate : block.getCertificates())
 		    {
 		    	StateAddress	atomStateAddress = new StateAddress(Atom.class, certificate.getAtom());
-		    	Commit			atomCommit = null;
 	    		DatabaseEntry 	atomCommitValue = new DatabaseEntry();
 	    		DatabaseEntry 	atomStateAddressKey = new DatabaseEntry(atomStateAddress.get().toByteArray());
 
@@ -1015,7 +1057,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			    if (status.equals(OperationStatus.SUCCESS) != true) 
 		    		throw new DatabaseException("Failed to commit atom certificate "+certificate.getHash()+" for atom "+certificate.getAtom()+" in block "+block.getHash()+" due to " + status.name());
 			    
-			    atomCommit = Commit.from(atomCommitValue.getData());
+			    Commit atomCommit = Commit.from(atomCommitValue.getData());
 			    atomCommit.getPath().add(Elements.CERTIFICATE, certificate.getHash());
 				atomCommitValue = new DatabaseEntry(atomCommit.toByteArray());
 		    	
@@ -1032,6 +1074,32 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			    status = this.stateCommits.put(transaction, certificateStateAddressKey, certificateCommitValue);
 			    if (status.equals(OperationStatus.SUCCESS) != true) 
 		    		throw new DatabaseException("Failed to commit atom certificate "+certificate.getHash()+" for atom "+certificate.getAtom()+" in block "+block.getHash()+" due to " + status.name());
+		    }
+		    
+		    for (Atom atom : block.getTimedout())
+		    {
+		    	StateAddress	atomStateAddress = new StateAddress(Atom.class, atom.getHash());
+	    		DatabaseEntry 	atomCommitValue = new DatabaseEntry();
+	    		DatabaseEntry 	atomStateAddressKey = new DatabaseEntry(atomStateAddress.get().toByteArray());
+	    		status = this.stateCommits.get(transaction, atomStateAddressKey, atomCommitValue, LockMode.DEFAULT);
+
+			    Commit atomCommit;
+	    		if (status.equals(OperationStatus.SUCCESS) == true) 
+				    atomCommit = Commit.from(atomCommitValue.getData());
+	    		else
+	    			atomCommit = new Commit(atom.getHash(), block.getHeader().getTimestamp());
+	    		
+	    		if (atomCommit.getPath().get(Elements.BLOCK) == null)
+	    			atomCommit.setAcceptTimedOut();
+	    		else
+	    			atomCommit.setCommitTimedOut();
+	    		
+	    		atomCommitValue = new DatabaseEntry(atomCommit.toByteArray());
+				status = this.stateCommits.put(transaction, atomStateAddressKey, atomCommitValue);
+			    if (status.equals(OperationStatus.SUCCESS) != true) 
+		    		throw new DatabaseException("Failed to commit atom timeout state "+atom+" in block "+block.getHash()+" due to " + status.name());
+				else if (databaseLog.hasLevel(Logging.DEBUG) == true)
+					databaseLog.debug(this.context.getName()+": Stored atom timeout state "+atomStateAddress);
 		    }
 
 		    DatabaseEntry syncKey = new DatabaseEntry(Longs.toByteArray(block.getHeader().getHeight()));
@@ -1150,7 +1218,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		    		if (status.equals(OperationStatus.SUCCESS) == false)
 		   				throw new DatabaseException("Atom state commit "+commit.getAtom().getHash()+" not found or has error "+status.name());
 			    		
-		    		final Commit atomCommit = Commit.from(atomCommitValue.getData()); //Serialization.getInstance().fromDson(atomCommitValue.getData(), Commit.class);
+		    		final Commit atomCommit = Commit.from(atomCommitValue.getData());
 					if (atomCommit.getPath().get(Elements.BLOCK).equals(commit.getHead().getHash()) == false)
 						throw new DatabaseException("Atom state commit "+commit.getAtom().getHash()+" references block "+atomCommit.getPath().get(Elements.BLOCK)+" not expected "+commit.getHead().getHash());
 	
@@ -1301,9 +1369,10 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		}
 	}
 
-	Collection<Hash> getSyncInventory(final long height, final Class<? extends Primitive> type) throws DatabaseException
+	Collection<Hash> getSyncInventory(final long height, final Class<? extends Primitive> primitive, final SyncInventoryType type) throws DatabaseException
 	{
 		Objects.requireNonNull(type, "Type is null");
+		Objects.requireNonNull(primitive, "Primitive class is null");
 		Numbers.isNegative(height, "Height is negative");
 		
 		List<Hash> items = new ArrayList<Hash>();
@@ -1314,9 +1383,12 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			OperationStatus status = cursor.getSearchKey(key, value, LockMode.DEFAULT);
 			while(status.equals(OperationStatus.SUCCESS) == true)
 			{
-				String typeName = new String(value.getData(), Hash.BYTES, value.getSize() - Hash.BYTES);
-				if (Serialization.getInstance().getClassForId(typeName).equals(type) == true)
-					items.add(new Hash(value.getData(), 0, Hash.BYTES));
+				if (type.ordinal() == value.getData()[0])
+				{
+					String typeName = new String(value.getData(), Hash.BYTES+1, value.getSize() - (Hash.BYTES+1));
+					if (Serialization.getInstance().getClassForId(typeName).equals(primitive) == true)
+						items.add(new Hash(value.getData(), 1, Hash.BYTES));
+				}
 				
 				status = cursor.getNextDup(key, value, LockMode.DEFAULT);
 			}
@@ -1332,17 +1404,41 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		return items;
 	}
 	
-	private OperationStatus storeSyncInventory(final Transaction transaction, final long height, final Hash item, final Class<? extends Primitive> type)
+	private OperationStatus storeSyncInventory(final Transaction transaction, final long height, final Hash item, final Class<? extends Primitive> primitive, final SyncInventoryType type) throws IOException
 	{
 		Objects.requireNonNull(transaction, "Transaction is null");
+		Objects.requireNonNull(item, "Item hash is null");
+		Objects.requireNonNull(primitive, "Primtive class is null");
+		Objects.requireNonNull(type, "Type is null");
+		Numbers.isNegative(height, "Height is negative");
+		Hash.notZero(item, "item hash is ZERO");
+		
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		baos.write(type.ordinal());
+		baos.write(item.toByteArray());
+		baos.write(Serialization.getInstance().getIdForClass(primitive).getBytes(StandardCharsets.UTF_8));
+		
+		DatabaseEntry key = new DatabaseEntry(Longs.toByteArray(height));
+		DatabaseEntry value = new DatabaseEntry(baos.toByteArray());
+		OperationStatus status = this.syncCache.put(transaction, key, value);
+		return status;
+	}
+
+	OperationStatus storeSyncInventory(final long height, final Hash item, final Class<? extends Primitive> primitive, final SyncInventoryType type) throws IOException
+	{
 		Objects.requireNonNull(item, "Item hash is null");
 		Objects.requireNonNull(type, "Type is null");
 		Numbers.isNegative(height, "Height is negative");
 		Hash.notZero(item, "item hash is ZERO");
 		
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		baos.write(type.ordinal());
+		baos.write(item.toByteArray());
+		baos.write(Serialization.getInstance().getIdForClass(primitive).getBytes(StandardCharsets.UTF_8));
+
 		DatabaseEntry key = new DatabaseEntry(Longs.toByteArray(height));
-		DatabaseEntry value = new DatabaseEntry(Arrays.concatenate(item.toByteArray(), Serialization.getInstance().getIdForClass(type).getBytes(StandardCharsets.UTF_8)));
-		OperationStatus status = this.syncCache.put(transaction, key, value);
+		DatabaseEntry value = new DatabaseEntry(baos.toByteArray());
+		OperationStatus status = this.syncCache.put(null, key, value);
 		return status;
 	}
 

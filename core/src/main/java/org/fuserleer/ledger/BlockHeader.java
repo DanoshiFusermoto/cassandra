@@ -65,7 +65,7 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 	
 	public static enum InventoryType
 	{
-		CERTIFICATES, ATOMS;
+		CERTIFICATES, ATOMS, TIMEOUTS;
 		
 		@JsonValue
 		@Override
@@ -169,6 +169,8 @@ public final class BlockHeader implements Comparable<BlockHeader>, Hashable, Pri
 				this.inventory.put(InventoryType.CERTIFICATES, inventory.containsKey(primitive) == true ? new ArrayList<Hash>(inventory.get(primitive)) : Collections.emptyList());
 			else if (primitive.equals(InventoryType.ATOMS) == true)
 				this.inventory.put(InventoryType.ATOMS, inventory.containsKey(primitive) == true ? new ArrayList<Hash>(inventory.get(primitive)) : Collections.emptyList());
+			else if (primitive.equals(InventoryType.TIMEOUTS) == true)
+				this.inventory.put(InventoryType.TIMEOUTS, inventory.containsKey(primitive) == true ? new ArrayList<Hash>(inventory.get(primitive)) : Collections.emptyList());
 			else
 				throw new IllegalArgumentException("Inventory primitive "+primitive+" is not supported");
 			

@@ -42,6 +42,7 @@ class PendingBlock implements Hashable
 	private BlockHeader	header;
 	private boolean 	unbranched;
 	private Map<Hash, PendingAtom> atoms;
+	private Map<Hash, PendingAtom> timedout;
 	private Map<Hash, AtomCertificate> certificates;
 	private final Map<BLSPublicKey, BlockVote> votes;
 	
@@ -55,19 +56,22 @@ class PendingBlock implements Hashable
 		this.unbranched = true;
 		this.votes = new HashMap<BLSPublicKey, BlockVote>();
 		this.atoms = new HashMap<Hash, PendingAtom>();
+		this.timedout = new HashMap<Hash, PendingAtom>();
 		this.certificates = new HashMap<Hash, AtomCertificate>();
 	}
 
-	public PendingBlock(final Context context, final BlockHeader header, final Collection<PendingAtom> atoms, final Collection<AtomCertificate> certificates)
+	public PendingBlock(final Context context, final BlockHeader header, final Collection<PendingAtom> atoms, final Collection<AtomCertificate> certificates, final Collection<PendingAtom> timedout)
 	{
 		this(context, Objects.requireNonNull(header, "Block header is null").getHash());
 		
 		Objects.requireNonNull(certificates, "Certificates is null");
+		Objects.requireNonNull(timedout, "Timed out is null");
 		Objects.requireNonNull(atoms, "Pending atoms is null");
 		Numbers.isZero(atoms.size(), "Pending atoms is empty");
 
 		this.header = header;
 		this.atoms.putAll(atoms.stream().collect(Collectors.toMap(pa -> pa.getHash(), pa -> pa)));
+		this.timedout.putAll(timedout.stream().collect(Collectors.toMap(to -> to.getHash(), to -> to)));
 		this.certificates.putAll(certificates.stream().collect(Collectors.toMap(c -> c.getHash(), c -> c)));
 		constructBlock();
 	}
@@ -168,6 +172,26 @@ class PendingBlock implements Hashable
 				atoms.add(atom.getAtom());
 			}
 			
+			List<Atom> timedout;
+			List<Hash> timedoutInventory = this.header.getInventory(InventoryType.TIMEOUTS);
+			if (this.timedout.size() != timedoutInventory.size())
+				return;
+				
+			timedout = new ArrayList<Atom>();
+			for (Hash hash : timedoutInventory)
+			{
+				PendingAtom atom = this.timedout.get(hash);
+				if (atom == null || atom.getAtom() == null)
+				{
+					if (blocksLog.hasLevel(Logging.DEBUG) == true)
+						blocksLog.debug(this.context.getName()+": Timed out atom "+hash+" not found for "+getHash());
+
+					return;
+				}
+				
+				timedout.add(atom.getAtom());
+			}
+
 			List<AtomCertificate> certificates;
 			List<Hash> certificateInventory = this.header.getInventory(InventoryType.CERTIFICATES);
 			certificates = new ArrayList<AtomCertificate>();
@@ -185,7 +209,7 @@ class PendingBlock implements Hashable
 				certificates.add(certificate);
 			}
 			
-			this.block = new Block(this.header, atoms, certificates);
+			this.block = new Block(this.header, atoms, certificates, timedout);
 		}
 		finally
 		{
@@ -213,6 +237,26 @@ class PendingBlock implements Hashable
 		}
 	}
 	
+	boolean putTimedout(final PendingAtom atom)
+	{
+		Objects.requireNonNull(atom, "Pending atom is null");
+		this.lock.lock();
+		try
+		{
+			if (this.timedout.containsKey(atom.getHash()) == false)
+			{
+				this.timedout.put(atom.getHash(), atom);
+				return true;
+			}
+			
+			return false;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
 	boolean putCertificate(final AtomCertificate certificate)
 	{
 		Objects.requireNonNull(certificate, "Certificate is null");
@@ -250,6 +294,22 @@ class PendingBlock implements Hashable
 		}
 	}
 	
+	boolean containsTimedout(final Hash atom)
+	{
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is ZERO");
+
+		this.lock.lock();
+		try
+		{
+			return this.timedout.containsKey(atom);
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
 	boolean containsCertificate(final Hash certificate)
 	{
 		Objects.requireNonNull(certificate, "Certificate hash is null");
@@ -279,6 +339,26 @@ class PendingBlock implements Hashable
 		try
 		{
 			return Collections.unmodifiableList(this.atoms.values().stream().collect(Collectors.toList()));
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	public PendingAtom getTimedout(final Hash atom)
+	{
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is zero");
+		return this.timedout.get(atom);
+	}
+
+	public List<PendingAtom> getTimedout()
+	{
+		this.lock.lock();
+		try
+		{
+			return Collections.unmodifiableList(this.timedout.values().stream().collect(Collectors.toList()));
 		}
 		finally
 		{

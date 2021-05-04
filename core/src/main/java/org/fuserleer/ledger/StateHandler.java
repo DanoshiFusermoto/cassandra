@@ -42,7 +42,7 @@ import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCertificateEvent;
 import org.fuserleer.ledger.events.AtomCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomDiscardedEvent;
+import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomExecutedEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
@@ -61,7 +61,6 @@ import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
-import org.fuserleer.time.Time;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
@@ -1236,7 +1235,7 @@ public final class StateHandler implements Service
 		}
 
 		@Subscribe
-		public void on(final AtomDiscardedEvent event) throws IOException 
+		public void on(final AtomAcceptedTimeoutEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
 		}
@@ -1361,38 +1360,6 @@ public final class StateHandler implements Service
 						//		 we're sending commit certificates to them.
 						cerbyLog.fatal(StateHandler.this.context.getName()+": Failed to process AtomCommittedEvent for "+certificate.getAtom(), ex);
 					}
-				}
-				
-				try
-				{
-					// Timeouts
-					Set<PendingAtom> timedOut = new HashSet<PendingAtom>();
-					for (PendingAtom pendingAtom : StateHandler.this.atoms.values())
-					{
-						if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true && 
-							blockCommittedEvent.getBlock().getHeader().getHeight() > pendingAtom.getCommitBlockTimeout() && 
-							Time.getSystemTime() > pendingAtom.getAcceptedAt() + PendingAtom.ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS)
-							timedOut.add(pendingAtom);
-					}
-
-					// Timed out atoms may have been committed on the timeout block ... allow commit
-					// TODO need to test this isn't strongly-subjective otherwise some could allow, some may have already timed out
-					timedOut.removeAll(committed);
-					for (PendingAtom pendingAtom : timedOut)
-					{
-						if (pendingAtom.getAtom() == null)
-							cerbyLog.warn(StateHandler.this.context.getName()+": Atom "+pendingAtom.getHash()+" timeout but never seen at "+blockCommittedEvent.getBlock().getHeader());
-						else
-						{
-							cerbyLog.warn(StateHandler.this.context.getName()+": Atom "+pendingAtom.getHash()+" timeout at block "+blockCommittedEvent.getBlock().getHeader());
-							StateHandler.this.context.getEvents().post(new AtomCommitTimeoutEvent(pendingAtom));
-						}
-					}
-				}
-				catch (Exception ex)
-				{
-					cerbyLog.error(StateHandler.class.getName()+": Processing of atom timeouts failed", ex);
-					return;
 				}
 			}
 			finally

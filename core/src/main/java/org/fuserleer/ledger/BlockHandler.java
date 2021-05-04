@@ -878,10 +878,14 @@ public class BlockHandler implements Service
 	private PendingBlock build(final BlockHeader head, final PendingBranch branch) throws IOException, CryptoException
 	{
 		final Set<Hash> branchCertificateExclusions = (branch == null || branch.isEmpty() == true) ? Collections.emptySet() : new HashSet<Hash>();
+		final Set<Hash> branchTimedoutExclusions = (branch == null || branch.isEmpty() == true) ? Collections.emptySet() : new HashSet<Hash>();
 		if (branch != null && branch.isEmpty() == false)
 		{
 			for (PendingBlock block : branch.getBlocks())
+			{
 				branchCertificateExclusions.addAll(block.getHeader().getInventory(InventoryType.CERTIFICATES));
+				branchTimedoutExclusions.addAll(block.getHeader().getInventory(InventoryType.TIMEOUTS));
+			}
 			
 			if (branch != null && branch.isEmpty() == false && head.equals(branch.getHigh().getHeader()) == false)
 				throw new IllegalArgumentException("Head is not top of branch "+head);
@@ -896,10 +900,12 @@ public class BlockHandler implements Service
 			this.context.getMetaData().increment("ledger.accumulator.iterations");
 
 			final StateAccumulator accumulator = branch != null ? branch.getStateAccumulator().shadow() : this.context.getLedger().getStateAccumulator().shadow();
+
+			final List<Hash> certificateExclusions = new ArrayList<Hash>(branchCertificateExclusions);
 			final Set<Hash> atomExclusions = branch == null ? new HashSet<Hash>() : branch.getBlocks().stream().flatMap(pb -> pb.getHeader().getInventory(InventoryType.ATOMS).stream()).collect(Collectors.toSet());
 			atomExclusions.addAll(accumulator.getPendingAtoms().stream().map(pa -> pa.getHash()).collect(Collectors.toSet()));
+			atomExclusions.addAll(branchTimedoutExclusions);
 			
-			final List<Hash> certificateExclusions = new ArrayList<Hash>(branchCertificateExclusions);
 			final long timestamp = Time.getSystemTime();
 			final List<PendingAtom> seedAtoms = this.context.getLedger().getAtomPool().get(initialAtomTarget-Long.MIN_VALUE, initialAtomTarget, BlockRegulator.BASELINE_DISTANCE_TARGET, 8, atomExclusions);
 			long nextAtomTarget = initialAtomTarget;
@@ -945,6 +951,7 @@ public class BlockHandler implements Service
 						{
 							// Hack as no current block header, but accumulator here is ephemeral anyway
 							accumulator.lock(atom);
+							
 							atomExclusions.add(atom.getHash());
 							candidateAtoms.put(atom.getHash(), atom);
 							nextAtomTarget = atom.getHash().asLong();
@@ -960,11 +967,20 @@ public class BlockHandler implements Service
 								int blockSize = 0;
 								Collection<AtomCertificate> candidateCertificates;
 								int numCertificatesToInclude = BlockHeader.MAX_ATOMS;
+								Collection<PendingAtom> candidateTimedout;
+								int numTimedoutToInclude = BlockHeader.MAX_ATOMS;
 								do
 								{
 									candidateCertificates = this.context.getLedger().getStateHandler().get(numCertificatesToInclude, certificateExclusions);
+									
+									final List<Hash> timedoutExclusions = new ArrayList<Hash>(branchTimedoutExclusions);
+									timedoutExclusions.addAll(atomExclusions);
+									timedoutExclusions.addAll(certificateExclusions);
+									timedoutExclusions.addAll(candidateCertificates.stream().map(c -> c.getAtom()).collect(Collectors.toList()));
+									candidateTimedout = this.context.getLedger().getAtomHandler().timedout(numTimedoutToInclude, timedoutExclusions);
+									
 									discoveredBlock = new Block(previous.getHeight()+1, previous.getHash(), blockTarget, previous.getStepped(), previous.getNextIndex(), timestamp, this.context.getNode().getIdentity(), 
-																candidateAtoms.values().stream().map(pa -> pa.getAtom()).collect(Collectors.toList()), candidateCertificates);
+																candidateAtoms.values().stream().map(pa -> pa.getAtom()).collect(Collectors.toList()), candidateCertificates, candidateTimedout.stream().map(pa -> pa.getAtom()).collect(Collectors.toList()));
 								
 									if (discoveredBlock.getHeader().getStep() != blockStep)
 										throw new IllegalStateException("Step of generated block is "+discoveredBlock.getHeader().getStep()+" expected "+blockStep);
@@ -975,6 +991,7 @@ public class BlockHandler implements Service
 									if (blockSize > Message.MAX_MESSAGE_SIZE)
 									{
 										numCertificatesToInclude /= 2;
+										numTimedoutToInclude /= 2;
 										blockSize = 0;
 										blocksLog.warn(this.context.getName()+": Generated block with size "+bytes.length+" which exceeds maximum of "+Message.MAX_MESSAGE_SIZE+", adjusting included certificates");
 									}
@@ -982,7 +999,7 @@ public class BlockHandler implements Service
 								while(blockSize == 0);
 								
 								if (strongestBlock == null || strongestBlock.getHeader().getInventory(InventoryType.ATOMS).size() < discoveredBlock.getHeader().getInventory(InventoryType.ATOMS).size())
-									strongestBlock = new PendingBlock(BlockHandler.this.context, discoveredBlock.getHeader(), candidateAtoms.values(), candidateCertificates);
+									strongestBlock = new PendingBlock(BlockHandler.this.context, discoveredBlock.getHeader(), candidateAtoms.values(), candidateCertificates, candidateTimedout);
 							}
 							
 							break;
@@ -1107,6 +1124,19 @@ public class BlockHandler implements Service
 							}
 						}
 		
+						for (Hash atomHash : pendingBlock.getHeader().getInventory(InventoryType.TIMEOUTS))
+						{
+							if (pendingBlock.containsTimedout(atomHash) == false)
+							{
+								PendingAtom pendingAtom = BlockHandler.this.context.getLedger().getAtomHandler().get(atomHash);
+								if (pendingAtom != null)
+								{
+									pendingAtom.lock();
+									pendingBlock.putTimedout(pendingAtom);
+								}
+							}
+						}
+
 						for (Hash certificateHash : pendingBlock.getHeader().getInventory(InventoryType.CERTIFICATES))
 						{
 							if (pendingBlock.containsCertificate(certificateHash) == false)

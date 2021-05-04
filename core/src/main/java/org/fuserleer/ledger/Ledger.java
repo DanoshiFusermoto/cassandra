@@ -30,9 +30,10 @@ import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomDiscardedEvent;
+import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
@@ -373,15 +374,21 @@ public final class Ledger implements Service, LedgerInterface
 		}
 		
 		@Subscribe
-		public void on(AtomDiscardedEvent event) 
+		public void on(AtomUnpreparedTimeoutEvent event) 
 		{
-			Exception ex = new ValidationException("Atom "+event.getPendingAtom().getHash()+" was discarded due to: "+event.getMessage());
-			ledgerLog.warn(Ledger.this.context.getName()+": "+ex.getMessage());
+			ledgerLog.warn(Ledger.this.context.getName()+":Pending atom "+event.getPendingAtom().getHash()+" unprepared timed out");
+		}
+
+		@Subscribe
+		public void on(AtomAcceptedTimeoutEvent event) 
+		{
+			ledgerLog.warn(Ledger.this.context.getName()+":Pending atom "+event.getPendingAtom().getHash()+" accept timed out");
 		}
 
 		@Subscribe
 		public void on(AtomCommitTimeoutEvent event)
 		{
+			ledgerLog.warn(Ledger.this.context.getName()+":Pending atom "+event.getPendingAtom().getHash()+" commit timed out");
 		}
 	};
 	
@@ -462,7 +469,7 @@ public final class Ledger implements Service, LedgerInterface
 			}
 			
 			Ledger.this.update(block);
-			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
+			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader().getInventory(InventoryType.TIMEOUTS).size()+" timeouts "+block.getHeader());
 			stats(block);
 		}
 			
@@ -476,7 +483,7 @@ public final class Ledger implements Service, LedgerInterface
 			
 			Ledger.this.head.set(block.getHeader());
 			Ledger.this.context.getNode().setHead(block.getHeader());
-			ledgerLog.info(Ledger.this.context.getName()+": Synced block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader());
+			ledgerLog.info(Ledger.this.context.getName()+": Synced block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader().getInventory(InventoryType.TIMEOUTS).size()+" timeouts "+block.getHeader());
 			stats(block);
 		}
 

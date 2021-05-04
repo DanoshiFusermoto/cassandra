@@ -105,6 +105,12 @@ public final class Path
 	@JsonDeserialize(as=LinkedHashMap.class)
 	private Map<Elements, Hash> elements;
 	
+	@SuppressWarnings("unused")
+	private Path()
+	{
+		// FOR SERIALIZER
+	}
+
 	Path(final Hash endpoint)
 	{
 		Objects.requireNonNull(endpoint, "Endpoint is null");

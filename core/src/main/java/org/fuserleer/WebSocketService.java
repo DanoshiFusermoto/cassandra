@@ -6,13 +6,15 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.stream.Collectors;
 
 import org.fuserleer.events.EventListener;
+import org.fuserleer.ledger.PendingAtom;
 import org.fuserleer.ledger.StateLockedException;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomDiscardedEvent;
+import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.Serialization;
@@ -157,22 +159,30 @@ public final class WebSocketService extends WebSocketServer
 		}
 		
 		@Subscribe
-		public void on(AtomDiscardedEvent event) 
+		public void on(AtomUnpreparedTimeoutEvent event) 
 		{
-			JSONObject eventJSON = new JSONObject();
-			eventJSON.put("type", "discarded");
-			eventJSON.put("atom", event.getAtom().getHash());
-			eventJSON.put("particles", new JSONArray(event.getAtom().getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
-			WebSocketService.this.broadcast(eventJSON.toString());
+			timedout(event.getPendingAtom());
+		}
+
+		@Subscribe
+		public void on(AtomAcceptedTimeoutEvent event) 
+		{
+			timedout(event.getPendingAtom());
 		}
 
 		@Subscribe
 		public void on(AtomCommitTimeoutEvent event)
 		{
+			timedout(event.getPendingAtom());
+		}
+		
+		private void timedout(PendingAtom pendingAtom)
+		{
 			JSONObject eventJSON = new JSONObject();
 			eventJSON.put("type", "timeout");
-			eventJSON.put("atom", event.getAtom().getHash());
-			eventJSON.put("particles", new JSONArray(event.getAtom().getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
+			eventJSON.put("atom", pendingAtom.getHash());
+			if (pendingAtom.getAtom() != null)
+				eventJSON.put("particles", new JSONArray(pendingAtom.getAtom().getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
 	};

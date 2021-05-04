@@ -43,9 +43,10 @@ public final class BLSPublicKey extends PublicKey
 	@DsonOutput(Output.ALL)
 	private short version = 100;*/
 
-	private G2Point point;
 	private byte[] bytes;
-	
+
+	private transient G2Point point;
+
 	@SuppressWarnings("unused")
 	private BLSPublicKey()
 	{
@@ -80,8 +81,11 @@ public final class BLSPublicKey extends PublicKey
 		return new BLSPublicKey(g2Point().add(publicKey.point));
 	}
 
-  	public G2Point g2Point() 
+  	public synchronized G2Point g2Point() 
   	{
+  		if (this.point == null)
+  			this.point = G2Point.fromBytes(this.bytes);
+  		
   		return new G2Point(this.point);
   	}
   	

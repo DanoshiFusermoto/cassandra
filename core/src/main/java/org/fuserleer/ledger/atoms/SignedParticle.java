@@ -71,7 +71,7 @@ public abstract class SignedParticle extends Particle
 		return key.verify(getHash(), this.signature);
 	}
 
-	boolean requiresSignature()
+	public boolean requiresSignature()
 	{
 		return true;
 	}

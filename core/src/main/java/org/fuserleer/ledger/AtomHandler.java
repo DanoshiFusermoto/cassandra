@@ -770,6 +770,7 @@ public class AtomHandler implements Service
 		{
 			remove(event.getPendingAtom());
 			AtomHandler.this.context.getLedger().getLedgerStore().commitTimedOut(event.getPendingAtom().getHash());
+			AtomHandler.this.context.getLedger().getLedgerStore().storeSyncInventory(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom().getHash(), Atom.class, SyncInventoryType.COMMIT);
 		}
 		
 		@Subscribe
@@ -777,6 +778,7 @@ public class AtomHandler implements Service
 		{
 			remove(event.getPendingAtom());
 			AtomHandler.this.context.getLedger().getLedgerStore().acceptTimedOut(event.getPendingAtom().getHash());
+			AtomHandler.this.context.getLedger().getLedgerStore().storeSyncInventory(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom().getHash(), Atom.class, SyncInventoryType.COMMIT);
 		}
 		
 		@Subscribe

@@ -70,7 +70,7 @@ public abstract class PublicKey implements Comparable<PublicKey>
 	@Override
 	public final String toString() 
 	{
-		return Bytes.toBase64String(asHash().toByteArray());
+		return Bytes.toBase64String(toByteArray());
 	}
 
 	@Override

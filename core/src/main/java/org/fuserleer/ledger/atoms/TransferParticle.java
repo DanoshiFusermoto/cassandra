@@ -3,6 +3,7 @@ package org.fuserleer.ledger.atoms;
 import java.io.IOException;
 import java.util.Objects;
 
+import org.fuserleer.Universe;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
@@ -42,7 +43,7 @@ public final class TransferParticle extends SignedParticle
 	}
 
 	@Override
-	boolean requiresSignature()
+	public boolean requiresSignature()
 	{
 		if (getSpin().equals(Spin.DOWN) == true)
 			return true;
@@ -74,20 +75,20 @@ public final class TransferParticle extends SignedParticle
 
 		if (this.quantity.compareTo(UInt256.ZERO) < 0)
 			throw new ValidationException("Quantity is negative");
-		
+
 		stateMachine.sop(new StateOp(new StateAddress(Particle.class, Spin.spin(this.token, Spin.UP)), Instruction.EXISTS), this);
 		stateMachine.sop(new StateOp(new StateAddress(Particle.class, Spin.spin(this.token, Spin.DOWN)), Instruction.NOT_EXISTS), this);
 	}
-
+	
 	@Override
 	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
 	{
-		TokenSpecification token = stateMachine.get("token");
+		Hash token = stateMachine.get("token");
 		if (stateMachine.get("token") == null)
 			stateMachine.set("token", this.token);
 		
 		// Check all transfers within this state machine as using the same token
-		if (token.getHash().equals(this.token) == false)
+		if (token != null && token.equals(this.token) == false)
 			throw new ValidationException("Transfer is not multi-token, expected token "+token+" but discovered "+this.token);
 
 		// Check that "out" quantity does not exceed "in" quantity
@@ -105,11 +106,13 @@ public final class TransferParticle extends SignedParticle
 		else
 			spent = spent.add(this.quantity);
 		
-		if (spent.compareTo(spendable) > 0)
+		if (Universe.getDefault().getGenesis().contains(this.getHash()) == false && spent.compareTo(spendable) > 0)
 			throw new ValidationException("Transfer is invalid, over spending available token "+getToken()+" by "+spent.subtract(spendable));
 		
 		stateMachine.set("spendable", spendable);
 		stateMachine.set("spent", spent);
+		
+		stateMachine.associate(getOwner().asHash(), this);
 	}
 
 	@Override

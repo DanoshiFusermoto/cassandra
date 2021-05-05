@@ -169,7 +169,7 @@ public final class GenerateUniverses
 		// TODo want to actually save this or something?
 		final BLSKeyPair ephemeralValidator = new BLSKeyPair();
 		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
-		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 4096) * 4095), UInt256.ZERO, 0, timestamp, ephemeralValidator.getPublicKey(), 
+		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 16) * 15), UInt256.ZERO, 0, timestamp, ephemeralValidator.getPublicKey(), 
 									   atoms, Collections.emptyList(), Collections.emptyList());
 		genesisBlock.getHeader().sign(ephemeralValidator);
 		return genesisBlock;

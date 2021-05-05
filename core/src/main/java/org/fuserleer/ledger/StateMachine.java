@@ -43,12 +43,20 @@ import com.google.common.collect.Multimap;
 
 public final class StateMachine // implements LedgerInterface
 {
-	private static final Logger ledgerLog = Logging.getLogger("ledger");
+	private static final Logger stateMachineLog = Logging.getLogger("statemachine");
+	
+	static 
+	{
+		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.DEBUG);
+//		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL);
+	}
 
 	private final Context 			context;
 	private final Atom 				atom;
 	private final Map<Hash, Path> 	statePaths;
-	private final Map<Hash, Path> 	associationPaths;
+	private final Multimap<Hash, Path> 	associationPaths;
 	private final Map<Hash, Optional<UInt256>> stateInputs;
 	private final Map<Hash, Optional<UInt256>> stateOutputs;
 	private final Multimap<StateKey<?, ?>, StateOp> stateOps;
@@ -71,7 +79,7 @@ public final class StateMachine // implements LedgerInterface
 		this.context = Objects.requireNonNull(context);
 		this.atom = Objects.requireNonNull(atom);
 		this.statePaths = new LinkedHashMap<Hash, Path>();
-		this.associationPaths = new LinkedHashMap<Hash, Path>();
+		this.associationPaths = LinkedHashMultimap.create();
 		this.stateOps = LinkedHashMultimap.create();
 		this.stateShards = new AtomicReference<Set<UInt256>>();
 		this.stateOutputs = new HashMap<Hash, Optional<UInt256>>();
@@ -83,14 +91,17 @@ public final class StateMachine // implements LedgerInterface
 			this.lock.writeLock().lock();
 			try
 			{
-				if (s.ins().equals(Instruction.SET) == true && this.stateOps.containsKey(s.key()) == false)
-					throw new IllegalStateException("Attempt to SET a state key that doesn't exist "+s.key());
-
-				if (s.ins().equals(Instruction.SET) == true && this.stateInputs.get(s.key().get()) == null)
-					throw new IllegalStateException("Attempt to SET unloaded state "+s.key());
+				if (Universe.getDefault().getGenesis().contains(this.atom.getHash()) == false)
+				{
+					if (s.ins().equals(Instruction.SET) == true && this.stateOps.containsKey(s.key()) == false)
+						throw new IllegalStateException("Attempt to SET a state key that doesn't exist "+s.key());
+	
+					if (s.ins().equals(Instruction.SET) == true && this.stateInputs.get(s.key().get()) == null)
+						throw new IllegalStateException("Attempt to SET unloaded state "+s.key());
+				}
 				
-				if (this.stateOps.containsEntry(s.key(), s) == true)
-					throw new IllegalStateException("StateOp "+s+" is duplicated in atom "+this.atom.getHash());
+				if (this.stateOps.containsEntry(s.key(), p) == true && s.ins().equals(Instruction.SET) == true)
+					throw new IllegalStateException("StateOp "+s+":"+p+" is already delclared in atom "+this.atom.getHash());
 	
 				// TODO guard new stateop keys after prepare is executed!
 
@@ -112,8 +123,8 @@ public final class StateMachine // implements LedgerInterface
 			this.lock.writeLock().lock();
 			try
 			{
-				if (this.associationPaths.containsKey(i) == true)
-					throw new IllegalStateException("Association "+i+" is duplicated in atom "+this.atom.getHash());
+				if (this.associationPaths.containsEntry(i, p) == true)
+					throw new IllegalStateException("Association "+i+":"+p+" is assigned in atom "+this.atom.getHash());
 	
 				this.associationPaths.put(i, p);
 			}
@@ -312,7 +323,7 @@ public final class StateMachine // implements LedgerInterface
 
 				particle.prepare(this);
 				
-				if (particle instanceof SignedParticle)
+				if (particle instanceof SignedParticle && ((SignedParticle)particle).requiresSignature() == true)
 				{
 					try
 					{
@@ -444,8 +455,8 @@ public final class StateMachine // implements LedgerInterface
 					if (stateOp.ins().evaluatable() == false)
 						continue;
 					
-					if (ledgerLog.hasLevel(Logging.DEBUG) == true)
-						ledgerLog.debug(this.context.getName()+": Evaluating state "+stateOp);
+					if (stateMachineLog.hasLevel(Logging.DEBUG) == true)
+						stateMachineLog.debug(this.context.getName()+": Evaluating state "+stateOp);
 					
 					if (this.stateInputs.containsKey(stateOp.key().get()) == false)
 						throw new ValidationException("Found unprovisioned instruction "+stateOp);
@@ -469,13 +480,10 @@ public final class StateMachine // implements LedgerInterface
 			
 			for (Particle particle : this.atom.getParticles())
 			{
-				if (Universe.getDefault().getGenesis().contains(particle.getHash()) == false)
-				{
-					if (ledgerLog.hasLevel(Logging.DEBUG) == true)
-						ledgerLog.debug(this.context.getName()+": Executing particle "+particle);
+				if (stateMachineLog.hasLevel(Logging.DEBUG) == true)
+					stateMachineLog.debug(this.context.getName()+": Executing particle "+particle);
 	
-					particle.execute(this);
-				}
+				particle.execute(this);
 			}
 			
 			// Create an output merkle

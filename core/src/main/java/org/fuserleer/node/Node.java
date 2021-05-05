@@ -237,6 +237,6 @@ public class Node extends BasicObject
 	@Override
 	public String toString()
 	{
-		return this.getIdentity().toString()+"@"+this.head;
+		return this.getIdentity().asHash().toString()+"@"+this.head;
 	}
 }

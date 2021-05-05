@@ -9,6 +9,7 @@ import org.fuserleer.events.EventListener;
 import org.fuserleer.ledger.PendingAtom;
 import org.fuserleer.ledger.StateLockedException;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
@@ -17,12 +18,15 @@ import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
+import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.serialization.Serialization;
+import org.fuserleer.serialization.SerializationException;
 import org.java_websocket.WebSocket;
 import org.java_websocket.WebSocketImpl;
 import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.server.WebSocketServer;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import com.google.common.eventbus.Subscribe;
@@ -43,7 +47,7 @@ public final class WebSocketService extends WebSocketServer
 	
 	public WebSocketService(final Context context)
 	{
-		super(new InetSocketAddress(context.getConfiguration().get("websocket.address", "127.0.0.1"), context.getConfiguration().get("websocket.port", WebSocketImpl.DEFAULT_PORT)),
+		super(new InetSocketAddress(context.getConfiguration().get("websocket.address", "0.0.0.0"), context.getConfiguration().get("websocket.port", WebSocketImpl.DEFAULT_PORT)),
 			  context.getConfiguration().get("websocket.decoders", Math.max(4, Runtime.getRuntime().availableProcessors())));
 		
 		this.context = Objects.requireNonNull(context, "Context is null");
@@ -106,7 +110,10 @@ public final class WebSocketService extends WebSocketServer
 				JSONObject eventJSON = new JSONObject();
 				eventJSON.put("type", "exception");
 				eventJSON.put("atom", atom.getHash());
-				eventJSON.put("particles", new JSONArray(atom.getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
+				JSONArray particles = new JSONArray();
+				for (Particle particle : atom.getParticles())
+					particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+				eventJSON.put("particles", particles);
 				eventJSON.put("error", ex.toString());
 				conn.send(eventJSON.toString());
 				websocketLog.error(this.context.getName()+": Submission of atom "+atom.getHash()+" failed from "+conn.getRemoteSocketAddress(), ex);
@@ -123,29 +130,35 @@ public final class WebSocketService extends WebSocketServer
 	private EventListener asyncAtomListener = new EventListener()
 	{
 		@Subscribe
-		public void on(AtomAcceptedEvent event) 
+		public void on(AtomAcceptedEvent event) throws JSONException, SerializationException 
 		{
 			JSONObject eventJSON = new JSONObject();
 			eventJSON.put("type", "accepted");
 			eventJSON.put("atom", event.getAtom().getHash());
-			eventJSON.put("certificate", event.getPendingAtom().getCertificate().getHash());
-			eventJSON.put("particles", new JSONArray(event.getAtom().getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
+			eventJSON.put("certificate", Serialization.getInstance().toJsonObject(event.getPendingAtom().getCertificate(), Output.API));
+			JSONArray particles = new JSONArray();
+			for (Particle particle : event.getAtom().getParticles())
+				particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+			eventJSON.put("particles", particles);
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
 
 		@Subscribe
-		public void on(AtomRejectedEvent event)
+		public void on(AtomRejectedEvent event) throws SerializationException
 		{
 			JSONObject eventJSON = new JSONObject();
 			eventJSON.put("type", "rejected");
 			eventJSON.put("atom", event.getAtom().getHash());
-			eventJSON.put("certificate", event.getPendingAtom().getCertificate().getHash());
-			eventJSON.put("particles", new JSONArray(event.getAtom().getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
+			eventJSON.put("certificate", Serialization.getInstance().toJsonObject(event.getPendingAtom().getCertificate(), Output.API));
+			JSONArray particles = new JSONArray();
+			for (Particle particle : event.getAtom().getParticles())
+				particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+			eventJSON.put("particles", particles);
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
 		
 		@Subscribe
-		public void on(AtomExceptionEvent event)
+		public void on(AtomExceptionEvent event) throws SerializationException
 		{
 			if (event.getException() instanceof StateLockedException)
 				return;
@@ -153,36 +166,44 @@ public final class WebSocketService extends WebSocketServer
 			JSONObject eventJSON = new JSONObject();
 			eventJSON.put("type", "exception");
 			eventJSON.put("atom", event.getAtom().getHash());
-			eventJSON.put("particles", new JSONArray(event.getAtom().getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
+			JSONArray particles = new JSONArray();
+			for (Particle particle : event.getAtom().getParticles())
+				particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+			eventJSON.put("particles", particles);
 			eventJSON.put("error", event.getException().toString());
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
 		
 		@Subscribe
-		public void on(AtomUnpreparedTimeoutEvent event) 
+		public void on(AtomUnpreparedTimeoutEvent event) throws SerializationException
 		{
 			timedout(event.getPendingAtom());
 		}
 
 		@Subscribe
-		public void on(AtomAcceptedTimeoutEvent event) 
+		public void on(AtomAcceptedTimeoutEvent event) throws SerializationException 
 		{
 			timedout(event.getPendingAtom());
 		}
 
 		@Subscribe
-		public void on(AtomCommitTimeoutEvent event)
+		public void on(AtomCommitTimeoutEvent event) throws SerializationException
 		{
 			timedout(event.getPendingAtom());
 		}
 		
-		private void timedout(PendingAtom pendingAtom)
+		private void timedout(PendingAtom pendingAtom) throws SerializationException
 		{
 			JSONObject eventJSON = new JSONObject();
 			eventJSON.put("type", "timeout");
 			eventJSON.put("atom", pendingAtom.getHash());
 			if (pendingAtom.getAtom() != null)
-				eventJSON.put("particles", new JSONArray(pendingAtom.getAtom().getParticles().stream().map(p -> p.getHash()).collect(Collectors.toList())));
+			{
+				JSONArray particles = new JSONArray();
+				for (Particle particle : pendingAtom.getAtom().getParticles())
+					particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+				eventJSON.put("particles", particles);
+			}
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
 	};

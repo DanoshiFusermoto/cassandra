@@ -93,6 +93,8 @@ public final class TokenSpecification extends SignedParticle
 	{
 		stateMachine.sop(new StateOp(new StateAddress(TokenSpecification.class, Hash.from(this.ISO.toLowerCase())), UInt256.from(getHash().toByteArray()), Instruction.SET), this);
 		stateMachine.sop(new StateOp(new StateField(Hash.from(this.ISO.toLowerCase()), "minted"), UInt256.ZERO, Instruction.SET), this);
+		
+		super.execute(stateMachine, arguments);
 	}
 	
 	@Override

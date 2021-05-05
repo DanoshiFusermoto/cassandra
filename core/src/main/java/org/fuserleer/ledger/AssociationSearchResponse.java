@@ -14,6 +14,7 @@ import org.fuserleer.serialization.SerializerId2;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 @SerializerId2("ledger.search.response.association")
 public class AssociationSearchResponse
@@ -34,6 +35,7 @@ public class AssociationSearchResponse
 	@JsonProperty("results")
 	@DsonOutput(Output.ALL)
 	@JsonInclude(JsonInclude.Include.NON_NULL)
+	@JsonDeserialize(as=LinkedHashSet.class)
 	private Set<SearchResult> results;
 
 	@JsonProperty("eor")

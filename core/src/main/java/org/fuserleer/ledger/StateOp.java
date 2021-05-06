@@ -49,20 +49,22 @@ public final class StateOp
 
 	public static enum Instruction
 	{
-		EXISTS(1, true, false, false), NOT_EXISTS(2, true, false, false),
-		GET(10, true, false, false), SET(11, false, true, true);
+		EXISTS(1, false, true, false, false), NOT_EXISTS(2, false, true, false, false),
+		GET(10, true, true, false, false), SET(11, true, false, true, true);
 
 		private final byte		opcode;	
 		private final boolean 	evaluatable;
 		private final boolean 	parameter;
 		private final boolean 	output;
+		private final boolean 	exclusive;
 		
-		Instruction(int opcode, boolean evaluatable, boolean parameter, boolean output)
+		Instruction(int opcode, boolean exclusive, boolean evaluatable, boolean parameter, boolean output)
 		{
 			this.opcode = (byte) opcode;
 			this.evaluatable = evaluatable;
 			this.parameter = parameter;
 			this.output = output;
+			this.exclusive = exclusive;
 		}
 
 		@JsonValue
@@ -92,6 +94,11 @@ public final class StateOp
 			return this.output;
 		}
 		
+		public boolean exclusive()
+		{
+			return this.exclusive;
+		}
+
 		public static Instruction get(int opcode)
 		{
 			for (int i = 0 ; i < Instruction.values().length ; i++)

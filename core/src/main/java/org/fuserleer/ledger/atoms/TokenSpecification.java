@@ -84,6 +84,7 @@ public final class TokenSpecification extends SignedParticle
 		if (this.description.length() > MAX_DESCRIPTION_LENGTH)
 			throw new ValidationException("Description is greater than MAX_DESCRIPTION_LENGTH "+TokenSpecification.MAX_DESCRIPTION_LENGTH);
 		
+		stateMachine.sop(new StateOp(new StateAddress(TokenSpecification.class, Hash.from(this.ISO.toLowerCase())), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(TokenSpecification.class, Hash.from(this.ISO.toLowerCase())), Instruction.NOT_EXISTS), this);
 		stateMachine.sop(new StateOp(new StateField(Hash.from(this.ISO.toLowerCase()), "minted"), Instruction.GET), this);
 	}

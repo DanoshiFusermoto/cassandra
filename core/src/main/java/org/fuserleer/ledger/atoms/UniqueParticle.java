@@ -53,6 +53,7 @@ public final class UniqueParticle extends SignedParticle
 	@Override
 	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
 	{
+		stateMachine.sop(new StateOp(new StateAddress(UniqueParticle.class, this.value), StateOp.Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(UniqueParticle.class, this.value), StateOp.Instruction.NOT_EXISTS), this);
 	}
 

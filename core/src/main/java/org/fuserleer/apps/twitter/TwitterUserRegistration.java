@@ -222,8 +222,11 @@ public class TwitterUserRegistration extends SignedParticle
 		Numbers.isNegative(this.numFollowers, "Followers can not be negative");
 		Numbers.isNegative(this.numStatuses, "Status count can not be negative");
 		
+		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(UInt256.from(this.id))), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(UInt256.from(this.id))), Instruction.NOT_EXISTS), this);
+		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(this.handle.toLowerCase())), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(this.handle.toLowerCase())), Instruction.NOT_EXISTS), this);
+		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, getOwner().asHash()), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, getOwner().asHash()), Instruction.NOT_EXISTS), this);
 		
 		super.prepare(stateMachine);

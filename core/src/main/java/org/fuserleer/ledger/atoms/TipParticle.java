@@ -82,6 +82,7 @@ public final class TipParticle extends SignedParticle
 		
 		stateMachine.sop(new StateOp(new StateAddress(Particle.class, this.transfer), Instruction.EXISTS), this);
 		stateMachine.sop(new StateOp(new StateAddress(Particle.class, this.tipping), Instruction.EXISTS), this);
+		stateMachine.sop(new StateOp(new StateField(this.tipping, "tip_total"), Instruction.GET), this);
 
 		super.prepare(stateMachine);
 	}

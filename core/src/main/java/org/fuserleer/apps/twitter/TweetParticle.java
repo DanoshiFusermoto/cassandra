@@ -312,8 +312,11 @@ public class TweetParticle extends SignedParticle
 			throw new ValidationException(ex);
 		}
 		
+		stateMachine.sop(new StateOp(new StateAddress(TweetParticle.class, this.id), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(TweetParticle.class, this.id), Instruction.NOT_EXISTS), this);
+		stateMachine.sop(new StateOp(new StateField(this.id, "replies"), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateField(this.id, "replies"), Instruction.NOT_EXISTS), this);
+		stateMachine.sop(new StateOp(new StateField(this.id, "retweets"), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateField(this.id, "retweets"), Instruction.NOT_EXISTS), this);
 
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(this.user.toLowerCase())), Instruction.EXISTS), this);

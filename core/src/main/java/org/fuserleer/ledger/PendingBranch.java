@@ -600,9 +600,9 @@ public class PendingBranch
 				PendingBlock vertex = vertexIterator.next();
 				if (vertex.getBlock() != null)
 				{
-					if (this.meta.get(vertex.getHash()).equals(Boolean.FALSE))
+					if (this.meta.containsKey(vertex.getHash()) == true && this.meta.get(vertex.getHash()).equals(Boolean.FALSE))
 					{
-						if (vertex.getHeader().getPrevious().equals(this.root.getHash()) == true || this.meta.get(vertex.getHeader().getPrevious()).equals(Boolean.TRUE))
+						if (vertex.getHeader().getPrevious().equals(this.root.getHash()) == true || this.meta.getOrDefault(vertex.getHeader().getPrevious(), Boolean.FALSE).equals(Boolean.TRUE))
 							apply(vertex);
 					}
 				}
@@ -617,7 +617,7 @@ public class PendingBranch
 						highestSuper = vertex;
 						blocksLog.info(this.context.getName()+": Found possible commit super block with weight "+weight+"/"+total+" "+vertex);
 					}
-					else if (vertex.getBlock() != null && this.meta.get(vertex.getHash()).equals(Boolean.TRUE))
+					else if (vertex.getBlock() != null && this.meta.getOrDefault(vertex.getHash(), Boolean.FALSE).equals(Boolean.TRUE))
 					{
 						blocksLog.info(this.context.getName()+": Found commit at block with weight "+weight+"/"+total+" to commit list "+vertex);
 						return vertex;

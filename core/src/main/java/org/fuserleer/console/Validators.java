@@ -27,13 +27,13 @@ public class Validators extends Function
 		if (commandLine.hasOption("known") == true)
 		{
 			Collection<BLSPublicKey> identities = context.getLedger().getValidatorHandler().getIdentities();
-			identities.forEach(id -> printStream.println(id.toString()));
+			identities.forEach(id -> printStream.println(id.asHash()));
 			printStream.println(identities.size()+" validator identities");
 		}
 		else if (commandLine.hasOption("powers") == true)
 		{
 			Collection<Entry<BLSPublicKey, Long>> powers = context.getLedger().getValidatorHandler().getVotePowers();
-			powers.forEach(pw -> printStream.println(pw.getKey()+" = "+pw.getValue()));
+			powers.forEach(pw -> printStream.println(pw.getKey().asHash()+" = "+pw.getValue()));
 			printStream.println(powers.size()+" validators with power");
 		}
 	}

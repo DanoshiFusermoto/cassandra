@@ -98,7 +98,7 @@ public final class ValidatorHandler implements Service
 			if (powerOwners.isEmpty() == true)
 			{
 				long height = 0;
-				long power = 1000;
+				long power = 1;
 				for (BLSPublicKey genode : Universe.getDefault().getGenodes())
 				{
 					powerLog.info(this.context.getName()+": Setting vote power for genesis node "+genode+":"+ShardMapper.toShardGroup(genode, Universe.getDefault().shardGroupCount())+" to "+power);

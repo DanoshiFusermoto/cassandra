@@ -22,11 +22,11 @@ final class BlockRegulator implements Service
 	private static final Logger blocksLog = Logging.getLogger("blocks");
 
 	// TODO put these in universe config
-	public final static long 	BASELINE_DISTANCE_FACTOR = 4;
+	public final static double 	BASELINE_DISTANCE_FACTOR = 2.5;
 	public final static long 	BASELINE_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BASELINE_DISTANCE_FACTOR * Math.log(BASELINE_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
 	public final static long 	BLOCK_DISTANCE_FACTOR = 64;
 	public final static long 	BLOCK_DISTANCE_TARGET = BigInteger.valueOf(Long.MIN_VALUE).abs().subtract(BigInteger.valueOf((long) (Long.MIN_VALUE / (BLOCK_DISTANCE_FACTOR * Math.log(BLOCK_DISTANCE_FACTOR)))).abs()).longValue(); // TODO rubbish, but produces close enough needed output
-	public final static int		BLOCKS_PER_PERIOD = 60;
+	public final static int		BLOCKS_PER_PERIOD = 120;
 	public final static int 	BLOCK_PERIOD_DURATION = 600;
 
 	private final Context context;

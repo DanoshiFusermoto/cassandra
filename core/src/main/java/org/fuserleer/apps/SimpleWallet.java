@@ -88,7 +88,7 @@ public class SimpleWallet implements AutoCloseable
 		this.key = Objects.requireNonNull(key);
 		
 		long searchOffset = 0;
-		AssociationSearchQuery search = new AssociationSearchQuery(key.getPublicKey().asHash(), Particle.class, Order.ASCENDING, 100);
+		AssociationSearchQuery search = new AssociationSearchQuery(key.getPublicKey().asHash(), Particle.class, Order.ASCENDING, 25);
 		Future<AssociationSearchResponse> searchResponseFuture;
 		
 		while((searchResponseFuture = this.context.getLedger().get(search, Spin.UP)).get().isEmpty() == false)
@@ -98,14 +98,21 @@ public class SimpleWallet implements AutoCloseable
 				this.particles.put(searchResult.getType().cast(searchResult.getPrimitive()).getHash(), searchResult.getPrimitive());
 				
 				if (searchResult.getPrimitive() instanceof TransferParticle)
-					this.unconsumed.add(searchResult.getPrimitive());
+				{
+					TransferParticle transferParticle = ((TransferParticle)searchResult.getPrimitive());
+					if (transferParticle.getSpin().equals(Spin.UP) == true)
+						SimpleWallet.this.unconsumed.add(transferParticle);
+		
+					if (transferParticle.getSpin().equals(Spin.DOWN) == true)
+						SimpleWallet.this.unconsumed.remove(transferParticle.get(Spin.UP));
+				}
 			}
 			
 			searchOffset = searchResponseFuture.get().getNextOffset();
 			if (searchOffset == -1)
 				break;
 			
-			search = new AssociationSearchQuery(key.getPublicKey().asHash(), Particle.class, Order.ASCENDING, searchOffset, 100);
+			search = new AssociationSearchQuery(key.getPublicKey().asHash(), Particle.class, Order.ASCENDING, searchOffset, 25);
 		}
 		
 //		this.context.getEvents().register(this.atomListener);

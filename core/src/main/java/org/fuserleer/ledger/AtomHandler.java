@@ -393,6 +393,20 @@ public class AtomHandler implements Service
 		return timedout;
 	}
 
+	/**
+	 * Returns an pending atoms.
+	 * 
+	 * @throws  
+	 */
+	Collection<PendingAtom> get()
+	{
+		// Dont use the atom handler lock here.  
+		// Just sync on the pending atoms object as this function is called from many places
+		synchronized(this.pendingAtoms)
+		{
+			return new ArrayList<PendingAtom>(this.pendingAtoms.values());
+		}
+	}
 
 	/**
 	 * Returns an existing pending atom or creates it providing that it is not timed out or committed.

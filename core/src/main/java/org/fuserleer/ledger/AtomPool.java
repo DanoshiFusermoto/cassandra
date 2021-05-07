@@ -30,7 +30,6 @@ import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
-import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
@@ -218,7 +217,6 @@ public final class AtomPool implements Service
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 	private final Map<Hash, PendingAtom> pending = new HashMap<Hash, PendingAtom>();
-	private final Map<Hash, Hash> states = new HashMap<Hash, Hash>(); // TODO still need to lock states in the pool?  probably prudent, but is worth the compute hit?
 	private final Map<Long, Set<PendingAtom>> buckets = new HashMap<Long, Set<PendingAtom>>();
 
 	private final BlockingQueue<PendingAtom> votesToCastQueue;
@@ -373,7 +371,6 @@ public final class AtomPool implements Service
 		{
 			this.buckets.forEach((b, s) -> s.clear());
 			this.pending.clear();
-			this.states.clear();
 			this.votesToCastQueue.clear();
 			this.votesToCountQueue.clear();
 		}
@@ -526,23 +523,6 @@ public final class AtomPool implements Service
 			if (atomsLog.hasLevel(Logging.DEBUG) == true) 
 				atomsLog.debug(AtomPool.this.context.getName()+": "+pendingAtom.toString()+" added to pending pool, size is now "+this.pending.size());
 
-			// TODO want to allow multiple state writes in pool?
-			for (StateOp stateOp : pendingAtom.getStateOps())
-			{
-				// NOTE GETS and EXISTS are generally reads, SET is a write, NOT_EXISTS suggests a write will occur
-				if (stateOp.ins().equals(Instruction.EXISTS) == true || stateOp.ins().equals(Instruction.GET) == true)
-					continue;
-
-				Hash lockedBy = this.states.get(stateOp.key().get());
-				if (lockedBy != null)
-				{
-					if (lockedBy.equals(pendingAtom.getHash()) == false)
-						atomsLog.warn("State "+stateOp.key().get()+" in operation "+stateOp+" referenced in "+pendingAtom.getHash()+" already locked by "+lockedBy+" in pending pool");
-				}
-				else
-					this.states.put(stateOp.key().get(), pendingAtom.getHash());
-			}
-				
 			this.votesToCastQueue.add(pendingAtom);
 			synchronized(AtomPool.this.voteProcessor)
 			{
@@ -570,27 +550,6 @@ public final class AtomPool implements Service
 			{
 				atomsLog.warn(AtomPool.this.context.getName()+": Atom "+atom+" can not be found for removal");
 				return null;
-			}
-			
-			if (pendingAtom.getAtom() != null)
-			{
-				Set<StateKey<?, ?>> statesToRemove = new HashSet<StateKey<?, ?>>();
-				for (StateOp stateOp : pendingAtom.getStateOps())
-				{
-					// NOTE GETS and EXISTS are generally reads, SET is a write, NOT_EXISTS suggests a write will occur
-					if (stateOp.ins().equals(Instruction.EXISTS) == true || stateOp.ins().equals(Instruction.GET) == true)
-						continue;
-					
-					statesToRemove.add(stateOp.key());
-				}
-
-				for (StateKey<?, ?> stateKey : statesToRemove)
-				{
-					if (this.states.remove(stateKey.get(), atom) == false)
-						atomsLog.error(AtomPool.this.context.getName()+": State "+stateKey.get()+" referenced by "+atom+" not found");
-					else if (atomsLog.hasLevel(Logging.DEBUG) == true)
-						atomsLog.debug(AtomPool.this.context.getName()+": State "+stateKey.get()+" referenced by "+atom+" was removed");
-				}
 			}
 
 			long location = Longs.fromByteArray(atom.toByteArray());
@@ -682,17 +641,6 @@ public final class AtomPool implements Service
 				if (exclusions.contains(pa.getHash()) == true)
 					return false;
 
-				// Check no state dependences are pending in the pool too 
-				for (StateKey<?, ?> stateKey : pa.getStateKeys())
-				{
-					Hash pendingAtom = AtomPool.this.states.get(stateKey.get());
-					if (pendingAtom != null && pendingAtom.equals(pa.getHash()) == false)
-					{
-						pa.setInclusionDelay(Math.max(TimeUnit.SECONDS.toMillis(10), pa.getInclusionDelay() * 2));
-						return false;
-					}
-				}
-				
 				if (synced == true && pa.voteWeight() < pa.voteThreshold())
 				{
 					return false;

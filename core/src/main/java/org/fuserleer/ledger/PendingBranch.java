@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
@@ -22,6 +23,7 @@ import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
+import org.fuserleer.ledger.StateAccumulator.StateLockType;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.logging.Logger;
@@ -65,7 +67,7 @@ public class PendingBranch
 		if (root.getHash().equals(Universe.getDefault().getGenesis().getHash()) == false)
 		{
 			for (Hash atom : this.root.getInventory(InventoryType.ATOMS))
-				if (this.accumulator.isLocked(new StateAddress(Atom.class, atom)) == true)
+				if (this.accumulator.isLocked(new StateAddress(Atom.class, atom)).equals(StateLockType.EXCLUSIVE))
 					throw new IllegalStateException("Atom "+atom+" is locked in state accumulator");
 			
 			for (Hash certificate : this.root.getInventory(InventoryType.CERTIFICATES))
@@ -74,11 +76,11 @@ public class PendingBranch
 				if (atomCertificate == null)
 					throw new IllegalStateException("Atom certificate "+certificate+" not found");
 
-				if (this.accumulator.isLocked(new StateAddress(Atom.class, atomCertificate.getAtom())) == true)
+				if (this.accumulator.isLocked(new StateAddress(Atom.class, atomCertificate.getAtom())).equals(StateLockType.EXCLUSIVE))
 					throw new IllegalStateException("Atom "+atomCertificate.getAtom()+" is not locked in state accumulator");
 			}
 			
-			blocksLog.info(context.getName()+": Branch "+type+" "+root+" accumulator shadow "+accumulator.locked().size()+" locked in accumulator "+accumulator.locked().stream().reduce((a, b) -> Hash.from(a,b)));
+			blocksLog.info(context.getName()+": Branch "+type+" "+root+" accumulator shadow "+(accumulator.locked(true).size()+accumulator.locked(false).size())+" locked in accumulator "+Stream.concat(accumulator.locked(true).stream(), accumulator.locked(true).stream()).reduce((a, b) -> Hash.from(a,b)));
 		}
 	}
 
@@ -708,7 +710,7 @@ public class PendingBranch
 				}
 			}
 
-			blocksLog.info(context.getName()+": Applied block "+block+" to "+type+" "+root+" accumulator shadow "+accumulator.locked().size()+" locked in accumulator "+accumulator.locked().stream().reduce((a, b) -> Hash.from(a,b)));
+			blocksLog.info(context.getName()+": Applied block "+block+" to "+type+" "+root+" accumulator shadow "+(accumulator.locked(true).size()+accumulator.locked(false).size())+" locked in accumulator "+Stream.concat(accumulator.locked(true).stream(), accumulator.locked(true).stream()).reduce((a, b) -> Hash.from(a,b)));
 		}
 		finally
 		{

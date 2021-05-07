@@ -820,7 +820,7 @@ public class SyncHandler implements Service
 				for (StateCertificate stateCertificate : certificate.getAll())
 				{
 					this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), stateCertificate);
-					StateInput stateInput = new StateInput(stateCertificate.getBlock(), stateCertificate.getAtom(), stateCertificate.getState(), stateCertificate.getInput());
+					StateInput stateInput = new StateInput(stateCertificate.getAtom(), stateCertificate.getState(), stateCertificate.getInput());
 					if (this.context.getLedger().getLedgerStore().has(stateInput.getHash()) == false)
 						this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), stateInput);
 				}
@@ -929,8 +929,7 @@ public class SyncHandler implements Service
 				for (PendingAtom pendingAtom : pendingAtoms)
 				{
 					this.context.getLedger().getAtomHandler().push(pendingAtom);
-					this.context.getLedger().getStateHandler().add(pendingAtom);
-					this.context.getLedger().getStatePool().add(pendingAtom);
+					this.context.getLedger().getStateHandler().push(pendingAtom);
 				}
 				
 				// Determine which pending atoms have been provisioned and can be executed
@@ -938,7 +937,7 @@ public class SyncHandler implements Service
 				{
 					for (StateKey<?,?> stateKey : pendingAtom.getStateKeys())
 					{
-						final StateInput stateInput = this.context.getLedger().getLedgerStore().get(Hash.from(pendingAtom.getHash(), stateKey.get()), StateInput.class);
+						final StateInput stateInput = this.context.getLedger().getLedgerStore().get(StateInput.getHash(pendingAtom.getHash(), stateKey), StateInput.class);
 						if (stateInput == null)
 							continue;
 
@@ -966,7 +965,7 @@ public class SyncHandler implements Service
 							if (this.context.getLedger().getLedgerStore().has(stateCertificate.getHash()) == false)
 								this.context.getLedger().getLedgerStore().store(this.context.getLedger().getHead().getHeight(), stateCertificate);
 							
-							StateInput stateInput = new StateInput(stateCertificate.getBlock(), stateCertificate.getAtom(), stateCertificate.getState(), stateCertificate.getInput());
+							StateInput stateInput = new StateInput(stateCertificate.getAtom(), stateCertificate.getState(), stateCertificate.getInput());
 							if (this.context.getLedger().getLedgerStore().has(stateInput.getHash()) == false)
 								this.context.getLedger().getLedgerStore().store(this.context.getLedger().getHead().getHeight(), stateInput);
 

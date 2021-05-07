@@ -301,12 +301,14 @@ public final class StateMachine // implements LedgerInterface
 				Set<StateOp> stateOps = new LinkedHashSet<StateOp>();
 				if (particle.getSpin().equals(Spin.UP) == true)
 				{
+					stateOps.add(new StateOp(new StateAddress(Particle.class, particle.getHash(Spin.UP)), Instruction.GET));
 					stateOps.add(new StateOp(new StateAddress(Particle.class, particle.getHash(Spin.UP)), Instruction.NOT_EXISTS));
 					stateOps.add(new StateOp(new StateAddress(Particle.class, particle.getHash(Spin.UP)), UInt256.from(particle.getHash(Spin.UP).toByteArray()), Instruction.SET));
 				}
 				else if (particle.getSpin().equals(Spin.DOWN) == true)
 				{
 					stateOps.add(new StateOp(new StateAddress(Particle.class, particle.getHash(Spin.UP)), Instruction.EXISTS));
+					stateOps.add(new StateOp(new StateAddress(Particle.class, particle.getHash(Spin.DOWN)), Instruction.GET));
 					stateOps.add(new StateOp(new StateAddress(Particle.class, particle.getHash(Spin.DOWN)), Instruction.NOT_EXISTS));
 					stateOps.add(new StateOp(new StateAddress(Particle.class, particle.getHash(Spin.DOWN)), UInt256.from(particle.getHash(Spin.DOWN).toByteArray()), Instruction.SET));
 				}
@@ -465,6 +467,7 @@ public final class StateMachine // implements LedgerInterface
 					switch(stateOp.ins())
 					{
 					case GET:
+					case SET:
 						if (value == null)
 							throw new ValidationException("Evaluation of "+stateOp+" failed as value was not provisioned");
 						break;

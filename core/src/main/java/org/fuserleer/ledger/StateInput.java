@@ -16,14 +16,19 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 @SerializerId2("ledger.state.inputs")
 class StateInput implements Primitive
 {
+	static Hash getHash(final Hash atom, final StateKey<?, ?> key)
+	{
+		Objects.requireNonNull(key, "State key is null");
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is zero");
+		
+		return Hash.from(atom, key.get());
+	}
+
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
 	@DsonOutput(Output.ALL)
 	private SerializerDummy serializer = SerializerDummy.DUMMY;
-
-	@JsonProperty("block")
-	@DsonOutput(Output.ALL)
-	private Hash block;
 
 	@JsonProperty("atom")
 	@DsonOutput(Output.ALL)
@@ -43,16 +48,13 @@ class StateInput implements Primitive
 		// FOR SERIALIZER
 	}
 	
-	StateInput(final Hash block, final Hash atom, final StateKey<?, ?> key, final UInt256 value)
+	StateInput(final Hash atom, final StateKey<?, ?> key, final UInt256 value)
 	{
 		Objects.requireNonNull(key, "State key is null");
 		Objects.requireNonNull(atom, "Atom is null");
 		Hash.notZero(atom, "Atom hash is zero");
-		Objects.requireNonNull(block, "Block is null");
-		Hash.notZero(block, "Block hash is zero");
 
 		this.atom = atom;
-		this.block = block;
 		this.key = key;
 		this.value = value;
 	}
@@ -60,12 +62,7 @@ class StateInput implements Primitive
 	@Override
 	public Hash getHash()
 	{
-		return Hash.from(this.atom, this.key.get());
-	}
-
-	public Hash getBlock()
-	{
-		return this.block;
+		return getHash(this.atom, this.key);
 	}
 
 	public Hash getAtom()
@@ -85,6 +82,6 @@ class StateInput implements Primitive
 	
 	public final String toString()
 	{
-		return getHash()+" "+getBlock()+" "+getAtom()+" "+getKey();
+		return getHash()+" "+getAtom()+" "+getKey();
 	}
 }

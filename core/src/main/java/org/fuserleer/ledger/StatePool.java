@@ -251,7 +251,7 @@ public final class StatePool implements Service
 	private final Map<Hash, StateVote> votesToCountDelayed;
 	private final BlockingQueue<PendingState> votesToCastQueue;
 	private final MappedBlockingQueue<Hash, StateVote> votesToCountQueue;
-	private final Map<Hash, PendingState> states = new HashMap<Hash, PendingState>();
+	private final Map<Hash, PendingState> pendingStates = Collections.synchronizedMap(new HashMap<Hash, PendingState>());
 	
 	StatePool(Context context)
 	{
@@ -417,7 +417,7 @@ public final class StatePool implements Service
 							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
 								statePoolLog.debug(StatePool.this.context.getName()+": State pool (votes) inventory request from "+peer);
 							
-							final Set<PendingState> pendingStates = new HashSet<PendingState>(StatePool.this.states.values());
+							final Set<PendingState> pendingStates = new HashSet<PendingState>(StatePool.this.pendingStates.values());
 							final Set<Hash> stateVoteInventory = new LinkedHashSet<Hash>();
 							StatePool.this.votesToCountQueue.forEach((h, v) -> stateVoteInventory.add(h));
 							StatePool.this.votesToCountDelayed.forEach((h, v) -> stateVoteInventory.add(h));
@@ -485,7 +485,7 @@ public final class StatePool implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			List<Hash> pending = new ArrayList<Hash>(this.states.keySet());
+			List<Hash> pending = new ArrayList<Hash>(this.pendingStates.keySet());
 			Collections.sort(pending);
 			return pending;
 		}
@@ -500,7 +500,7 @@ public final class StatePool implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			List<Hash> pending = new ArrayList<Hash>(this.states.values().stream().flatMap(s -> s.votes().stream()).map(sv -> sv.getHash()).collect(Collectors.toList()));
+			List<Hash> pending = new ArrayList<Hash>(this.pendingStates.values().stream().flatMap(s -> s.votes().stream()).map(sv -> sv.getHash()).collect(Collectors.toList()));
 			Collections.sort(pending);
 			return pending;
 		}
@@ -510,7 +510,7 @@ public final class StatePool implements Service
 		}
 	}
 
-	void vote(final PendingAtom atom)
+	void vote(final PendingAtom atom) throws IOException
 	{
 		Objects.requireNonNull(atom, "Atom is null");
 		
@@ -525,8 +525,7 @@ public final class StatePool implements Service
 				if (stateShardGroup != localShardGroup)
 					continue;
 				
-				Hash stateAtomBlockHash = Hash.from(stateKey.get(), atom.getHash(), atom.getBlock());
-				PendingState pendingState = this.states.get(stateAtomBlockHash);
+				PendingState pendingState = this.context.getLedger().getStateHandler().get(atom.getBlock(), atom.getHash(), stateKey);
 				if (pendingState == null)
 					throw new IllegalStateException("Expected pending state "+stateKey+" in atom "+atom.getHash()+" not found");
 				
@@ -543,7 +542,25 @@ public final class StatePool implements Service
 		}
 	}
 	
-	void add(final PendingAtom atom)
+	void push(final PendingState pendingState)
+	{
+		Objects.requireNonNull(pendingState, "Pending state is null");
+		
+		this.lock.writeLock().lock();
+		try
+		{
+			if (this.pendingStates.containsKey(pendingState.getHash()) == true)
+				throw new IllegalStateException(this.context.getName()+": Pending state "+pendingState.getKey()+" already exists");
+
+			this.pendingStates.put(pendingState.getHash(), pendingState);
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	void add(final PendingAtom atom) throws IOException
 	{
 		Objects.requireNonNull(atom, "pending atom is null");
 		
@@ -559,12 +576,7 @@ public final class StatePool implements Service
 				if (stateShardGroup != localShardGroup)
 					continue;
 					
-				Hash stateAtomBlockHash = Hash.from(stateKey.get(), atom.getHash(), atom.getBlock());
-				PendingState pendingState = StatePool.this.states.get(stateAtomBlockHash);
-				if (pendingState != null)
-					throw new IllegalStateException(this.context.getName()+": Pending state "+stateKey+" already exists");
-
-				pendingState = new PendingState(this.context, stateKey, atom.getHash(), atom.getBlock());
+				PendingState pendingState = this.context.getLedger().getStateHandler().get(atom.getBlock(), atom.getHash(), stateKey);
 				add(pendingState);
 			}
 		}
@@ -574,27 +586,25 @@ public final class StatePool implements Service
 		}
 	}
 
-	private void add(final PendingState state)
+	private void add(final PendingState pendingState)
 	{
-		Objects.requireNonNull(state, "State is null");
+		Objects.requireNonNull(pendingState, "Pending state is null");
 		
 		this.lock.writeLock().lock();
 		try
 		{
-			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(state.getBlock().toByteArray()));
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingState.getBlock().toByteArray()));
 			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
-			long stateShardGroup = ShardMapper.toShardGroup(state.getKey().get(), numShardGroups);
+			long stateShardGroup = ShardMapper.toShardGroup(pendingState.getKey().get(), numShardGroups);
 			if (stateShardGroup != localShardGroup)
-				throw new IllegalArgumentException(StatePool.this.context.getName()+": Pending state "+state+" is for shard group "+stateShardGroup+" expected local shard group "+localShardGroup);
+				throw new IllegalArgumentException(StatePool.this.context.getName()+": Pending state "+pendingState+" is for shard group "+stateShardGroup+" expected local shard group "+localShardGroup);
 				
-			Hash stateAtomBlockHash = Hash.from(state.getKey().get(), state.getAtom(), state.getBlock());
-			PendingState pendingState = this.states.get(stateAtomBlockHash);
-			if (pendingState != null)
-				throw new IllegalStateException(this.context.getName()+": Pending state "+state.getKey()+" already exists");
+			if (this.pendingStates.containsKey(pendingState.getHash()) == true)
+				throw new IllegalStateException(this.context.getName()+": Pending state "+pendingState.getKey()+" already exists");
 
-			this.states.put(stateAtomBlockHash, state);
+			this.pendingStates.put(pendingState.getHash(), pendingState);
 			if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-				statePoolLog.debug(this.context.getName()+": Added state "+state.getKey()+" to state pool for "+state.getAtom()+" in block "+state.getBlock());
+				statePoolLog.debug(this.context.getName()+": Added state "+pendingState.getKey()+" to state pool for "+pendingState.getAtom()+" in block "+pendingState.getBlock());
 			StatePool.this.context.getMetaData().increment("ledger.pool.state.added");
 		}
 		finally
@@ -632,8 +642,8 @@ public final class StatePool implements Service
 				if (stateShardGroup != localShardGroup)
 					continue;
 				
-				Hash stateAtomBlockHash = Hash.from(stateKey.get(), pendingAtom.getHash(), pendingAtom.getBlock());
-				PendingState pendingState = this.states.get(stateAtomBlockHash);
+				Hash pendingStateHash = PendingState.getHash(pendingAtom.getHash(), stateKey);
+				PendingState pendingState = this.pendingStates.get(pendingStateHash);
 				if (pendingState != null)
 				{
 					for (StateVote stateVote : pendingState.votes())
@@ -641,7 +651,7 @@ public final class StatePool implements Service
 
 					removed = true;
 					this.votesToCastQueue.remove(pendingState);
-					this.states.remove(stateAtomBlockHash, pendingState);
+					this.pendingStates.remove(pendingStateHash, pendingState);
 
 					if (statePoolLog.hasLevel(Logging.DEBUG) == true)
 						statePoolLog.debug(this.context.getName()+": Removed state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
@@ -683,7 +693,6 @@ public final class StatePool implements Service
 		PendingAtom pendingAtom = null;
 		try
 		{
-			Hash stateAtomBlockHash = Hash.from(stateVote.getState().get(), stateVote.getAtom(), stateVote.getBlock());
 			pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
 			if (pendingAtom == null)
 			{
@@ -694,12 +703,15 @@ public final class StatePool implements Service
 				throw new IllegalStateException("Pending atom "+stateVote.getAtom()+" for pending state "+stateVote.getObject()+" not found");
 			}
 			
-			pendingState = StatePool.this.states.get(stateAtomBlockHash);
+			pendingState = StatePool.this.pendingStates.get(PendingState.getHash(stateVote.getAtom(), stateVote.getState()));
 			// Creating pending state objects from vote if particle not seen or committed
 			if (pendingState == null)
 			{
 				// Atom is known, pending state is not yet created
-				pendingState = new PendingState(this.context, stateVote.getState(), stateVote.getAtom(), stateVote.getBlock());
+				pendingState = this.context.getLedger().getStateHandler().get(stateVote.getBlock(), stateVote.getAtom(), stateVote.getState());
+				if (pendingState == null)
+					throw new IllegalStateException("Pending state "+stateVote.getState()+" for atom "+stateVote.getAtom()+" in block "+stateVote.getBlock()+" not found or is committed / timedout");
+					
 				add(pendingState);
 			}
 
@@ -755,7 +767,7 @@ public final class StatePool implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			return this.states.size();
+			return this.pendingStates.size();
 		}
 		finally
 		{
@@ -784,7 +796,7 @@ public final class StatePool implements Service
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final AtomExecutedEvent event) 
+		public void on(final AtomExecutedEvent event) throws IOException 
 		{
 			vote(event.getPendingAtom());
 		}
@@ -833,51 +845,51 @@ public final class StatePool implements Service
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final BlockCommittedEvent blockCommittedEvent) 
+		public void on(final BlockCommittedEvent blockCommittedEvent) throws IOException 
 		{
 			StatePool.this.lock.writeLock().lock();
 			try
 			{
-				try
+				// Creating pending atom from accepted event if not seen // This is the most likely place for a pending atom object to be created
+				Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>();
+				for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
 				{
-					// Creating pending atom from accepted event if not seen // This is the most likely place for a pending atom object to be created
-					Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>();
-					for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
+					PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(atom.getHash());
+					if (pendingAtom == null)
 					{
-						PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(atom.getHash());
-						if (pendingAtom == null)
-						{
-							statePoolLog.warn(StatePool.this.context.getName()+": Pending atom "+atom.getHash()+" state appears invalid.");
-							continue;
-						}
-						
-						pendingAtoms.add(pendingAtom);
+						statePoolLog.warn(StatePool.this.context.getName()+": Pending atom "+atom.getHash()+" state appears invalid.");
+						continue;
 					}
+					
+					pendingAtoms.add(pendingAtom);
+				}
 
-					long numShardGroups = StatePool.this.context.getLedger().numShardGroups(blockCommittedEvent.getBlock().getHeader().getHeight());
-					long localShardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), numShardGroups);
-					for (PendingAtom pendingAtom : pendingAtoms)
+				long numShardGroups = StatePool.this.context.getLedger().numShardGroups(blockCommittedEvent.getBlock().getHeader().getHeight());
+				long localShardGroup = ShardMapper.toShardGroup(StatePool.this.context.getNode().getIdentity(), numShardGroups);
+				for (PendingAtom pendingAtom : pendingAtoms)
+				{
+					for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
 					{
-						for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
+						try
 						{
 							long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
 							if (stateShardGroup != localShardGroup)
 								continue;
 							
-							Hash stateAtomBlockHash = Hash.from(stateKey.get(), pendingAtom.getHash(), pendingAtom.getBlock());
-							PendingState pendingState = StatePool.this.states.get(stateAtomBlockHash);
+							PendingState pendingState = StatePool.this.context.getLedger().getStateHandler().get(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey);
 							if (pendingState == null)
 							{
-								pendingState = new PendingState(StatePool.this.context, stateKey, pendingAtom.getHash(), pendingAtom.getBlock());
-								add(pendingState);
+								statePoolLog.warn(StatePool.this.context.getName()+": Pending state "+stateKey+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock()+" appears invalid.");
+								continue;
 							}
+							
+							add(pendingState);
+						}
+						catch (Exception ex)
+						{
+							statePoolLog.error(StateHandler.class.getName()+": Pending state preparation failed "+stateKey+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock()+" when processing BranchCommittedEvent", ex);
 						}
 					}
-				}
-				catch (Exception ex)
-				{
-					statePoolLog.fatal(StateHandler.class.getName()+": Failed to create PendingState set for "+blockCommittedEvent.getBlock().getHeader()+" when processing BranchCommittedEvent", ex);
-					return;
 				}
 			}
 			finally
@@ -941,7 +953,7 @@ public final class StatePool implements Service
 				else
 				{
 					statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state pool");
-					StatePool.this.states.clear();
+					StatePool.this.pendingStates.clear();
 					StatePool.this.votesToCastQueue.clear();
 					StatePool.this.votesToCountQueue.clear();
 					StatePool.this.votesToCountDelayed.clear();

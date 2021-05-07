@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -489,8 +490,9 @@ public final class Ledger implements Service, LedgerInterface
 
 		private void stats(final Block block) throws StateLockedException, IOException
 		{
-			Collection<Hash> stateAccumulatorLocked = context.getLedger().getStateAccumulator().locked();
-			ledgerLog.info(Ledger.this.context.getName()+": "+stateAccumulatorLocked.size()+" locked in accumulator "+stateAccumulatorLocked.stream().reduce((a, b) -> Hash.from(a,b)));
+			Collection<Hash> stateAccumulatorExclusiveLocked = context.getLedger().getStateAccumulator().locked(true);
+			Collection<Hash> stateAccumulatorNonExclusiveLocked = context.getLedger().getStateAccumulator().locked(false);
+			ledgerLog.info(Ledger.this.context.getName()+": "+(stateAccumulatorNonExclusiveLocked.size()+stateAccumulatorExclusiveLocked.size())+" locked in accumulator "+Stream.concat(stateAccumulatorExclusiveLocked.stream(), stateAccumulatorNonExclusiveLocked.stream()).reduce((a, b) -> Hash.from(a,b)));
 
 			long numShardGroups = Ledger.this.numShardGroups(block.getHeader().getHeight());
 			Set<Long> shardGroupsTouched = new HashSet<Long>();

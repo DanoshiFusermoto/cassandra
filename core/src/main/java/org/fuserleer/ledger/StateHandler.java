@@ -61,6 +61,7 @@ import org.fuserleer.network.messages.SyncInventoryMessage;
 import org.fuserleer.network.messaging.MessageProcessor;
 import org.fuserleer.network.peers.ConnectedPeer;
 import org.fuserleer.node.Node;
+import org.fuserleer.utils.Ints;
 import org.fuserleer.utils.Longs;
 import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
@@ -73,6 +74,16 @@ public final class StateHandler implements Service
 	private static final Logger stateLog = Logging.getLogger("state");
 	private static final Logger cerbyLog = Logging.getLogger("cerby");
 	
+	static
+	{
+//		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL);
+//		stateLog.setLevels(Logging.ERROR | Logging.FATAL);
+	}
+	
 	private enum CertificateStatus
 	{
 		SUCCESS, FAILED, SKIPPED;
@@ -80,13 +91,13 @@ public final class StateHandler implements Service
 
 	private final Context context;
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
-	private final Map<Hash, PendingAtom> atoms = new HashMap<Hash, PendingAtom>();
-	private final Map<StateKey<?, ?>, PendingAtom> states = new HashMap<StateKey<?, ?>, PendingAtom>();
+	private final Map<Hash, PendingAtom> pendingAtoms = new HashMap<Hash, PendingAtom>();
+	private final Map<Hash, PendingState> pendingStates = new HashMap<Hash, PendingState>();
 
 	private final BlockingQueue<PendingAtom> executionQueue;
 	private final Map<Hash, StateInput> remoteProvisionDelayed;
 	private final MappedBlockingQueue<Hash, StateInput> remoteProvisionQueue;
-	private final MappedBlockingQueue<StateKey<?, ?>, PendingAtom> localProvisionQueue;
+	private final MappedBlockingQueue<PendingState, PendingAtom> localProvisionQueue;
 
 	private final Map<Hash, StateCertificate> certificatesToProcessDelayed;
 	private final MappedBlockingQueue<Hash, StateCertificate> certificatesToProcessQueue;
@@ -180,10 +191,10 @@ public final class StateHandler implements Service
 							stateLog.error(StateHandler.this.context.getName()+": Error broadcasting state certificates "+stateCertificatesToBroadcast, ex);
 						}
 
-						Entry<StateKey<?, ?>, PendingAtom> stateToProvision = StateHandler.this.localProvisionQueue.peek(1, TimeUnit.SECONDS);
+						Entry<PendingState, PendingAtom> stateToProvision = StateHandler.this.localProvisionQueue.peek(1, TimeUnit.SECONDS);
 						if (stateToProvision != null)
 						{
-							StateKey<?, ?> stateKey = stateToProvision.getKey();
+							PendingState pendingState = stateToProvision.getKey();
 							PendingAtom pendingAtom = stateToProvision.getValue();
 							try
 							{
@@ -191,16 +202,16 @@ public final class StateHandler implements Service
 									throw new IllegalStateException("Pending atom "+pendingAtom+" is not in PROVISIONING commit state");
 								
 								if (cerbyLog.hasLevel(Logging.DEBUG))
-									cerbyLog.debug(StateHandler.this.context.getName()+": Provisioning state "+stateKey+" for atom "+pendingAtom.getHash());
+									cerbyLog.debug(StateHandler.this.context.getName()+": Provisioning state "+pendingState+" for atom "+pendingAtom.getHash());
 
 								long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
 								long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
-								long provisionShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+								long provisionShardGroup = ShardMapper.toShardGroup(pendingState.getKey().get(), numShardGroups);
 			                	if (provisionShardGroup == localShardGroup)
 			                	{
-			            			UInt256 value = StateHandler.this.context.getLedger().getLedgerStore().get(stateKey);
+			            			UInt256 value = StateHandler.this.context.getLedger().getLedgerStore().get(pendingState.getKey());
 			                		if (stateLog.hasLevel(Logging.DEBUG))
-										stateLog.debug(StateHandler.this.context.getName()+": State "+stateKey+" in atom "+pendingAtom.getHash()+" was provisioned locally");
+										stateLog.debug(StateHandler.this.context.getName()+": State "+pendingState.getKey()+" in atom "+pendingAtom.getHash()+" was provisioned locally");
 			                		
 			                		// Process any state certificates received early in case of early out possibility
 			                		// TODO this doesn't make sense here anymore, can't build until executed?
@@ -210,21 +221,21 @@ public final class StateHandler implements Service
 			            				if (pendingAtom.thrown() != null)
 										{
 											if (stateLog.hasLevel(Logging.DEBUG))
-												stateLog.debug(StateHandler.this.context.getName()+": Aborting state provisioning "+stateKey+" for atom "+pendingAtom.getHash()+" as execution exception thrown");
+												stateLog.debug(StateHandler.this.context.getName()+": Aborting state provisioning "+pendingState.getKey()+" for atom "+pendingAtom.getHash()+" as execution exception thrown");
 											
 											continue;
 										}
 
-			            				if (pendingAtom.getInput(stateKey) == null)
+			            				if (pendingAtom.getInput(pendingState.getKey()) == null)
 			            				{
-											provision(pendingAtom, stateKey, value);
+											provision(pendingAtom, pendingState.getKey(), value);
 
-											StateInput stateInput = new StateInput(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey, value); 
+											StateInput stateInput = new StateInput(pendingAtom.getHash(), pendingState.getKey(), value); 
 											if (stateLog.hasLevel(Logging.DEBUG))
-												stateLog.debug(StateHandler.this.context.getName()+": Storing local provisioned state "+stateKey+" for atom "+pendingAtom.getHash()+" for state recovery");
+												stateLog.debug(StateHandler.this.context.getName()+": Storing local provisioned state "+pendingState.getKey()+" for atom "+pendingAtom.getHash()+" for state recovery");
 
 								    		if (StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), stateInput).equals(OperationStatus.SUCCESS) == false)
-												stateLog.warn(StateHandler.this.context.getName()+": Already stored provisioned state "+stateKey+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock());
+												stateLog.warn(StateHandler.this.context.getName()+": Already stored provisioned state "+pendingState.getKey()+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock());
 								    		
 											Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
 											if (provisionShardGroup == localShardGroup)
@@ -233,7 +244,7 @@ public final class StateHandler implements Service
 												StateHandler.this.context.getNetwork().getGossipHandler().broadcast(stateInput, shardGroups);
 			            				}
 			            				else
-			            					stateLog.warn(StateHandler.this.context.getName()+": State "+stateKey+" is already provisioned for pending atom "+pendingAtom+" (recent restart?) ");
+			            					stateLog.warn(StateHandler.this.context.getName()+": State "+pendingState.getKey()+" is already provisioned for pending atom "+pendingAtom+" (recent restart?) ");
 
 										if (pendingAtom.isProvisioned() == false)
 										{
@@ -241,7 +252,7 @@ public final class StateHandler implements Service
 											{
 					            				if (pendingAtom.getInput(provisionedStateKey) == null)
 					            				{
-					            					StateInput stateInput = StateHandler.this.context.getLedger().getLedgerStore().get(Hash.from(pendingAtom.getHash(), provisionedStateKey.get()), StateInput.class);
+					            					StateInput stateInput = StateHandler.this.context.getLedger().getLedgerStore().get(StateInput.getHash(pendingAtom.getHash(), provisionedStateKey), StateInput.class);
 					            					if (stateInput == null)
 					            						continue;
 
@@ -261,11 +272,11 @@ public final class StateHandler implements Service
 			            			}
 			                	}
 			                	else
-			                		throw new IllegalStateException("Attempting to provision non-local state "+stateKey+" in atom "+pendingAtom.getHash());
+			                		throw new IllegalStateException("Attempting to provision non-local state "+pendingState.getKey()+" in atom "+pendingAtom.getHash());
 							}
 							catch (Exception ex)
 							{
-								cerbyLog.error(StateHandler.this.context.getName()+": Error processing provisioning for "+stateKey+" in atom "+pendingAtom.getHash(), ex);
+								cerbyLog.error(StateHandler.this.context.getName()+": Error processing provisioning for "+pendingState.getKey()+" in atom "+pendingAtom.getHash(), ex);
 								StateHandler.this.context.getEvents().post(new AtomExceptionEvent(pendingAtom, ex));
 							}
 							finally
@@ -433,27 +444,78 @@ public final class StateHandler implements Service
 	StateHandler(Context context)
 	{
 		this.context = Objects.requireNonNull(context, "Context is null");
-		this.localProvisionQueue = new MappedBlockingQueue<StateKey<?, ?>, PendingAtom>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
+		this.localProvisionQueue = new MappedBlockingQueue<PendingState, PendingAtom>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.remoteProvisionDelayed = Collections.synchronizedMap(new HashMap<Hash, StateInput>());
 		this.remoteProvisionQueue = new MappedBlockingQueue<Hash, StateInput>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.executionQueue = new LinkedBlockingQueue<PendingAtom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
 		this.certificatesToProcessQueue = new MappedBlockingQueue<Hash, StateCertificate>(this.context.getConfiguration().get("ledger.state.queue", 1<<16));
 		this.certificatesToProcessDelayed = Collections.synchronizedMap(new HashMap<Hash, StateCertificate>());
-
-//		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-		stateLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		cerbyLog.setLevels(Logging.ERROR | Logging.FATAL);
-//		stateLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 	
-	void provision(final PendingAtom pendingAtom)
+	/**
+	 * Returns an existing pending state or creates it providing that it is not timed out or committed.
+	 * 
+	 * @param state The pending state hash
+	 * @throws IOException
+	 * @throws  
+	 */
+	PendingState get(final Hash block, final Hash atom, final StateKey<?, ?> stateKey) throws IOException
+	{
+		Objects.requireNonNull(stateKey, "State key is null");
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is zero");
+		Objects.requireNonNull(block, "Block hash is null");
+		Hash.notZero(block, "Block hash is zero");
+		
+		if (Ints.fromByteArray(block.toByteArray()) > 0)
+			throw new IllegalArgumentException("Block hash doesn't look like a block hash");
+
+		if (Ints.fromByteArray(atom.toByteArray()) == 0)
+			throw new IllegalArgumentException("Atom hash doesn't look like a atom hash");
+
+		// TODO dont think this is needed now
+		if (this.context.getNode().isSynced() == false)
+			throw new IllegalStateException("Sync state is false!  StateHandler::get called");
+
+		// Dont use the state handler lock here.  
+		// Just sync on the pending state object as this function is called from many places
+		synchronized(this.pendingStates)
+		{
+			Hash pendingStateHash = PendingState.getHash(atom, stateKey);
+			PendingState pendingState = this.pendingStates.get(pendingStateHash);
+			if (pendingState != null)
+				return pendingState;
+			
+			Commit commit = this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, atom));
+			if (commit != null)
+			{
+				if (commit.getPath().get(Elements.CERTIFICATE) != null)
+					return null;
+						
+				if (commit.isCommitTimedout() == true)
+					return null;
+					
+				if (commit.isAcceptTimedout() == true)
+					return null;
+			}
+	
+			pendingState = new PendingState(this.context, stateKey, atom, block);
+			this.pendingStates.put(pendingStateHash, pendingState);
+			
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Pending state "+stateKey+" creation stack", new Exception());
+
+			return pendingState;
+		}
+	}
+
+	
+	void provision(final PendingAtom pendingAtom) throws IOException
 	{
 		provision(pendingAtom, pendingAtom.getStateKeys());
 	}
 
-	void provision(final PendingAtom pendingAtom, final Collection<StateKey<?, ?>> stateKeys)
+	void provision(final PendingAtom pendingAtom, final Collection<StateKey<?, ?>> stateKeys) throws IOException
 	{
 		Objects.requireNonNull(pendingAtom, "Pending atom for provisioning is null");
 		Objects.requireNonNull(stateKeys, "Pending atom state keys to provision is null");
@@ -462,7 +524,7 @@ public final class StateHandler implements Service
 		StateHandler.this.lock.readLock().lock();
 		try
 		{
-			if (pendingAtom.equals(this.atoms.get(pendingAtom.getHash())) == false)
+			if (pendingAtom.equals(this.pendingAtoms.get(pendingAtom.getHash())) == false)
 				throw new IllegalStateException("Expected pending atom "+pendingAtom.getHash()+" not found");
 			
 			if (stateLog.hasLevel(Logging.DEBUG) == true)
@@ -472,14 +534,15 @@ public final class StateHandler implements Service
 			long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
 			for (StateKey<?, ?> stateKey : stateKeys)
 			{
-				if (pendingAtom.equals(this.states.get(stateKey)) == false)
+				PendingState pendingState = get(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey);
+				if (pendingState == null || pendingAtom.getHash().equals(pendingState.getAtom()) == false)
 					throw new IllegalStateException("Expected pending state "+stateKey+" in atom "+pendingAtom.getHash()+" not found");
 				
 				long provisionShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
 				if (provisionShardGroup != localShardGroup)
 					continue;
 				
-				if (this.localProvisionQueue.putIfAbsent(stateKey, pendingAtom) != null)
+				if (this.localProvisionQueue.putIfAbsent(pendingState, pendingAtom) != null)
 					stateLog.warn(StateHandler.this.context.getName()+": Provisioning "+stateKey+" should be absent for "+pendingAtom.getHash());
 			}
 		}
@@ -529,7 +592,7 @@ public final class StateHandler implements Service
 				StateHandler.this.lock.readLock().lock();
 				try
 				{
-					PendingAtom pendingAtom = StateHandler.this.atoms.get(((StateCertificate)stateCertificate).getAtom());
+					PendingAtom pendingAtom = StateHandler.this.pendingAtoms.get(((StateCertificate)stateCertificate).getAtom());
 					if (pendingAtom == null)
 					{
 						cerbyLog.error(StateHandler.this.context.getName()+": Pending atom "+((StateCertificate)stateCertificate).getAtom()+" not found for inventory filter");
@@ -656,14 +719,14 @@ public final class StateHandler implements Service
 				StateHandler.this.lock.readLock().lock();
 				try
 				{
-					PendingAtom pendingAtom = StateHandler.this.atoms.get(((StateInput)stateInput).getAtom());
+					PendingAtom pendingAtom = StateHandler.this.pendingAtoms.get(((StateInput)stateInput).getAtom());
 					if (pendingAtom == null)
 					{
 						cerbyLog.error(StateHandler.this.context.getName()+": Pending atom "+((StateInput)stateInput).getAtom()+" not found for inventory filter");
 						return Collections.emptySet();
 					}
 					
-					long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(Longs.fromByteArray(((StateInput)stateInput).getBlock().toByteArray()));
+					long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
 					long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
 					long stateShardGroup = ShardMapper.toShardGroup(((StateInput)stateInput).getKey().get(), numShardGroups);
 					Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
@@ -807,7 +870,7 @@ public final class StateHandler implements Service
 							if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 								cerbyLog.debug(StateHandler.this.context.getName()+": State pool (certificates) inventory request from "+peer);
 							
-							final Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(StateHandler.this.atoms.values());
+							final Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(StateHandler.this.pendingAtoms.values());
 							final Set<Hash> stateCertificateInventory = new LinkedHashSet<Hash>();
 							final Set<Hash> stateInputInventory = new LinkedHashSet<Hash>();
 							StateHandler.this.certificatesToProcessQueue.forEach((h, sc) -> stateCertificateInventory.add(h));
@@ -840,7 +903,7 @@ public final class StateHandler implements Service
 									if (value == null)
 										continue;
 									
-									stateInputInventory.add(Hash.from(pendingAtom.getHash(), stateKey.get()));
+									stateInputInventory.add(StateInput.getHash(pendingAtom.getHash(), stateKey));
 								}
 							}
 							
@@ -960,7 +1023,7 @@ public final class StateHandler implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			List<Hash> pending = this.atoms.values().stream().filter(pa -> pa.getCertificate() != null).map(pa -> pa.getCertificate().getHash()).collect(Collectors.toList());
+			List<Hash> pending = this.pendingAtoms.values().stream().filter(pa -> pa.getCertificate() != null).map(pa -> pa.getCertificate().getHash()).collect(Collectors.toList());
 			Collections.sort(pending);
 			return pending;
 		}
@@ -976,8 +1039,8 @@ public final class StateHandler implements Service
 		try
 		{
 			List<Hash> certificates = new ArrayList<Hash>();
-			certificates.addAll(this.atoms.values().stream().filter(pa -> pa.getCertificate() != null).map(pa -> pa.getCertificate().getHash()).collect(Collectors.toList()));
-			certificates.addAll(this.atoms.values().stream().flatMap(pa -> pa.getCertificates().stream()).map(sc -> sc.getHash()).collect(Collectors.toList()));
+			certificates.addAll(this.pendingAtoms.values().stream().filter(pa -> pa.getCertificate() != null).map(pa -> pa.getCertificate().getHash()).collect(Collectors.toList()));
+			certificates.addAll(this.pendingAtoms.values().stream().flatMap(pa -> pa.getCertificates().stream()).map(sc -> sc.getHash()).collect(Collectors.toList()));
 			Collections.sort(certificates);
 			return certificates;
 		}
@@ -1011,7 +1074,7 @@ public final class StateHandler implements Service
 		this.lock.readLock().lock();
 		try
 		{
-			for (PendingAtom pendingAtom : this.atoms.values())
+			for (PendingAtom pendingAtom : this.pendingAtoms.values())
 			{
 				if (filter.test(pendingAtom) == false)
 					continue;
@@ -1084,26 +1147,59 @@ public final class StateHandler implements Service
 		return false;
 	}
 	
-	boolean add(final PendingAtom pendingAtom)
+	void push(final PendingAtom pendingAtom)
+	{
+		Objects.requireNonNull(pendingAtom, "Pending atom for injection is null");
+		
+		if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == false)
+			throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" for injection must be in PROVISIONING state");
+		
+		synchronized(this.pendingAtoms)
+		{
+			if (this.pendingAtoms.containsKey(pendingAtom.getHash()) == true)
+				throw new IllegalStateException(this.context.getName()+": Pending atom "+pendingAtom.getHash()+" is already present");
+			
+			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
+			for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
+			{
+				long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+				if (stateShardGroup != localShardGroup)
+					continue;
+					
+				PendingState pendingState = new PendingState(this.context, stateKey, pendingAtom.getHash(), pendingAtom.getBlock());
+				if (this.pendingStates.containsKey(pendingState.getHash()) == true)
+					throw new IllegalStateException(this.context.getName()+": Pending state "+pendingState.getKey()+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock()+" is already present");
+
+				this.context.getLedger().getStatePool().push(pendingState);
+				this.pendingStates.put(pendingState.getHash(), pendingState);
+			}
+			
+			this.pendingAtoms.put(pendingAtom.getHash(), pendingAtom);
+		}
+	}
+	
+	boolean add(final PendingAtom pendingAtom) throws IOException
 	{
 		Objects.requireNonNull(pendingAtom, "Pending atom is null");
 		
 		StateHandler.this.lock.writeLock().lock();
 		try
 		{
-			if (this.atoms.putIfAbsent(pendingAtom.getHash(), pendingAtom) == null)
+			if (this.pendingAtoms.putIfAbsent(pendingAtom.getHash(), pendingAtom) == null)
 			{
 				if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 					cerbyLog.debug(this.context.getName()+": Adding states for "+pendingAtom+" in block "+pendingAtom.getBlock());
 				
 				for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
 				{
-					if (this.states.putIfAbsent(stateKey, pendingAtom) != null)
-						cerbyLog.warn(this.context.getName()+": State "+stateKey+" should be absent for "+pendingAtom.getHash());
-					else if (cerbyLog.hasLevel(Logging.DEBUG) == true)
-						cerbyLog.debug(this.context.getName()+": Added state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
+					PendingState pendingState = get(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey);
+					if (pendingState == null)
+					{
+						cerbyLog.error(this.context.getName()+": Failed to add pending state "+stateKey+" for "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock());
+						return false;
+					}
 				}
-				
 				return true;
 			}
 			
@@ -1135,20 +1231,27 @@ public final class StateHandler implements Service
 			{
 				for (StateKey<?, ?> stateKey : pendingAtom.getStateKeys())
 				{
+					PendingState pendingState = get(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey);
+					if (pendingState == null)
+						stateLog.warn(this.context.getName()+": Pending state "+stateKey+" not found for "+pendingAtom+" in block "+pendingAtom.getBlock());
+					
+					if (StateHandler.this.pendingStates.remove(pendingState.getHash(), pendingAtom) == true)
+					{
+						if(cerbyLog.hasLevel(Logging.DEBUG))
+							cerbyLog.debug(this.context.getName()+": Removed pending state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
+					}
+					else
+						cerbyLog.debug(this.context.getName()+": Removal failed for pending state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
+					
+					StateHandler.this.localProvisionQueue.remove(pendingState, pendingAtom);
+
 					Optional<UInt256> value = pendingAtom.getInput(stateKey);
 					if (value == null)
 						continue;
 					
-					StateInput stateInput = new StateInput(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey, value.orElse(null));
+					StateInput stateInput = new StateInput(pendingAtom.getHash(), stateKey, value.orElse(null));
 					this.context.getLedger().getLedgerStore().storeSyncInventory(this.context.getLedger().getHead().getHeight(), stateInput.getHash(), StateInput.class, SyncInventoryType.COMMIT);
 				}
-				
-				pendingAtom.getStateKeys().forEach(sk -> {
-					if (StateHandler.this.states.remove(sk, pendingAtom) == true && cerbyLog.hasLevel(Logging.DEBUG))
-						cerbyLog.debug(this.context.getName()+": Removed state "+sk+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
-				});
-
-				pendingAtom.getStateKeys().forEach(sk -> StateHandler.this.localProvisionQueue.remove(sk, pendingAtom));
 			}
 
 			final List<Hash> certificateRemovals = new ArrayList<Hash>();
@@ -1175,7 +1278,7 @@ public final class StateHandler implements Service
 			this.remoteProvisionQueue.removeAll(inputRemovals);
 			synchronized(this.remoteProvisionDelayed) { this.remoteProvisionDelayed.keySet().removeAll(inputRemovals); }
 
-			boolean removed = pendingAtom.equals(StateHandler.this.atoms.remove(pendingAtom.getHash()));
+			boolean removed = pendingAtom.equals(StateHandler.this.pendingAtoms.remove(pendingAtom.getHash()));
 			if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) && removed == false)
 				throw new IllegalStateException("Expected pending atom "+pendingAtom.getHash()+" but was not found");
 		}
@@ -1207,7 +1310,7 @@ public final class StateHandler implements Service
 			StateHandler.this.lock.writeLock().lock();
 			try
 			{
-				if (StateHandler.this.atoms.containsKey(atomCertificateEvent.getCertificate().getAtom()) == false)
+				if (StateHandler.this.pendingAtoms.containsKey(atomCertificateEvent.getCertificate().getAtom()) == false)
 					throw new IllegalStateException(StateHandler.this.context.getName()+": Pending atom "+atomCertificateEvent.getCertificate().getAtom()+" in certificate not found");
 				
 				StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), atomCertificateEvent.getCertificate());
@@ -1267,7 +1370,7 @@ public final class StateHandler implements Service
 			{
 				for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
 				{
-					PendingAtom pendingAtom = StateHandler.this.atoms.get(atom.getHash());
+					PendingAtom pendingAtom = StateHandler.this.pendingAtoms.get(atom.getHash());
 					if (pendingAtom == null)
 						continue;
 					
@@ -1325,7 +1428,7 @@ public final class StateHandler implements Service
 						if (cerbyLog.hasLevel(Logging.DEBUG) == true)
 							cerbyLog.debug(StateHandler.this.context.getName()+": Committing atom certificate "+certificate.getHash()+" for "+certificate.getAtom());
 						
-						PendingAtom pendingAtom = StateHandler.this.atoms.get(certificate.getAtom());
+						PendingAtom pendingAtom = StateHandler.this.pendingAtoms.get(certificate.getAtom());
 						if (pendingAtom == null)
 							throw new IllegalStateException("Pending atom "+certificate.getAtom()+" not found");
 						
@@ -1439,12 +1542,12 @@ public final class StateHandler implements Service
 				else
 				{
 					cerbyLog.info(StateHandler.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state handler");
-					StateHandler.this.atoms.clear();
+					StateHandler.this.pendingAtoms.clear();
 					StateHandler.this.executionQueue.clear();
 					StateHandler.this.localProvisionQueue.clear();
 					StateHandler.this.remoteProvisionQueue.clear();
 					StateHandler.this.remoteProvisionDelayed.clear();
-					StateHandler.this.states.clear();
+					StateHandler.this.pendingStates.clear();
 					StateHandler.this.certificatesToProcessQueue.clear();
 					StateHandler.this.certificatesToProcessDelayed.clear();
 				}

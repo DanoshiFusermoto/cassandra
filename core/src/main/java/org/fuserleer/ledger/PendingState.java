@@ -15,6 +15,7 @@ import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.BLSSignature;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.crypto.Hashable;
 import org.fuserleer.crypto.MerkleProof;
 import org.fuserleer.crypto.MerkleProof.Branch;
 import org.fuserleer.database.DatabaseException;
@@ -23,9 +24,17 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.utils.Longs;
 
-final class PendingState
+final class PendingState implements Hashable
 {
 	private static final Logger statePoolLog = Logging.getLogger("statepool");
+	
+	static Hash getHash(final Hash atom, final StateKey<?, ?> stateKey)
+	{
+		Objects.requireNonNull(stateKey, "State key is null");
+		Objects.requireNonNull(atom, "Atom hash is null");
+		Hash.notZero(atom, "Atom hash is zero");
+		return Hash.from(atom, stateKey.get());
+	}
 
 	private final Context context;
 	
@@ -59,6 +68,12 @@ final class PendingState
 		this.block = block;
 		this.votes = new HashMap<BLSPublicKey, StateVote>();
 		this.weights = new HashMap<Hash, Long>();
+	}
+
+	@Override
+	public Hash getHash()
+	{
+		return getHash(this.atom, this.key);
 	}
 
 	public StateKey<?, ?> getKey()

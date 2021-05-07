@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,15 +22,24 @@ import org.fuserleer.logging.Logging;
 import org.fuserleer.utils.Numbers;
 import org.fuserleer.utils.UInt256;
 
+import com.google.common.collect.LinkedHashMultimap;
+import com.google.common.collect.Multimap;
+
 public final class StateAccumulator implements LedgerProvider
 {
 	private static final Logger stateLog = Logging.getLogger("state");
+	
+	public enum StateLockType
+	{
+		NONE, EXCLUSIVE, NONEXCLUSIVE
+	}
 
 	private final Context context;
-
+	
 	private final LedgerProvider provider;
 	private final Map<Hash, PendingAtom> pending;
-	private final Map<Hash, PendingAtom> locked;
+	private final Map<Hash, PendingAtom> exclusive;
+	private final Multimap<Hash, PendingAtom> nonexclusive;
 	private final ReentrantLock lock = new ReentrantLock(true);
 	private final String name;
 	
@@ -44,7 +54,8 @@ public final class StateAccumulator implements LedgerProvider
 		this.provider = provider;
 		this.name = name;
 		this.pending = new HashMap<Hash, PendingAtom>();
-		this.locked = new LinkedHashMap<Hash, PendingAtom>();
+		this.exclusive = new LinkedHashMap<Hash, PendingAtom>();
+		this.nonexclusive = LinkedHashMultimap.create();
 	}
 
 	StateAccumulator shadow()
@@ -56,7 +67,8 @@ public final class StateAccumulator implements LedgerProvider
 		{
 			shadow = new StateAccumulator(this.context, "Shadowed "+this.name, this.provider);
 			shadow.pending.putAll(this.pending);
-			shadow.locked.putAll(this.locked);
+			shadow.exclusive.putAll(this.exclusive);
+			shadow.nonexclusive.putAll(this.nonexclusive);
 		}
 		finally
 		{
@@ -72,7 +84,8 @@ public final class StateAccumulator implements LedgerProvider
 		try
 		{
 			this.pending.clear();
-			this.locked.clear();
+			this.exclusive.clear();
+			this.nonexclusive.clear();
 		}
 		finally
 		{
@@ -110,12 +123,18 @@ public final class StateAccumulator implements LedgerProvider
 		return this.provider.get(key);
 	}
 	
-	public Collection<Hash> locked()
+	public Collection<Hash> locked(boolean exclusive)
 	{
 		this.lock.lock();
 		try
 		{
-			List<Hash> locked = new ArrayList<Hash>(this.locked.keySet());
+			List<Hash> locked;
+			
+			if (exclusive == false)
+				locked = new ArrayList<Hash>(this.nonexclusive.keySet());
+			else
+				locked = new ArrayList<Hash>(this.exclusive.keySet());
+				
 			Collections.sort(locked);
 			return locked;
 		}
@@ -160,18 +179,21 @@ public final class StateAccumulator implements LedgerProvider
 				throw new IllegalStateException("Atom "+pendingAtom.getHash()+" is already pending and locked");
 			
 			// State ops
-			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
+			for (StateOp stateOp : pendingAtom.getStateOps())
 			{
-				if (isLocked(state) == true)
-					throw new StateLockedException(state, pendingAtom.getHash());
+				if (lockable(stateOp.key(), pendingAtom, stateOp.ins().exclusive()) == false)
+					throw new StateLockedException(stateOp.key(), pendingAtom.getHash());
 			}
 
-			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
+			for (StateOp stateOp : pendingAtom.getStateOps())
 			{
-				this.locked.put(state.get(), pendingAtom);
+				if (stateOp.ins().exclusive() == true)
+					this.exclusive.put(stateOp.key().get(), pendingAtom);
+				else
+					this.nonexclusive.put(stateOp.key().get(), pendingAtom);
 
 				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": "+this.name+" Locked state "+state+" via "+pendingAtom.getHash());
+					stateLog.debug(this.context.getName()+": "+this.name+" Locked state "+stateOp+" "+(stateOp.ins().exclusive() == true ? "exclusively":"non-exclusively")+" via "+pendingAtom.getHash());
 			}
 
 			this.pending.put(pendingAtom.getHash(), pendingAtom);
@@ -215,19 +237,54 @@ public final class StateAccumulator implements LedgerProvider
 				throw new IllegalStateException("Atom "+pendingAtom.getHash()+" is not found");
 			
 			// State ops
-			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
+			for (StateOp stateOp : pendingAtom.getStateOps())
 			{
-				if (isLocked(state) == false)
-					throw new StateLockedException("State "+state+" required by "+pendingAtom.getHash()+" is NOT locked", state, pendingAtom.getHash());
+				if (stateOp.ins().exclusive() == true)
+				{
+					if (isLocked(stateOp.key()).equals(StateLockType.EXCLUSIVE) == false)
+						throw new StateLockedException("State "+stateOp+" required by "+pendingAtom.getHash()+" is NOT locked exclusively", stateOp.key(), pendingAtom.getHash());
+				}
+				else
+				{
+					if (isLocked(stateOp.key()).equals(StateLockType.NONE) == true)
+						throw new StateLockedException("State "+stateOp+" required by "+pendingAtom.getHash()+" is NOT locked non-exclusively", stateOp.key(), pendingAtom.getHash());
+				}
 			}
 
-			for (StateKey<?, ?> state : pendingAtom.getStateKeys())
+			Set<StateKey<?, ?>> unlocked = new HashSet<StateKey<?,?>>();
+			for (StateOp stateOp : pendingAtom.getStateOps())
 			{
-				if (this.locked.remove(state.get(), pendingAtom) == false)
-					throw new StateLockedException("State "+state+" is not locked by "+pendingAtom.getHash(), state, pendingAtom.getHash());
+				if (unlocked.contains(stateOp.key()) == true)
+					continue;
+				
+				if (stateOp.ins().exclusive() == false)
+					continue;
+
+				if (this.exclusive.remove(stateOp.key().get(), pendingAtom) == false)
+					throw new StateLockedException("State "+stateOp+" in "+pendingAtom.getHash()+" is NOT locked exclusively", stateOp.key(), pendingAtom.getHash());
+					
+				unlocked.add(stateOp.key());
 
 				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": "+this.name+" Unlocked state "+state+" via "+pendingAtom.getHash());
+					stateLog.debug(this.context.getName()+": "+this.name+" Unlocked state "+stateOp+" via "+pendingAtom.getHash());
+			}
+
+			unlocked.clear();
+			for (StateOp stateOp : pendingAtom.getStateOps())
+			{
+				if (unlocked.contains(stateOp.key()) == true)
+					continue;
+				
+				if (stateOp.ins().exclusive() == true)
+					continue;
+
+				if (this.nonexclusive.remove(stateOp.key().get(), pendingAtom) == false)
+					throw new StateLockedException("State "+stateOp+" in "+pendingAtom.getHash()+" is NOT locked non-exclusively", stateOp.key(), pendingAtom.getHash());
+
+				unlocked.add(stateOp.key());
+				
+				if (stateLog.hasLevel(Logging.DEBUG) == true)
+					stateLog.debug(this.context.getName()+": "+this.name+" Unlocked state "+stateOp+" via "+pendingAtom.getHash());
 			}
 		}
 		finally
@@ -236,7 +293,50 @@ public final class StateAccumulator implements LedgerProvider
 		}
 	}
 	
-	boolean isLocked(final StateKey<?, ?> key)
+	private boolean lockable(final StateKey<?, ?> key, final PendingAtom pendingAtom, boolean exclusive)
+	{
+		Objects.requireNonNull(key, "State key is null");
+		
+		this.lock.lock();
+		try
+		{
+			if (key.scope().equals(Atom.class) == true)
+			{
+				if (this.pending.containsKey(key.key()) == true)
+					return false;
+				else
+					return true;
+			}
+			
+			if (exclusive == true)
+			{
+				if (this.nonexclusive.containsKey(key.get()) == true)
+					return false;
+				
+				if (this.exclusive.containsKey(key.get()) == false) 
+					return true;
+				
+				// Reentrant
+				PendingAtom exclusiveLockHolder = this.exclusive.get(key.get());
+				if (exclusiveLockHolder.equals(pendingAtom) == false)
+					return false;
+			}
+			else
+			{
+				PendingAtom exclusiveLockHolder = this.exclusive.get(key.get());
+				if (exclusiveLockHolder != null && exclusiveLockHolder.equals(pendingAtom) == false)
+					return false;
+			}
+			
+			return true;
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+	
+	StateLockType isLocked(final StateKey<?, ?> key)
 	{
 		Objects.requireNonNull(key, "State key is null");
 		
@@ -246,20 +346,18 @@ public final class StateAccumulator implements LedgerProvider
 			if (key.scope().equals(Atom.class) == true)
 			{
 				if (this.pending.containsKey(key.key()) == false)
-					return false;
+					return StateLockType.NONE;
 				else
-					return true;
+					return StateLockType.EXCLUSIVE;
 			}
 			
-			if (this.locked.containsKey(key.get()) == true)
-			{
-				if (stateLog.hasLevel(Logging.DEBUG) == true)
-					stateLog.debug(this.context.getName()+": "+this.name+" State "+key.get()+" is locked");
+			if (this.exclusive.containsKey(key.get()) == true) 
+				return StateLockType.EXCLUSIVE;
+				
+			if (this.nonexclusive.containsKey(key.get()) == true)
+				return StateLockType.NONEXCLUSIVE;
 
-				return true;
-			}
-
-			return false;
+			return StateLockType.NONE;
 		}
 		finally
 		{
@@ -285,9 +383,12 @@ public final class StateAccumulator implements LedgerProvider
 		return this.pending.size();
 	}
 
-	public int numLocked() 
+	public int numLocked(boolean exclusive) 
 	{
-		return this.locked.size();
+		if (exclusive == false)
+			return this.nonexclusive.size();
+		else
+			return this.exclusive.size();
 	}
 	
 	LedgerProvider getProvider()

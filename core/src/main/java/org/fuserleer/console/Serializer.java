@@ -2,7 +2,6 @@ package org.fuserleer.console;
 
 import java.io.PrintStream;
 import java.util.Map.Entry;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;

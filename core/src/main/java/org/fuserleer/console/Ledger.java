@@ -10,7 +10,6 @@ import org.fuserleer.Context;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.ledger.Block;
 import org.fuserleer.ledger.ShardMapper;
-import org.fuserleer.ledger.StateKey;
 import org.fuserleer.time.Time;
 
 public class Ledger extends Function
@@ -80,9 +79,13 @@ public class Ledger extends Function
 			if (verbose) statePoolVotes.forEach(p -> printStream.println(p.toString()));
 			printStream.println(statePoolVotes.size()+" votes in state pool "+statePoolVotes.stream().reduce((a, b) -> Hash.from(a,b)));
 
-			Collection<Hash> stateAccumulatorLocked = context.getLedger().getStateAccumulator().locked();
-			if (verbose) stateAccumulatorLocked.forEach(p -> printStream.println(p.toString()));
-			printStream.println(stateAccumulatorLocked.size()+" locked in accumulator "+stateAccumulatorLocked.stream().reduce((a, b) -> Hash.from(a,b)));
+			Collection<Hash> stateAccumulatorExclusiveLocked = context.getLedger().getStateAccumulator().locked(true);
+			if (verbose) stateAccumulatorExclusiveLocked.forEach(p -> printStream.println(p.toString()));
+			printStream.println(stateAccumulatorExclusiveLocked.size()+" exclusive locks in accumulator "+stateAccumulatorExclusiveLocked.stream().reduce((a, b) -> Hash.from(a,b)));
+
+			Collection<Hash> stateAccumulatorNonExclusiveLocked = context.getLedger().getStateAccumulator().locked(false);
+			if (verbose) stateAccumulatorNonExclusiveLocked.forEach(p -> printStream.println(p.toString()));
+			printStream.println(stateAccumulatorNonExclusiveLocked.size()+" non-exclusive locks in accumulator "+stateAccumulatorNonExclusiveLocked.stream().reduce((a, b) -> Hash.from(a,b)));
 
 			printStream.println("Current head: "+context.getLedger().getHead());
 		}

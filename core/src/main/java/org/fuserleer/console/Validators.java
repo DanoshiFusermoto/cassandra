@@ -2,7 +2,6 @@ package org.fuserleer.console;
 
 import java.io.PrintStream;
 import java.util.Collection;
-import java.util.Date;
 import java.util.Map.Entry;
 
 import org.apache.commons.cli.CommandLine;

@@ -2,11 +2,9 @@ package org.fuserleer.console;
 
 import java.io.PrintStream;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
-import org.fuserleer.API;
 import org.fuserleer.Context;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.Hash;

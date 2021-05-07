@@ -94,5 +94,47 @@ public class Tokens extends Function
 			wallet.submit(atom);
 			printStream.println(Serialization.getInstance().toJson(atom, Output.API));
 		}
+		else if (commandLine.hasOption("debits") == true)
+		{
+			String ISO = commandLine.getOptionValue("debits", "FLEX");
+			TokenSpecification token = null;
+			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
+				for(Particle particle : atom.getParticles())
+					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase("FLEX") == true)
+						token = (TokenSpecification) particle;
+			
+			if (token == null)
+				throw new IllegalStateException("Token "+ISO+" not found");
+			
+			Collection<TransferParticle> transfers = wallet.get(TransferParticle.class, Spin.DOWN);
+			for (TransferParticle transfer : transfers)
+			{
+				if (transfer.getToken().equals(token.getHash()) == false)
+					continue;
+				
+				printStream.println(transfer.getHash()+" "+transfer.getQuantity()+" "+token.getISO()+" "+transfer.getSpin());
+			}
+		}
+		else if (commandLine.hasOption("credits") == true)
+		{
+			String ISO = commandLine.getOptionValue("credits", "FLEX");
+			TokenSpecification token = null;
+			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
+				for(Particle particle : atom.getParticles())
+					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase("FLEX") == true)
+						token = (TokenSpecification) particle;
+			
+			if (token == null)
+				throw new IllegalStateException("Token "+ISO+" not found");
+			
+			Collection<TransferParticle> transfers = wallet.get(TransferParticle.class, Spin.UP);
+			for (TransferParticle transfer : transfers)
+			{
+				if (transfer.getToken().equals(token.getHash()) == false)
+					continue;
+				
+				printStream.println(transfer.getHash()+" "+transfer.getQuantity()+" "+token.getISO()+" "+transfer.getSpin());
+			}
+		}
 	}
 }

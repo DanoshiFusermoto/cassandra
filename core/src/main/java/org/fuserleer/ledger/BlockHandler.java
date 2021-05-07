@@ -146,10 +146,18 @@ public class BlockHandler implements Service
 							BlockHandler.this.lock.writeLock().unlock();
 						}
 						
+						// Safe to attempt to build a block outside of a lock
 						PendingBlock generatedBlock = null;
 						long generationStart = Time.getSystemTime();
-						// Safe to attempt to build a block outside of a lock
-						if (buildCandidate.getHeight() >= BlockHandler.this.buildClock.get())
+						
+						// TODO is it really ok to massage the build clock like this?  Resolves a rare but possible liveness issue. 
+						// 		It is not "illegal" to propose multiple blocks for a round, but it IS illegal to vote multiple times per round.
+						//		Doing this doesn't violate the latter, but unsure currently if it exposes any attack surface
+						boolean canBuild = buildCandidate.getHeight() >= BlockHandler.this.buildClock.get();
+						if (BlockHandler.this.buildBranch != null && BlockHandler.this.buildBranch.supers().isEmpty() == false)
+							canBuild = true;
+						
+						if (canBuild == true)
 							generatedBlock = BlockHandler.this.build(buildCandidate, BlockHandler.this.buildBranch);
 						
 						BlockHandler.this.lock.writeLock().lock();

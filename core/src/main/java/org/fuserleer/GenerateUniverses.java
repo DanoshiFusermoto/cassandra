@@ -17,7 +17,8 @@ import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.TokenSpecification;
-import org.fuserleer.ledger.atoms.TransferParticle;
+import org.fuserleer.ledger.atoms.TokenParticle;
+import org.fuserleer.ledger.atoms.TokenParticle.Action;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.Serialization;
@@ -161,14 +162,16 @@ public final class GenerateUniverses
 
 	private Block createGenesisBlock(byte magic, long timestamp) throws Exception 
 	{
-		final TokenSpecification tokenParticle = new TokenSpecification("FLEX", "Flexathon token", this.universeKey.getPublicKey());
-		tokenParticle.sign(this.universeKey);
-		final TransferParticle transferParticle = new TransferParticle(UInt256.from(UInt128.HIGH_BIT), tokenParticle.getHash(), Spin.UP, this.universeKey.getPublicKey());
-		transferParticle.sign(this.universeKey);
+		final TokenSpecification tokenSpecParticle = new TokenSpecification("FLEX", "Flexathon token", this.universeKey.getPublicKey());
+		tokenSpecParticle.sign(this.universeKey);
+		final TokenParticle mintParticle = new TokenParticle(UInt256.from(UInt128.HIGH_BIT), tokenSpecParticle.getHash(), Action.MINT, Spin.UP, this.universeKey.getPublicKey());
+		mintParticle.sign(this.universeKey);
+		final TokenParticle transferParticle = new TokenParticle(UInt256.from(UInt128.HIGH_BIT), tokenSpecParticle.getHash(), Action.TRANSFER, Spin.UP, this.universeKey.getPublicKey());
+		mintParticle.sign(this.universeKey);
 
 		// TODo want to actually save this or something?
 		final BLSKeyPair ephemeralValidator = new BLSKeyPair();
-		final List<Atom> atoms = Collections.singletonList(new Atom(tokenParticle, transferParticle));
+		final List<Atom> atoms = Collections.singletonList(new Atom(tokenSpecParticle, mintParticle, transferParticle));
 		Block genesisBlock = new Block(0l, Hash.ZERO, ((Long.MAX_VALUE / 16) * 15), UInt256.ZERO, 0, timestamp, ephemeralValidator.getPublicKey(), 
 									   atoms, Collections.emptyList(), Collections.emptyList());
 		genesisBlock.getHeader().sign(ephemeralValidator);

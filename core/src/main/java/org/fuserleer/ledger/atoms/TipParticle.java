@@ -67,7 +67,7 @@ public final class TipParticle extends SignedParticle
 			throw new ValidationException("Can not tip a tip transfer");
 		
 		boolean hasTransfer = false;
-		for (TransferParticle transferParticle : stateMachine.getAtom().getParticles(TransferParticle.class))
+		for (TokenParticle transferParticle : stateMachine.getAtom().getParticles(TokenParticle.class))
 		{
 			if (transferParticle.getSpin().equals(Spin.UP) == true && 
 				transferParticle.getHash().equals(this.transfer) == true)

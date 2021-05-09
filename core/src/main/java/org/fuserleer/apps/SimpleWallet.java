@@ -38,7 +38,8 @@ import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.MessageParticle;
 import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.TokenSpecification;
-import org.fuserleer.ledger.atoms.TransferParticle;
+import org.fuserleer.ledger.atoms.TokenParticle;
+import org.fuserleer.ledger.atoms.TokenParticle.Action;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.SignedParticle;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
@@ -74,7 +75,7 @@ public class SimpleWallet implements AutoCloseable
 	private final Context context;
 	private final ECKeyPair key;
 	private final Map<Hash, Particle> particles = Collections.synchronizedMap(new LinkedHashMap<Hash, Particle>());
-	private final Set<TransferParticle> unconsumed = Collections.synchronizedSet(new LinkedHashSet<TransferParticle>());
+	private final Set<TokenParticle> unconsumed = Collections.synchronizedSet(new LinkedHashSet<TokenParticle>());
 	private final Map<Hash, AtomFuture> futures = Collections.synchronizedMap(new HashMap<Hash, AtomFuture>()); 
 	private final Map<ConnectedPeer, WebSocketClient> websockets = new HashMap<ConnectedPeer, WebSocketClient>();
 	
@@ -97,13 +98,13 @@ public class SimpleWallet implements AutoCloseable
 			{
 				this.particles.put(searchResult.getType().cast(searchResult.getPrimitive()).getHash(), searchResult.getPrimitive());
 				
-				if (searchResult.getPrimitive() instanceof TransferParticle)
+				if (searchResult.getPrimitive() instanceof TokenParticle)
 				{
-					TransferParticle transferParticle = ((TransferParticle)searchResult.getPrimitive());
-					if (transferParticle.getSpin().equals(Spin.UP) == true)
+					TokenParticle transferParticle = ((TokenParticle)searchResult.getPrimitive());
+					if (transferParticle.getSpin().equals(Spin.UP) == true && transferParticle.getAction().equals(Action.TRANSFER) == true)
 						SimpleWallet.this.unconsumed.add(transferParticle);
 		
-					if (transferParticle.getSpin().equals(Spin.DOWN) == true)
+					if (transferParticle.getSpin().equals(Spin.DOWN) == true && transferParticle.getAction().equals(Action.TRANSFER) == true)
 						SimpleWallet.this.unconsumed.remove(transferParticle.get(Spin.UP));
 				}
 			}
@@ -296,9 +297,10 @@ public class SimpleWallet implements AutoCloseable
 		this.lock.lock();
 		try
 		{
-			List<TransferParticle> particles = this.unconsumed.stream().filter(tp -> tp.getToken().equals(token)).collect(Collectors.toList());
-			for (TransferParticle particle : particles)
-				balance = balance.add(particle.getQuantity());
+			List<TokenParticle> particles = this.unconsumed.stream().filter(tp -> tp.getToken().equals(token)).collect(Collectors.toList());
+			for (TokenParticle particle : particles)
+				if (particle.getAction().equals(Action.TRANSFER))
+					balance = balance.add(particle.getQuantity());
 		}
 		finally
 		{
@@ -308,7 +310,7 @@ public class SimpleWallet implements AutoCloseable
 		return balance;
 	}
 	
-	public void inject(Collection<TransferParticle> particles)
+	public void inject(Collection<TokenParticle> particles)
 	{
 		this.lock.lock();
 		try
@@ -320,10 +322,10 @@ public class SimpleWallet implements AutoCloseable
 				
 				SimpleWallet.this.particles.put(tp.getHash(), tp);
 				
-				if (tp.getSpin().equals(Spin.UP) == true)
+				if (tp.getSpin().equals(Spin.UP) == true && tp.getAction().equals(Action.TRANSFER) == true)
 					SimpleWallet.this.unconsumed.add(tp);
 	
-				if (tp.getSpin().equals(Spin.DOWN) == true)
+				if (tp.getSpin().equals(Spin.DOWN) == true && tp.getAction().equals(Action.TRANSFER) == true)
 					SimpleWallet.this.unconsumed.remove(tp.get(Spin.UP));
 			});
 		}
@@ -343,7 +345,7 @@ public class SimpleWallet implements AutoCloseable
 		return new Atom(splitParticles(token, slices));
 	}
 	
-	private Collection<TransferParticle> splitParticles(final Hash token, int slices) throws CryptoException, InsufficientBalanceException
+	private Collection<TokenParticle> splitParticles(final Hash token, int slices) throws CryptoException, InsufficientBalanceException
 	{
 	
 		this.lock.lock();
@@ -353,19 +355,19 @@ public class SimpleWallet implements AutoCloseable
 			if (balance.compareTo(UInt256.from(slices)) < 0)
 				throw new InsufficientBalanceException(this.key.getPublicKey(), token, UInt256.from(slices), this.key.getPublicKey());
 			
-			List<TransferParticle> selected = new ArrayList<TransferParticle>();
+			List<TokenParticle> selected = new ArrayList<TokenParticle>();
 			UInt256 credit = UInt256.ZERO;
-			for (TransferParticle particle : this.unconsumed)
+			for (TokenParticle particle : this.unconsumed)
 			{
-				if (particle.getToken().equals(token) == true)
+				if (particle.getToken().equals(token) == true && particle.getAction().equals(Action.TRANSFER) == true)
 				{
 					selected.add(particle);
 					credit = credit.add(particle.getQuantity());
 				}
 			}
 				
-			List<TransferParticle> particles = new ArrayList<TransferParticle>();
-			for (TransferParticle particle : selected)
+			List<TokenParticle> particles = new ArrayList<TokenParticle>();
+			for (TokenParticle particle : selected)
 			{
 				particle = particle.get(Spin.DOWN);
 				particle.sign(this.key);
@@ -375,14 +377,14 @@ public class SimpleWallet implements AutoCloseable
 			UInt256 sliceQuantity = credit.divide(UInt256.from(slices));
 			for (int s = 0 ; s < slices ; s++)
 			{
-				TransferParticle transfer = new TransferParticle(sliceQuantity, token, Spin.UP, this.key.getPublicKey()); 
+				TokenParticle transfer = new TokenParticle(sliceQuantity, token, Action.TRANSFER, Spin.UP, this.key.getPublicKey()); 
 				particles.add(transfer);
 				credit = credit.subtract(sliceQuantity);
 			}
 		
 			if (credit.compareTo(UInt256.ZERO) > 0)
 			{
-				TransferParticle change = new TransferParticle(credit, token, Spin.UP, this.key.getPublicKey()); 
+				TokenParticle change = new TokenParticle(credit, token, Action.TRANSFER, Spin.UP, this.key.getPublicKey()); 
 				particles.add(change);
 			}
 		
@@ -404,7 +406,7 @@ public class SimpleWallet implements AutoCloseable
 		return new Atom(spendParticles(token, quantity, to));
 	}
 	
-	private Collection<TransferParticle> spendParticles(final Hash token, final UInt256 quantity, final ECPublicKey to) throws CryptoException, InsufficientBalanceException
+	private Collection<TokenParticle> spendParticles(final Hash token, final UInt256 quantity, final ECPublicKey to) throws CryptoException, InsufficientBalanceException
 	{
 		this.lock.lock();
 		try
@@ -413,11 +415,11 @@ public class SimpleWallet implements AutoCloseable
 			if (balance.compareTo(quantity) < 0)
 				throw new InsufficientBalanceException(this.key.getPublicKey(), token, quantity, to);
 			
-			List<TransferParticle> selected = new ArrayList<TransferParticle>();
+			List<TokenParticle> selected = new ArrayList<TokenParticle>();
 			UInt256 credit = UInt256.ZERO;
-			for (TransferParticle particle : this.unconsumed)
+			for (TokenParticle particle : this.unconsumed)
 			{
-				if (particle.getToken().equals(token) == true)
+				if (particle.getToken().equals(token) == true && particle.getAction().equals(Action.TRANSFER) == true)
 				{
 					selected.add(particle);
 					credit = credit.add(particle.getQuantity());
@@ -427,20 +429,20 @@ public class SimpleWallet implements AutoCloseable
 				}
 			}
 			
-			List<TransferParticle> particles = new ArrayList<TransferParticle>();
-			for (TransferParticle particle : selected)
+			List<TokenParticle> particles = new ArrayList<TokenParticle>();
+			for (TokenParticle particle : selected)
 			{
 				particle = particle.get(Spin.DOWN);
 				particle.sign(this.key);
 				particles.add(particle);
 			}
 		
-			TransferParticle transfer = new TransferParticle(quantity, token, Spin.UP, to); 
+			TokenParticle transfer = new TokenParticle(quantity, token, Action.TRANSFER, Spin.UP, to); 
 			particles.add(transfer);
 		
 			if (credit.subtract(quantity).compareTo(UInt256.ZERO) > 0)
 			{
-				TransferParticle change = new TransferParticle(credit.subtract(quantity), token, Spin.UP, this.key.getPublicKey()); 
+				TokenParticle change = new TokenParticle(credit.subtract(quantity), token, Action.TRANSFER, Spin.UP, this.key.getPublicKey()); 
 				particles.add(change);
 			}
 		
@@ -474,7 +476,7 @@ public class SimpleWallet implements AutoCloseable
 			else
 				return atomFuture;
 
-			atom.getParticles(TransferParticle.class).forEach(tp -> 
+			atom.getParticles(TokenParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
 					return;
@@ -549,12 +551,12 @@ public class SimpleWallet implements AutoCloseable
 
 				this.particles.put(p.getHash(), p);
 				
-				if (p instanceof TransferParticle)
+				if (p instanceof TokenParticle)
 				{
-					if (p.getSpin().equals(Spin.UP) == true)
-						this.unconsumed.add((TransferParticle)p);
+					if (p.getSpin().equals(Spin.UP) == true && ((TokenParticle)p).getAction().equals(Action.TRANSFER) == true)
+						this.unconsumed.add((TokenParticle)p);
 		
-					if (p.getSpin().equals(Spin.DOWN) == true)
+					if (p.getSpin().equals(Spin.DOWN) == true && ((TokenParticle)p).getAction().equals(Action.TRANSFER) == true)
 						this.unconsumed.remove(p.get(Spin.UP));
 				}	
 			});
@@ -589,12 +591,12 @@ public class SimpleWallet implements AutoCloseable
 				
 				this.particles.put(p.getHash(), p);
 				
-				if (p instanceof TransferParticle)
+				if (p instanceof TokenParticle)
 				{
-					if (p.getSpin().equals(Spin.UP) == true)
-						this.unconsumed.remove((TransferParticle)p);
+					if (p.getSpin().equals(Spin.UP) == true && ((TokenParticle)p).getAction().equals(Action.TRANSFER) == true)
+						this.unconsumed.remove((TokenParticle)p);
 					
-					if (p.getSpin().equals(Spin.DOWN) == true)
+					if (p.getSpin().equals(Spin.DOWN) == true && ((TokenParticle)p).getAction().equals(Action.TRANSFER) == true)
 						this.unconsumed.add(p.get(Spin.UP));
 				}
 			});
@@ -614,15 +616,15 @@ public class SimpleWallet implements AutoCloseable
 			if (future != null)
 				future.complete(null);
 	
-			atom.getParticles(TransferParticle.class).forEach(tp -> 
+			atom.getParticles(TokenParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(this.key.getPublicKey()) == false)
 					return;
 				
-				if (tp.getSpin().equals(Spin.UP) == true)
+				if (tp.getSpin().equals(Spin.UP) == true && tp.getAction().equals(Action.TRANSFER) == true)
 					this.unconsumed.remove(tp);
 				
-				if (tp.getSpin().equals(Spin.DOWN) == true)
+				if (tp.getSpin().equals(Spin.DOWN) == true && tp.getAction().equals(Action.TRANSFER) == true)
 					this.unconsumed.add(tp.get(Spin.UP));
 			});
 		}
@@ -641,15 +643,15 @@ public class SimpleWallet implements AutoCloseable
 			if (future != null)
 				future.completeExceptionally(exception);
 	
-			atom.getParticles(TransferParticle.class).forEach(tp -> 
+			atom.getParticles(TokenParticle.class).forEach(tp -> 
 			{
 				if (tp.getOwner().equals(this.key.getPublicKey()) == false)
 					return;
 				
-				if (tp.getSpin().equals(Spin.UP) == true)
+				if (tp.getSpin().equals(Spin.UP) == true && tp.getAction().equals(Action.TRANSFER) == true)
 					this.unconsumed.remove(tp);
 				
-				if (tp.getSpin().equals(Spin.DOWN) == true)
+				if (tp.getSpin().equals(Spin.DOWN) == true && tp.getAction().equals(Action.TRANSFER) == true)
 					this.unconsumed.add(tp.get(Spin.UP));
 			});
 		}

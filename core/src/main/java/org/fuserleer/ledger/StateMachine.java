@@ -134,6 +134,11 @@ public final class StateMachine // implements LedgerInterface
 			}
 		};
 	}
+	
+	public Context getContext()
+	{
+		return this.context;
+	}
 
 	public Atom getAtom()
 	{
@@ -319,6 +324,17 @@ public final class StateMachine // implements LedgerInterface
 						throw new ValidationException("StateOp "+stateOp+" is duplicated in "+particle+" in atom "+this.atom.getHash());
 					
 					this.stateOps.put(stateOp.key(), stateOp);
+					
+					if (stateOp.ins().equals(Instruction.SET) == true)
+					{
+						Path path = null;
+						if (this.block != null)
+							path = new Path(stateOp.key().get(), ImmutableMap.of(Elements.BLOCK, this.block.getHash(), Elements.ATOM, this.atom.getHash(), Elements.PARTICLE, particle.getHash()));
+						else
+							path = new Path(stateOp.key().get(), ImmutableMap.of(Elements.ATOM, this.atom.getHash(), Elements.PARTICLE, particle.getHash()));
+						this.statePaths.put(stateOp.key().get(), path);
+						this.stateOutputs.put(stateOp.key().get(), Optional.of(stateOp.value()));
+					}
 				}
 
 				this.statePaths.put(particle.getHash(), new Path(particle.getHash(), ImmutableMap.of(Elements.ATOM, this.atom.getHash(), Elements.PARTICLE, particle.getHash())));

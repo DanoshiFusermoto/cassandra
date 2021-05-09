@@ -814,6 +814,10 @@ public class SyncHandler implements Service
 				if (pendingAtom == null)
 					throw new ValidationException(this.context.getName()+": Pending atom "+certificate.getAtom()+" not found for certificate "+certificate.getHash()+" in block "+block.getHash());
 				
+				for (StateCertificate stateCertificate : certificate.getAll())
+					pendingAtom.provision(stateCertificate.getState(), stateCertificate.getInput());
+				pendingAtom.execute();
+				
 				pendingAtom.setCertificate(certificate);
 				
 				this.context.getLedger().getLedgerStore().store(block.getHeader().getHeight(), certificate);

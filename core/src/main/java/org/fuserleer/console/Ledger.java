@@ -6,6 +6,7 @@ import java.util.Date;
 import java.util.stream.Collectors;
 
 import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.crypto.Hash;
@@ -19,11 +20,11 @@ import org.fuserleer.time.Time;
 
 public class Ledger extends Function
 {
-	private final static Options options = new Options().addOption("remote", false, "Return remote ledger information").addOption("pending", false, "Return pending ledger information")
-																													   .addOption("states", false, "Return hash list of all pending states")
-																													   .addOption("snapshot", false, "Outputs current state info of ledger")
-																													   .addOption("block", true, "Return block at specified height")
-																													   .addOption("branches", false, "Return pending branches");
+	private final static Options options = new Options().addOption("pending", false, "Return pending ledger information")
+														.addOption("states", false, "Return hash list of all pending states")
+														.addOption(Option.builder("snapshot").desc("Outputs current state info of ledger").optionalArg(true).numberOfArgs(1).build())
+														.addOption("block", true, "Return block at specified height")
+														.addOption("branches", false, "Return pending branches");
 
 	public Ledger()
 	{

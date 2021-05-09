@@ -2,6 +2,8 @@ package org.fuserleer.console;
 
 import java.io.PrintStream;
 import java.util.Collection;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.apache.commons.cli.CommandLine;
@@ -10,12 +12,19 @@ import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
 import org.fuserleer.apps.SimpleWallet;
+import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Hash;
+import org.fuserleer.ledger.SearchResult;
+import org.fuserleer.ledger.StateAddress;
+import org.fuserleer.ledger.StateKey;
+import org.fuserleer.ledger.StateSearchQuery;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
+import org.fuserleer.ledger.atoms.TokenParticle.Action;
 import org.fuserleer.ledger.atoms.TokenSpecification;
-import org.fuserleer.ledger.atoms.TransferParticle;
+import org.fuserleer.ledger.atoms.TokenParticle;
 import org.fuserleer.serialization.Serialization;
 import org.fuserleer.serialization.DsonOutput.Output;
 import org.fuserleer.utils.UInt256;
@@ -46,33 +55,56 @@ public class Tokens extends Function
 		
 		if (commandLine.hasOption("balance") == true)
 		{
-			TokenSpecification flexToken = null;
+			String ISO = commandLine.getOptionValue("balance", "FLEX");
+
+			TokenSpecification token = null;
 			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
 				for(Particle particle : atom.getParticles())
-					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase("FLEX") == true)
-						flexToken = (TokenSpecification) particle;
+					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase(ISO) == true)
+						token = (TokenSpecification) particle;
 			
-			if (flexToken == null)
-				throw new IllegalStateException("Token FLEX not found");
-
-			printStream.println(wallet.getBalance(flexToken)+" "+flexToken.getISO());
+			if (token == null)
+			{
+				Future<SearchResult> tokenSearchFuture = context.getLedger().get(new StateSearchQuery(new StateAddress(TokenSpecification.class, Hash.from(ISO.toLowerCase())), TokenSpecification.class));
+				SearchResult tokenSearchResult = tokenSearchFuture.get(10, TimeUnit.SECONDS);
+				if (tokenSearchResult == null || tokenSearchResult.getPrimitive() == null)
+				{
+					printStream.println("Token "+ISO+" not found");
+					return;
+				}
+				
+				token = tokenSearchResult.getPrimitive(); 
+			}
+			
+			printStream.println(wallet.getBalance(token.getHash())+" "+token.getISO());
 		}
 		else if (commandLine.hasOption("send") == true)
 		{
 			String[] options = commandLine.getOptionValues("send");
 			ECPublicKey receiver = ECPublicKey.from(options[0]);
 			UInt256 amount = UInt256.from(options[1]);
-			
-			TokenSpecification flexToken = null;
+			String ISO = options[2];
+
+			TokenSpecification token = null;
 			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
 				for(Particle particle : atom.getParticles())
-					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase("FLEX") == true)
-						flexToken = (TokenSpecification) particle;
+					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase(ISO) == true)
+						token = (TokenSpecification) particle;
 			
-			if (flexToken == null)
-				throw new IllegalStateException("Token FLEX not found");
+			if (token == null)
+			{
+				Future<SearchResult> tokenSearchFuture = context.getLedger().get(new StateSearchQuery(new StateAddress(TokenSpecification.class, Hash.from(ISO.toLowerCase())), TokenSpecification.class));
+				SearchResult tokenSearchResult = tokenSearchFuture.get(10, TimeUnit.SECONDS);
+				if (tokenSearchResult == null || tokenSearchResult.getPrimitive() == null)
+				{
+					printStream.println("Token "+ISO+" not found");
+					return;
+				}
+				
+				token = tokenSearchResult.getPrimitive(); 
+			}
 			
-			Atom atom = wallet.spend(flexToken, amount, receiver);
+			Atom atom = wallet.spend(token, amount, receiver);
 			wallet.submit(atom);
 			printStream.println(Serialization.getInstance().toJson(atom, Output.API));
 		}
@@ -94,20 +126,60 @@ public class Tokens extends Function
 			wallet.submit(atom);
 			printStream.println(Serialization.getInstance().toJson(atom, Output.API));
 		}
+		else if (commandLine.hasOption("mint") == true)
+		{
+			String[] options = commandLine.getOptionValues("mint");
+			UInt256 amount = UInt256.from(options[0]);
+			String ISO = options[1];
+			
+			Future<SearchResult> tokenSearchFuture = context.getLedger().get(new StateSearchQuery(new StateAddress(TokenSpecification.class, Hash.from(ISO.toLowerCase())), TokenSpecification.class));
+			SearchResult tokenSearchResult = tokenSearchFuture.get(10, TimeUnit.SECONDS);
+			if (tokenSearchResult == null || tokenSearchResult.getPrimitive() == null)
+			{
+				printStream.println("Token "+ISO+" not found");
+				return;
+			}
+
+			if (tokenSearchResult != null && ((TokenSpecification)tokenSearchResult.getPrimitive()).getOwner().equals(wallet.getIdentity()) == false)
+			{
+				printStream.println("Can not mint token "+ISO+" as not owned by "+wallet.getIdentity());
+				return;
+			}
+
+			TokenParticle mint = new TokenParticle(amount, ((TokenSpecification)tokenSearchResult.getPrimitive()).getHash(), Action.MINT, Spin.UP, wallet.getIdentity());
+			wallet.sign(mint);
+			TokenParticle mintTransfer = new TokenParticle(amount, ((TokenSpecification)tokenSearchResult.getPrimitive()).getHash(), Action.TRANSFER, Spin.UP, wallet.getIdentity());
+			wallet.sign(mintTransfer);
+			
+			Atom atom = new Atom(mint, mintTransfer);
+			wallet.submit(atom);
+			printStream.println(Serialization.getInstance().toJson(atom, Output.API));
+		}
 		else if (commandLine.hasOption("debits") == true)
 		{
 			String ISO = commandLine.getOptionValue("debits", "FLEX");
+			
 			TokenSpecification token = null;
 			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
 				for(Particle particle : atom.getParticles())
-					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase("FLEX") == true)
+					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase(ISO) == true)
 						token = (TokenSpecification) particle;
 			
 			if (token == null)
-				throw new IllegalStateException("Token "+ISO+" not found");
+			{
+				Future<SearchResult> tokenSearchFuture = context.getLedger().get(new StateSearchQuery(new StateAddress(TokenSpecification.class, Hash.from(ISO.toLowerCase())), TokenSpecification.class));
+				SearchResult tokenSearchResult = tokenSearchFuture.get(10, TimeUnit.SECONDS);
+				if (tokenSearchResult == null || tokenSearchResult.getPrimitive() == null)
+				{
+					printStream.println("Token "+ISO+" not found");
+					return;
+				}
+				
+				token = tokenSearchResult.getPrimitive(); 
+			}
 			
-			Collection<TransferParticle> transfers = wallet.get(TransferParticle.class, Spin.DOWN);
-			for (TransferParticle transfer : transfers)
+			Collection<TokenParticle> transfers = wallet.get(TokenParticle.class, Spin.DOWN);
+			for (TokenParticle transfer : transfers)
 			{
 				if (transfer.getToken().equals(token.getHash()) == false)
 					continue;
@@ -121,19 +193,29 @@ public class Tokens extends Function
 			TokenSpecification token = null;
 			for (Atom atom : Universe.getDefault().getGenesis().getAtoms())
 				for(Particle particle : atom.getParticles())
-					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase("FLEX") == true)
+					if (particle instanceof TokenSpecification && ((TokenSpecification)particle).getISO().equalsIgnoreCase(ISO) == true)
 						token = (TokenSpecification) particle;
 			
 			if (token == null)
-				throw new IllegalStateException("Token "+ISO+" not found");
+			{
+				Future<SearchResult> tokenSearchFuture = context.getLedger().get(new StateSearchQuery(new StateAddress(TokenSpecification.class, Hash.from(ISO.toLowerCase())), TokenSpecification.class));
+				SearchResult tokenSearchResult = tokenSearchFuture.get(10, TimeUnit.SECONDS);
+				if (tokenSearchResult == null || tokenSearchResult.getPrimitive() == null)
+				{
+					printStream.println("Token "+ISO+" not found");
+					return;
+				}
+				
+				token = tokenSearchResult.getPrimitive(); 
+			}
 			
-			Collection<TransferParticle> transfers = wallet.get(TransferParticle.class, Spin.UP);
-			for (TransferParticle transfer : transfers)
+			Collection<TokenParticle> transfers = wallet.get(TokenParticle.class, Spin.UP);
+			for (TokenParticle transfer : transfers)
 			{
 				if (transfer.getToken().equals(token.getHash()) == false)
 					continue;
 				
-				printStream.println(transfer.getHash()+" "+transfer.getQuantity()+" "+token.getISO()+" "+transfer.getSpin());
+				printStream.println(transfer.getHash()+" "+transfer.getQuantity()+" "+token.getISO()+" "+transfer.getAction()+" "+transfer.getSpin());
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.ledger.PendingAtom;
 import org.fuserleer.ledger.SearchResult;
 import org.fuserleer.ledger.StateAddress;
 import org.fuserleer.ledger.StateSearchQuery;
@@ -57,13 +58,12 @@ public class Atoms extends Function
 		}
 		else if (commandLine.hasOption("pending") == true)
 		{
-			for (Hash atom : context.getLedger().getAtomHandler().pending())
-				printStream.println(atom);
+			for (PendingAtom pendingAtom : context.getLedger().getAtomHandler().getAll())
+				printStream.println(pendingAtom.getHash());
 		}
 		else if (commandLine.hasOption("pool") == true)
 		{
-			for (Hash atom : context.getLedger().getAtomPool().pending())
-				printStream.println(atom);
+			context.getLedger().getAtomPool().getAll().forEach(pa -> printStream.println(pa.getHash()));		
 		}
 		else if (commandLine.hasOption("submit") == true)
 		{

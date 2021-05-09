@@ -979,7 +979,7 @@ public class BlockHandler implements Service
 								int numTimedoutToInclude = BlockHeader.MAX_ATOMS;
 								do
 								{
-									candidateCertificates = this.context.getLedger().getStateHandler().get(numCertificatesToInclude, certificateExclusions);
+									candidateCertificates = this.context.getLedger().getAtomHandler().certificates(numCertificatesToInclude, certificateExclusions);
 									
 									final List<Hash> timedoutExclusions = new ArrayList<Hash>(branchTimedoutExclusions);
 									timedoutExclusions.addAll(atomExclusions);

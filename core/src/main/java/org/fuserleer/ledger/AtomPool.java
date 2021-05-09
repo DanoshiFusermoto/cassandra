@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -451,28 +452,21 @@ public final class AtomPool implements Service
 		return response;
 	}
 
-	public List<Atom> get()
+	public List<PendingAtom> getAll()
 	{
 		this.lock.readLock().lock();
 		try
 		{
-			List<Atom> atoms = this.pending.values().stream().filter(pa -> pa.getAtom() != null).map(pa -> pa.getAtom()).collect(Collectors.toList());
-			return atoms;
-		}
-		finally
-		{
-			this.lock.readLock().unlock();
-		}
-	}
-
-	public Collection<Hash> pending()
-	{
-		this.lock.readLock().lock();
-		try
-		{
-			List<Hash> pending = new ArrayList<Hash>(this.pending.keySet());
-			Collections.sort(pending);
-			return pending;
+			List<PendingAtom> pendingAtoms = this.pending.values().stream().collect(Collectors.toList());
+			Collections.sort(pendingAtoms, new Comparator<PendingAtom>() 
+			{
+				@Override
+				public int compare(PendingAtom pa1, PendingAtom pa2) 
+				{
+					return pa1.getHash().compareTo(pa2.getHash());
+				}
+			});
+			return pendingAtoms;
 		}
 		finally
 		{

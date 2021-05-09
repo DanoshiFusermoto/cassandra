@@ -17,7 +17,6 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.stream.Collectors;
 
 import org.fuserleer.Context;
 import org.fuserleer.Service;
@@ -251,7 +250,7 @@ public final class StatePool implements Service
 	private final Map<Hash, StateVote> votesToCountDelayed;
 	private final BlockingQueue<PendingState> votesToCastQueue;
 	private final MappedBlockingQueue<Hash, StateVote> votesToCountQueue;
-	private final Map<Hash, PendingState> pendingStates = Collections.synchronizedMap(new HashMap<Hash, PendingState>());
+//	private final Map<Hash, PendingState> pendingStates = Collections.synchronizedMap(new HashMap<Hash, PendingState>());
 	
 	StatePool(Context context)
 	{
@@ -417,7 +416,7 @@ public final class StatePool implements Service
 							if (statePoolLog.hasLevel(Logging.DEBUG) == true)
 								statePoolLog.debug(StatePool.this.context.getName()+": State pool (votes) inventory request from "+peer);
 							
-							final Set<PendingState> pendingStates = new HashSet<PendingState>(StatePool.this.pendingStates.values());
+							final Set<PendingState> pendingStates = new HashSet<PendingState>(StatePool.this.context.getLedger().getStateHandler().getAll());
 							final Set<Hash> stateVoteInventory = new LinkedHashSet<Hash>();
 							StatePool.this.votesToCountQueue.forEach((h, v) -> stateVoteInventory.add(h));
 							StatePool.this.votesToCountDelayed.forEach((h, v) -> stateVoteInventory.add(h));
@@ -480,36 +479,6 @@ public final class StatePool implements Service
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
 	
-	public Collection<Hash> pending()
-	{
-		this.lock.readLock().lock();
-		try
-		{
-			List<Hash> pending = new ArrayList<Hash>(this.pendingStates.keySet());
-			Collections.sort(pending);
-			return pending;
-		}
-		finally
-		{
-			this.lock.readLock().unlock();
-		}
-	}
-
-	public Collection<Hash> votes()
-	{
-		this.lock.readLock().lock();
-		try
-		{
-			List<Hash> pending = new ArrayList<Hash>(this.pendingStates.values().stream().flatMap(s -> s.votes().stream()).map(sv -> sv.getHash()).collect(Collectors.toList()));
-			Collections.sort(pending);
-			return pending;
-		}
-		finally
-		{
-			this.lock.readLock().unlock();
-		}
-	}
-
 	void vote(final PendingAtom atom) throws IOException
 	{
 		Objects.requireNonNull(atom, "Atom is null");
@@ -542,87 +511,14 @@ public final class StatePool implements Service
 		}
 	}
 	
-	void push(final PendingState pendingState)
-	{
-		Objects.requireNonNull(pendingState, "Pending state is null");
-		
-		this.lock.writeLock().lock();
-		try
-		{
-			if (this.pendingStates.containsKey(pendingState.getHash()) == true)
-				throw new IllegalStateException(this.context.getName()+": Pending state "+pendingState.getKey()+" already exists");
-
-			this.pendingStates.put(pendingState.getHash(), pendingState);
-		}
-		finally
-		{
-			this.lock.writeLock().unlock();
-		}
-	}
-
-	void add(final PendingAtom atom) throws IOException
-	{
-		Objects.requireNonNull(atom, "pending atom is null");
-		
-		this.lock.writeLock().lock();
-		try
-		{
-			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(atom.getBlock().toByteArray()));
-			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
-			
-			for (StateKey<?, ?> stateKey : atom.getStateKeys())
-			{
-				long stateShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
-				if (stateShardGroup != localShardGroup)
-					continue;
-					
-				PendingState pendingState = this.context.getLedger().getStateHandler().get(atom.getBlock(), atom.getHash(), stateKey);
-				add(pendingState);
-			}
-		}
-		finally
-		{
-			this.lock.writeLock().unlock();
-		}
-	}
-
-	private void add(final PendingState pendingState)
-	{
-		Objects.requireNonNull(pendingState, "Pending state is null");
-		
-		this.lock.writeLock().lock();
-		try
-		{
-			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingState.getBlock().toByteArray()));
-			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
-			long stateShardGroup = ShardMapper.toShardGroup(pendingState.getKey().get(), numShardGroups);
-			if (stateShardGroup != localShardGroup)
-				throw new IllegalArgumentException(StatePool.this.context.getName()+": Pending state "+pendingState+" is for shard group "+stateShardGroup+" expected local shard group "+localShardGroup);
-				
-			if (this.pendingStates.containsKey(pendingState.getHash()) == true)
-				throw new IllegalStateException(this.context.getName()+": Pending state "+pendingState.getKey()+" already exists");
-
-			this.pendingStates.put(pendingState.getHash(), pendingState);
-			if (statePoolLog.hasLevel(Logging.DEBUG) == true)
-				statePoolLog.debug(this.context.getName()+": Added state "+pendingState.getKey()+" to state pool for "+pendingState.getAtom()+" in block "+pendingState.getBlock());
-			StatePool.this.context.getMetaData().increment("ledger.pool.state.added");
-		}
-		finally
-		{
-			this.lock.writeLock().unlock();
-		}
-	}
-
 	private void committed(final PendingAtom pendingAtom) throws IOException
 	{
 		remove(pendingAtom);
-		StatePool.this.context.getMetaData().increment("ledger.pool.state.committed");
 	}
 
 	private void aborted(final PendingAtom pendingAtom) throws IOException
 	{
 		remove(pendingAtom);
-		StatePool.this.context.getMetaData().increment("ledger.pool.state.aborted");
 	}
 	
 	private void remove(final PendingAtom pendingAtom) throws IOException
@@ -632,7 +528,6 @@ public final class StatePool implements Service
 		this.lock.writeLock().lock();
 		try
 		{
-			boolean removed = false;
 			long numShardGroups = this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
 			long localShardGroup = ShardMapper.toShardGroup(this.context.getNode().getIdentity(), numShardGroups);
 			final Collection<StateKey<?, ?>> stateKeys = pendingAtom.getStateKeys();
@@ -642,21 +537,16 @@ public final class StatePool implements Service
 				if (stateShardGroup != localShardGroup)
 					continue;
 				
-				Hash pendingStateHash = PendingState.getHash(pendingAtom.getHash(), stateKey);
-				PendingState pendingState = this.pendingStates.get(pendingStateHash);
+				PendingState pendingState = this.context.getLedger().getStateHandler().get(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey);
 				if (pendingState != null)
 				{
 					for (StateVote stateVote : pendingState.votes())
 						this.context.getLedger().getLedgerStore().storeSyncInventory(this.context.getLedger().getHead().getHeight(), stateVote.getHash(), StateVote.class, SyncInventoryType.COMMIT);
 
-					removed = true;
 					this.votesToCastQueue.remove(pendingState);
-					this.pendingStates.remove(pendingStateHash, pendingState);
 
 					if (statePoolLog.hasLevel(Logging.DEBUG) == true)
 						statePoolLog.debug(this.context.getName()+": Removed state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
-					
-					StatePool.this.context.getMetaData().increment("ledger.pool.state.removed");
 				}
 			}
 			
@@ -672,9 +562,6 @@ public final class StatePool implements Service
 
 			this.votesToCountQueue.removeAll(removals);
 			synchronized(this.votesToCountDelayed) { this.votesToCountDelayed.keySet().removeAll(removals); }
-			
-			if (pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) && removed == false)
-				throw new IllegalStateException("Expected pending atom "+pendingAtom.getHash()+" but was not found");
 		}
 		finally
 		{
@@ -703,7 +590,7 @@ public final class StatePool implements Service
 				throw new IllegalStateException("Pending atom "+stateVote.getAtom()+" for pending state "+stateVote.getObject()+" not found");
 			}
 			
-			pendingState = StatePool.this.pendingStates.get(PendingState.getHash(stateVote.getAtom(), stateVote.getState()));
+			pendingState = this.context.getLedger().getStateHandler().get(pendingAtom.getBlock(), pendingAtom.getHash(), stateVote.getState());
 			// Creating pending state objects from vote if particle not seen or committed
 			if (pendingState == null)
 			{
@@ -711,8 +598,6 @@ public final class StatePool implements Service
 				pendingState = this.context.getLedger().getStateHandler().get(stateVote.getBlock(), stateVote.getAtom(), stateVote.getState());
 				if (pendingState == null)
 					throw new IllegalStateException("Pending state "+stateVote.getState()+" for atom "+stateVote.getAtom()+" in block "+stateVote.getBlock()+" not found or is committed / timedout");
-					
-				add(pendingState);
 			}
 
 			long votePower = StatePool.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, pendingState.getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), stateVote.getOwner());
@@ -762,19 +647,6 @@ public final class StatePool implements Service
 		return false;
 	}
 	
-	public int size()
-	{
-		this.lock.readLock().lock();
-		try
-		{
-			return this.pendingStates.size();
-		}
-		finally
-		{
-			this.lock.readLock().unlock();
-		}
-	}
-
 	// ASYNC BLOCK LISTENER //
 	private EventListener asyncBlockListener = new EventListener()
 	{
@@ -882,8 +754,6 @@ public final class StatePool implements Service
 								statePoolLog.warn(StatePool.this.context.getName()+": Pending state "+stateKey+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock()+" appears invalid.");
 								continue;
 							}
-							
-							add(pendingState);
 						}
 						catch (Exception ex)
 						{
@@ -953,7 +823,6 @@ public final class StatePool implements Service
 				else
 				{
 					statePoolLog.info(StatePool.this.context.getName()+": Sync status changed to "+event.isSynced()+", flushing state pool");
-					StatePool.this.pendingStates.clear();
 					StatePool.this.votesToCastQueue.clear();
 					StatePool.this.votesToCountQueue.clear();
 					StatePool.this.votesToCountDelayed.clear();

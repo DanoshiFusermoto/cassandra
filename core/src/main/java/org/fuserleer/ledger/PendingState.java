@@ -24,7 +24,7 @@ import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.utils.Longs;
 
-final class PendingState implements Hashable
+public final class PendingState implements Hashable
 {
 	private static final Logger statePoolLog = Logging.getLogger("statepool");
 	
@@ -96,7 +96,7 @@ final class PendingState implements Hashable
 		return this.atom;
 	}
 	
-	public boolean preverify() throws DatabaseException
+	boolean preverify() throws DatabaseException
 	{
 		this.lock.lock();
 		try
@@ -164,7 +164,7 @@ final class PendingState implements Hashable
 		}
 	}
 	
-	public boolean isPreverified()
+	boolean isPreverified()
 	{
 		this.lock.lock();
 		try
@@ -177,7 +177,7 @@ final class PendingState implements Hashable
 		}
 	}
 	
-	public boolean verify() throws CryptoException
+	boolean verify() throws CryptoException
 	{
 		this.lock.lock();
 		try
@@ -205,7 +205,7 @@ final class PendingState implements Hashable
 		}
 	}
 	
-	public boolean isVerified()
+	boolean isVerified()
 	{
 		this.lock.lock();
 		try
@@ -218,7 +218,7 @@ final class PendingState implements Hashable
 		}
 	}
 	
-	public StateCertificate buildCertificate() throws CryptoException, DatabaseException
+	StateCertificate buildCertificate() throws CryptoException, DatabaseException
 	{
 		this.lock.lock();
 		try
@@ -262,7 +262,7 @@ final class PendingState implements Hashable
 		}
 	}
 	
-	boolean voted(final BLSPublicKey identity)
+	public boolean voted(final BLSPublicKey identity)
 	{
 		this.lock.lock();
 		try

@@ -595,7 +595,7 @@ public class PendingBranch
 			// Blocks to be committed require at least one "confirming" super block higher than it, thus there will always 
 			// be at least one super block in a pending branch
 			// TODO using pendingBlock.getHeader().getHeight() as the vote power timestamp possibly makes this weakly subjective and may cause issue in long branches
-			PendingBlock highestSuper = null;
+			LinkedList<PendingBlock> supers = new LinkedList<PendingBlock>();
 			Iterator<PendingBlock> vertexIterator = this.blocks.descendingIterator();
 			while(vertexIterator.hasNext())
 			{
@@ -614,9 +614,9 @@ public class PendingBranch
 				long threshold = getVotePowerThreshold(vertex.getHeight());
 				if (weight >= threshold)
 				{
-					if (highestSuper == null)
+					if (supers.isEmpty() || supers.size() < Math.ceil(Math.log(size())))
 					{
-						highestSuper = vertex;
+						supers.add(vertex);
 						blocksLog.info(this.context.getName()+": Found possible commit super block with weight "+weight+"/"+total+" "+vertex);
 					}
 					else if (vertex.getBlock() != null && this.meta.getOrDefault(vertex.getHash(), Boolean.FALSE).equals(Boolean.TRUE))

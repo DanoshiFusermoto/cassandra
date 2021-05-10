@@ -47,9 +47,9 @@ public final class StateMachine // implements LedgerInterface
 	
 	static 
 	{
-		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.DEBUG);
+//		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN | Logging.DEBUG);
 //		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		stateMachineLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 

@@ -36,14 +36,13 @@ import org.fuserleer.ledger.LedgerStore.SyncInventoryType;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.events.AtomAcceptedEvent;
+import org.fuserleer.ledger.events.AtomPositiveCommitEvent;
 import org.fuserleer.ledger.events.AtomCertificateEvent;
 import org.fuserleer.ledger.events.AtomCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomExecutedEvent;
-import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.AtomNegativeCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.StateCertificateEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
@@ -984,7 +983,6 @@ public final class StateHandler implements Service
 		
 		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.syncBlockListener);
-		this.context.getEvents().register(this.asyncBlockListener);
 		this.context.getEvents().register(this.syncAtomListener);
 		this.context.getEvents().register(this.certificateListener);
 		
@@ -1007,7 +1005,6 @@ public final class StateHandler implements Service
 		
 		this.context.getEvents().unregister(this.certificateListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
-		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncBlockListener);
 		this.context.getEvents().unregister(this.syncChangeListener);
 		
@@ -1138,7 +1135,7 @@ public final class StateHandler implements Service
 							cerbyLog.debug(this.context.getName()+": Removed pending state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
 
 						// TODO these dont increment here because pending atom status is not set yet!
-						if (pendingAtom.getStatus().equals(CommitStatus.COMMITTED) == true)
+						if (pendingAtom.getStatus().equals(CommitStatus.COMPLETED) == true)
 							this.context.getMetaData().increment("ledger.pool.state.committed");
 						else if (pendingAtom.getStatus().equals(CommitStatus.ABORTED) == true)
 							this.context.getMetaData().increment("ledger.pool.state.aborted");
@@ -1227,19 +1224,13 @@ public final class StateHandler implements Service
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final AtomAcceptedEvent event) throws IOException 
+		public void on(final AtomPositiveCommitEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
 		}
 
 		@Subscribe
-		public void on(final AtomRejectedEvent event) throws IOException 
-		{
-			remove(event.getPendingAtom());
-		}
-
-		@Subscribe
-		public void on(final AtomAcceptedTimeoutEvent event) throws IOException 
+		public void on(final AtomNegativeCommitEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
 		}
@@ -1260,39 +1251,6 @@ public final class StateHandler implements Service
 		}
 	};
 
-	// ASYNC BLOCK LISTENER //
-	private EventListener asyncBlockListener = new EventListener()
-	{
-		@Subscribe
-		public void on(BlockCommittedEvent blockCommittedEvent)
-		{
-			StateHandler.this.lock.writeLock().lock();
-			try
-			{
-				for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
-				{
-					PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(atom.getHash());
-					if (pendingAtom == null)
-						throw new IllegalStateException(StateHandler.this.context.getName()+": Pending atom "+atom+" committed in block "+blockCommittedEvent.getBlock().getHash()+" not found");
-					
-            		if (cerbyLog.hasLevel(Logging.DEBUG))
-						cerbyLog.debug(StateHandler.this.context.getName()+": Queuing pending atom "+pendingAtom.getHash()+" for provisioning");
-            		
-					provision(pendingAtom, pendingAtom.getStateKeys());
-				}
-			}
-			catch (Exception ex)
-			{
-				cerbyLog.fatal(StateHandler.class.getName()+": Failed to provision pending atom set for "+blockCommittedEvent.getBlock().getHeader()+" when processing async BlockCommittedEvent", ex);
-				return;
-			}
-			finally
-			{
-				StateHandler.this.lock.writeLock().unlock();
-			}
-		}
-	};
-
 	// SYNC BLOCK LISTENER //
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
@@ -1302,23 +1260,27 @@ public final class StateHandler implements Service
 			StateHandler.this.lock.writeLock().lock();
 			try
 			{
-				Set<PendingAtom> committed = new HashSet<PendingAtom>();
+				// Provision accepted atoms
 				try
 				{
-					// Creating pending atom from accepted event if not seen // This is the most likely place for a pending atom object to be created
 					for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
 					{
 						PendingAtom pendingAtom = StateHandler.this.context.getLedger().getAtomHandler().get(atom.getHash());
 						if (pendingAtom == null)
-							throw new IllegalStateException("Pending atom "+atom.getHash()+" not found");
+							throw new IllegalStateException(StateHandler.this.context.getName()+": Pending atom "+atom+" committed in block "+blockCommittedEvent.getBlock().getHash()+" not found");
+						
+	            		if (cerbyLog.hasLevel(Logging.DEBUG))
+							cerbyLog.debug(StateHandler.this.context.getName()+": Queuing pending atom "+pendingAtom.getHash()+" for provisioning");
+	            		
+	        			pendingAtom.provision(blockCommittedEvent.getBlock().getHeader());
+						provision(pendingAtom, pendingAtom.getStateKeys());
 					}
 				}
 				catch (Exception ex)
 				{
-					cerbyLog.fatal(StateHandler.class.getName()+": Failed to create PendingAtom set for "+blockCommittedEvent.getBlock().getHeader()+" when processing BlockCommittedEvent", ex);
-					return;
+					cerbyLog.fatal(StateHandler.class.getName()+": Failed to provision pending atom set for "+blockCommittedEvent.getBlock().getHeader()+" when processing async BlockCommittedEvent", ex);
 				}
-				
+
 				// Commit atom states
 				for (AtomCertificate certificate : blockCommittedEvent.getBlock().getCertificates())
 				{
@@ -1352,15 +1314,13 @@ public final class StateHandler implements Service
 						}
 						else
 							throw new IllegalStateException("Unsupported commit operation type "+commitOperation.getType()+" found for atom "+certificate.getAtom());
-						
-						committed.add(pendingAtom);
 					}
 					catch (Exception ex)
 					{
 						// FIXME don't like how this is thrown in an event listener.
 						// 		 should be able to send the commit without having to fetch the atom, state processors *should* have it by the time
 						//		 we're sending commit certificates to them.
-						cerbyLog.fatal(StateHandler.this.context.getName()+": Failed to process AtomCommittedEvent for "+certificate.getAtom(), ex);
+						cerbyLog.fatal(StateHandler.this.context.getName()+": Failed to process BlockCommittedEvent on certificate "+certificate.getHash()+" for "+certificate.getAtom(), ex);
 					}
 				}
 			}

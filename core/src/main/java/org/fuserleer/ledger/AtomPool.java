@@ -33,10 +33,10 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
+import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
-import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -351,7 +351,6 @@ public final class AtomPool implements Service
 		voteProcessorThread.start();
 		
 		this.context.getEvents().register(this.syncChangeListener);
-		this.context.getEvents().register(this.syncBlockListener);
 		this.context.getEvents().register(this.atomEventListener);
 	}
 
@@ -360,7 +359,6 @@ public final class AtomPool implements Service
 	{
 		this.voteProcessor.terminate(true);
 		this.context.getEvents().unregister(this.syncChangeListener);
-		this.context.getEvents().unregister(this.syncBlockListener);
 		this.context.getEvents().unregister(this.atomEventListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
 	}
@@ -619,7 +617,7 @@ public final class AtomPool implements Service
 			{
 				if (pa.getStatus().lessThan(CommitStatus.PREPARED) == true)
 				{
-					atomsLog.error(AtomPool.this.context.getName()+": Found atom not in prepared state "+pa.getHash());
+					atomsLog.error(AtomPool.this.context.getName()+": Atom not in prepared state "+pa.getHash());
 					return false;
 				}
 
@@ -767,32 +765,6 @@ public final class AtomPool implements Service
 			this.lock.writeLock().unlock();
 		}
 	}
-	
-	// SYNC BLOCK LISTENER //
-	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
-	{
-		@Subscribe
-		public void on(final BlockCommittedEvent blockCommittedEvent) 
-		{
-			AtomPool.this.lock.writeLock().lock();
-			try
-			{
-				for (Atom atom : blockCommittedEvent.getBlock().getAtoms())
-				{
-					PendingAtom pendingAtom = AtomPool.this.context.getLedger().getAtomPool().remove(atom.getHash());
-					if (pendingAtom == null)
-					{
-						atomsLog.error(AtomPool.this.context.getName()+": Pending atom "+atom.getHash()+" was not found in pool when processing block commit "+blockCommittedEvent.getBlock().getHeader());
-						continue;
-					}
-				}
-			}
-			finally
-			{
-				AtomPool.this.lock.writeLock().unlock();
-			}
-		}
-	};
 						
 	private SynchronousEventListener atomEventListener = new SynchronousEventListener() 
 	{
@@ -803,6 +775,12 @@ public final class AtomPool implements Service
 				atomsLog.error(AtomPool.this.context.getName()+": Atom "+event.getAtom().getHash()+" not added to atom pool");
 		}
 		
+		@Subscribe
+		public void on(AtomAcceptedEvent event)
+		{
+			AtomPool.this.remove(event.getPendingAtom().getHash());
+		}
+
 		@Subscribe
 		public void on(AtomExceptionEvent event)
 		{

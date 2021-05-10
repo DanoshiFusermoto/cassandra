@@ -381,7 +381,7 @@ public class SyncHandler implements Service
 										Hash block = inventoryIterator.next();
 										if (SyncHandler.this.blocks.containsKey(block) == true ||
 											Longs.fromByteArray(block.toByteArray()) <= SyncHandler.this.context.getLedger().getHead().getHeight() || 
-											SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, block)) == CommitStatus.COMMITTED) 
+											SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, block)) == CommitStatus.COMPLETED) 
 											inventoryIterator.remove();
 									}
 								}
@@ -493,7 +493,7 @@ public class SyncHandler implements Service
 							return;
 						}
 	
-						if (SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, syncBlockMessage.getBlock().getHeader().getHash())) == CommitStatus.COMMITTED)
+						if (SyncHandler.this.context.getLedger().getLedgerStore().has(new StateAddress(Block.class, syncBlockMessage.getBlock().getHeader().getHash())) == CommitStatus.COMPLETED)
 						{
 							syncLog.warn(SyncHandler.this.context.getName()+": Block is committed "+syncBlockMessage.getBlock().getHeader()+" from "+peer);
 							return;

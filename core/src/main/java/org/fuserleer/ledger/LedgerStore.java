@@ -906,7 +906,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			DatabaseEntry stateKey = new DatabaseEntry(key.get().toByteArray());
 			OperationStatus status = this.stateOperations.get(null, stateKey, null, LockMode.DEFAULT);
 			if (status.equals(OperationStatus.SUCCESS) == true)
-				return CommitStatus.COMMITTED;
+				return CommitStatus.COMPLETED;
 			
 			return CommitStatus.NONE;
         }

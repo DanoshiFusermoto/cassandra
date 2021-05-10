@@ -10,11 +10,11 @@ import org.fuserleer.ledger.PendingAtom;
 import org.fuserleer.ledger.StateLockedException;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.Particle;
-import org.fuserleer.ledger.events.AtomAcceptedEvent;
+import org.fuserleer.ledger.events.AtomPositiveCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
-import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.AtomNegativeCommitEvent;
 import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -130,10 +130,10 @@ public final class WebSocketService extends WebSocketServer
 	private EventListener asyncAtomListener = new EventListener()
 	{
 		@Subscribe
-		public void on(AtomAcceptedEvent event) throws JSONException, SerializationException 
+		public void on(AtomPositiveCommitEvent event) throws JSONException, SerializationException 
 		{
 			JSONObject eventJSON = new JSONObject();
-			eventJSON.put("type", "accepted");
+			eventJSON.put("type", "committed");
 			eventJSON.put("atom", event.getAtom().getHash());
 			eventJSON.put("certificate", Serialization.getInstance().toJsonObject(event.getPendingAtom().getCertificate(), Output.API));
 			JSONArray particles = new JSONArray();
@@ -144,7 +144,7 @@ public final class WebSocketService extends WebSocketServer
 		}
 
 		@Subscribe
-		public void on(AtomRejectedEvent event) throws SerializationException
+		public void on(AtomNegativeCommitEvent event) throws SerializationException
 		{
 			JSONObject eventJSON = new JSONObject();
 			eventJSON.put("type", "rejected");

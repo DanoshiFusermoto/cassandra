@@ -54,6 +54,13 @@ import com.google.common.eventbus.Subscribe;
 public class GossipHandler implements Service
 {
 	private static final Logger gossipLog = Logging.getLogger("gossip");
+	
+	static 
+	{
+//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
+	}
 
 	private final class GossipPeerTask extends PeerTask 
 	{
@@ -570,10 +577,6 @@ public class GossipHandler implements Service
 		this.context = Objects.requireNonNull(context, "Context is null");
 
 		this.broadcastQueue = new LinkedBlockingQueue<Broadcast>(this.context.getConfiguration().get("ledger.gossip.queue", 1<<16));
-
-//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		gossipLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		gossipLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override

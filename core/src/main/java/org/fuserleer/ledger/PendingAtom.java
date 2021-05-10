@@ -43,7 +43,7 @@ public final class PendingAtom implements Hashable
 	private static final Logger cerbyLog = Logging.getLogger("cerby");
 
 	public final static int ATOM_COMMIT_TIMEOUT_BLOCKS = 60;	// TODO need a much smarter timeout mechanism along with recovery.  ~10 minutes per phase if block production is ~5 seconds.  Sufficient for alpha testing.
-	public final static int ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS = 60;	// TODO Long inclusion commit timeout ~10 minutes.  Is extended if atom is suspected included in a block (evidence of state votes etc).  Sufficient for alpha testing.
+	public final static int ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS = 30;	// TODO Long inclusion commit timeout ~10 minutes.  Is extended if atom is suspected included in a block (evidence of state votes etc).  Sufficient for alpha testing.
 	
 	public static PendingAtom create(final Context context, final Atom atom)
 	{
@@ -289,6 +289,32 @@ public final class PendingAtom implements Hashable
 		{
 			setStatus(CommitStatus.ACCEPTED);
 			setAcceptedAt(Time.getSystemTime());
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	void completed()
+	{
+		this.lock.writeLock().lock();
+		try
+		{
+			setStatus(CommitStatus.EXECUTED, CommitStatus.COMPLETED);
+		}
+		finally
+		{
+			this.lock.writeLock().unlock();
+		}
+	}
+
+	void aborted()
+	{
+		this.lock.writeLock().lock();
+		try
+		{
+			setStatus(CommitStatus.ABORTED);
 		}
 		finally
 		{

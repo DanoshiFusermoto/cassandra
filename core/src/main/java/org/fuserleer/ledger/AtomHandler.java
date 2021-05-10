@@ -23,7 +23,6 @@ import org.fuserleer.Universe;
 import org.fuserleer.collections.MappedBlockingQueue;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.events.EventListener;
 import org.fuserleer.events.SynchronousEventListener;
 import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.exceptions.TerminationException;
@@ -35,12 +34,13 @@ import org.fuserleer.ledger.LedgerStore.SyncInventoryType;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.events.AtomAcceptedEvent;
+import org.fuserleer.ledger.events.AtomPositiveCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
+import org.fuserleer.ledger.events.AtomAcceptedEvent;
 import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
-import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.AtomNegativeCommitEvent;
 import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
 import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
@@ -63,6 +63,13 @@ import com.google.common.eventbus.Subscribe;
 public class AtomHandler implements Service
 {
 	private static final Logger atomsLog = Logging.getLogger("atoms");
+	
+	static
+	{
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
+	}
 
 	private final Context context;
 	
@@ -165,10 +172,6 @@ public class AtomHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context);
 		this.atomQueue = new MappedBlockingQueue<Hash, Atom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
-
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -307,7 +310,6 @@ public class AtomHandler implements Service
 
 		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.syncAtomListener);
-		this.context.getEvents().register(this.asyncBlockListener);
 		this.context.getEvents().register(this.syncBlockListener);
 
 		Thread atomProcessorThread = new Thread(this.atomProcessor);
@@ -322,7 +324,6 @@ public class AtomHandler implements Service
 		this.atomProcessor.terminate(true);
 
 		this.context.getEvents().unregister(this.syncBlockListener);
-		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncAtomListener);
 		this.context.getEvents().unregister(this.syncChangeListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
@@ -613,6 +614,9 @@ public class AtomHandler implements Service
 		
 		this.timedout.remove(pendingAtom.getHash());
 		this.atomQueue.remove(pendingAtom.getHash());
+		
+		if (atomsLog.hasLevel(Logging.DEBUG) == true)
+			atomsLog.debug(AtomHandler.this.context.getName()+": Removed pending atom "+pendingAtom);
 	}
 	
 	public List<AtomCertificate> certificates(final int limit, final Collection<Hash> exclusions)
@@ -673,13 +677,13 @@ public class AtomHandler implements Service
 	}
 
 	// ASYNC BLOCK LISTENER //
-	private EventListener asyncBlockListener = new EventListener()
+	// TODO needs to go in ledger class part of pruning
+/*	private EventListener asyncBlockListener = new EventListener()
 	{
 		@Subscribe
 		public void on(BlockCommittedEvent blockCommittedEvent)
 		{
-			// TODO needs to go in ledger class
-/*			AtomHandler.this.lock.writeLock().lock();
+			AtomHandler.this.lock.writeLock().lock();
 			try
 			{
 //				long cleanTo = blockCommittedEvent.getBlock().getHeader().getHeight() - Node.OOS_TRIGGER_LIMIT;
@@ -689,53 +693,50 @@ public class AtomHandler implements Service
 			finally
 			{
 				AtomHandler.this.lock.writeLock().unlock();
-			}*/
+			}
 		}
-	};
+	};*/
 
 	// SYNC BLOCK LISTENER //
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
-		@Subscribe
-		public void on(final BlockCommitEvent blockCommitEvent)
-		{
-			AtomHandler.this.lock.writeLock().lock();
-			try
-			{
-				for (Hash atom : blockCommitEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS))
-				{
-					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(atom);
-					if (pendingAtom == null)
-						throw new IllegalStateException("Pending atom "+atom+" accepted in block commit "+blockCommitEvent.getBlock().getHeader()+" not found");
-					
-					pendingAtom.accepted();
-					AtomHandler.this.timedout.remove(pendingAtom.getHash());
-				}
-				
-				for (Hash atom : blockCommitEvent.getBlock().getHeader().getInventory(InventoryType.TIMEOUTS))
-				{
-					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(atom);
-					if (pendingAtom == null)
-						throw new IllegalStateException("Pending atom "+atom+" accept timed out in block commit "+blockCommitEvent.getBlock().getHeader()+" not found");
-					
-					if (pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
-						AtomHandler.this.context.getEvents().post(new AtomAcceptedTimeoutEvent(pendingAtom));
-					else if (pendingAtom.getStatus().greaterThan(CommitStatus.EXECUTED) == false)
-						AtomHandler.this.context.getEvents().post(new AtomCommitTimeoutEvent(pendingAtom));
-				}
-			}
-			finally
-			{
-				AtomHandler.this.lock.writeLock().unlock();
-			}
-		}
-
 		@Subscribe
 		public void on(final BlockCommittedEvent blockCommittedEvent)
 		{
 			AtomHandler.this.lock.writeLock().lock();
 			try
 			{
+				for (Hash atom : blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.ATOMS))
+				{
+					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(atom);
+					if (pendingAtom == null)
+						throw new IllegalStateException("Pending atom "+atom+" accepted in block commit "+blockCommittedEvent.getBlock().getHeader()+" not found");
+					
+					pendingAtom.accepted();
+					AtomHandler.this.context.getEvents().post(new AtomAcceptedEvent(pendingAtom));
+				}
+				
+				for (AtomCertificate certificate : blockCommittedEvent.getBlock().getCertificates())
+				{
+					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(certificate.getAtom());
+					if (pendingAtom == null)
+						throw new IllegalStateException("Pending atom "+certificate.getAtom()+" committed via certificate "+certificate.getHash()+" in block commit "+blockCommittedEvent.getBlock().getHeader()+" not found");
+					
+					pendingAtom.completed();
+				}
+
+				for (Hash atom : blockCommittedEvent.getBlock().getHeader().getInventory(InventoryType.TIMEOUTS))
+				{
+					PendingAtom pendingAtom = AtomHandler.this.pendingAtoms.get(atom);
+					if (pendingAtom == null)
+						throw new IllegalStateException("Pending atom "+atom+" timed out in block commit "+blockCommittedEvent.getBlock().getHeader()+" not found");
+					
+					if (pendingAtom.getStatus().lessThan(CommitStatus.ACCEPTED) == true)
+						AtomHandler.this.context.getEvents().post(new AtomAcceptedTimeoutEvent(pendingAtom));
+					else if (pendingAtom.getStatus().greaterThan(CommitStatus.EXECUTED) == false)
+						AtomHandler.this.context.getEvents().post(new AtomCommitTimeoutEvent(pendingAtom));
+				}
+
 				// Timeout atoms
 				// Don't process timeouts until after the entire branch has been committed as 
 				// pending atoms that would timeout may be committed somewhere on the branch ahead of this commit.
@@ -766,14 +767,14 @@ public class AtomHandler implements Service
 				// Timeout housekeeping
 				// TODO I think timeout housekeeping is required here.  Locally may have considered an atom timed out due to weak-subjectivity/latency,
 				// but the network never agrees with the local opinion and the atom is accepted into a block or escalates to a commit timeout.
-				Iterator<Entry<Hash, Long>> acceptedTimeoutsIterator = AtomHandler.this.timedout.entrySet().iterator();
-				while(acceptedTimeoutsIterator.hasNext() == true)
+				Iterator<Entry<Hash, Long>> timeoutsIterator = AtomHandler.this.timedout.entrySet().iterator();
+				while(timeoutsIterator.hasNext() == true)
 				{
-					Entry<Hash, Long> acceptedTimeout = acceptedTimeoutsIterator.next();
-					if (acceptedTimeout.getValue() > AtomHandler.this.context.getLedger().getHead().getHeight() - PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS)
+					Entry<Hash, Long> timeout = timeoutsIterator.next();
+					if (timeout.getValue() > blockCommittedEvent.getBlock().getHeader().getHeight() - PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS)
 						continue;
 					
-					acceptedTimeoutsIterator.remove();
+					timeoutsIterator.remove();
 				}
 			}
 			finally
@@ -787,14 +788,14 @@ public class AtomHandler implements Service
 	private SynchronousEventListener syncAtomListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(final AtomAcceptedEvent event) throws IOException 
+		public void on(final AtomPositiveCommitEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
 			AtomHandler.this.context.getLedger().getLedgerStore().storeSyncInventory(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom().getHash(), Atom.class, SyncInventoryType.COMMIT);
 		}
 
 		@Subscribe
-		public void on(final AtomRejectedEvent event) throws IOException 
+		public void on(final AtomNegativeCommitEvent event) throws IOException 
 		{
 			remove(event.getPendingAtom());
 			AtomHandler.this.context.getLedger().getLedgerStore().storeSyncInventory(AtomHandler.this.context.getLedger().getHead().getHeight(), event.getPendingAtom().getHash(), Atom.class, SyncInventoryType.COMMIT);

@@ -32,7 +32,7 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.executors.Executor;
 import org.fuserleer.executors.ScheduledExecutable;
 import org.fuserleer.ledger.atoms.AtomCertificate;
-import org.fuserleer.ledger.events.BlockCommitEvent;
+import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.ledger.messages.IdentitiesMessage;
 import org.fuserleer.logging.Logger;
@@ -53,6 +53,13 @@ import com.sleepycat.je.OperationStatus;
 public final class ValidatorHandler implements Service
 {
 	private static final Logger powerLog = Logging.getLogger("power");
+	
+	static 
+	{
+		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		powerLog.setLevels(Logging.ERROR | Logging.FATAL);
+	}
 
 	/** Vote power maturity delay in blocks **/
 	public static long VOTE_POWER_MATURITY = 60;	 
@@ -81,10 +88,6 @@ public final class ValidatorHandler implements Service
 		this.validatorStore = new ValidatorStore(context);
 		this.ownedPowerCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
 		this.identityCache = Collections.synchronizedSet(new HashSet<BLSPublicKey>());
-		
-		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		powerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		powerLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 	
 	@Override
@@ -558,15 +561,15 @@ public final class ValidatorHandler implements Service
 	private SynchronousEventListener syncBlockListener = new SynchronousEventListener()
 	{
 		@Subscribe
-		public void on(BlockCommitEvent blockCommitEvent) 
+		public void on(BlockCommittedEvent blockCommittedEvent) 
 		{
 			try
 			{
-				update(blockCommitEvent.getBlock());
+				update(blockCommittedEvent.getBlock());
 			}
 			catch (IOException ioex)
 			{
-				powerLog.error(ValidatorHandler.this.context.getName()+": Failed to update vote powers in block "+blockCommitEvent.getBlock().getHeader(), ioex);
+				powerLog.error(ValidatorHandler.this.context.getName()+": Failed to update vote powers in block "+blockCommittedEvent.getBlock().getHeader(), ioex);
 			}
 		}
 		

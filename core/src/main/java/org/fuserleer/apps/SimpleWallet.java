@@ -27,7 +27,6 @@ import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
-import org.fuserleer.events.EventListener;
 import org.fuserleer.ledger.AssociationSearchQuery;
 import org.fuserleer.ledger.AssociationSearchResponse;
 import org.fuserleer.ledger.AtomFuture;
@@ -42,11 +41,6 @@ import org.fuserleer.ledger.atoms.TokenParticle;
 import org.fuserleer.ledger.atoms.TokenParticle.Action;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.SignedParticle;
-import org.fuserleer.ledger.events.AtomAcceptedEvent;
-import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
-import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
-import org.fuserleer.ledger.events.AtomExceptionEvent;
-import org.fuserleer.ledger.events.AtomRejectedEvent;
 import org.fuserleer.ledger.exceptions.InsufficientBalanceException;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
@@ -59,8 +53,6 @@ import org.fuserleer.utils.UInt256;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 import org.json.JSONObject;
-
-import com.google.common.eventbus.Subscribe;
 
 /** A simple wallet for interacting with the network.  Not very efficient and not very good, but adequate for most uses / testing.
  * 
@@ -186,8 +178,8 @@ public class SimpleWallet implements AutoCloseable
 					certificate = Serialization.getInstance().fromJsonObject(messageJSON.getJSONObject("certificate"), AtomCertificate.class);
 					
 				String type = messageJSON.getString("type");
-				if (type.equalsIgnoreCase("accepted") == true)
-					SimpleWallet.this.accept(atom, certificate);
+				if (type.equalsIgnoreCase("committed") == true)
+					SimpleWallet.this.committed(atom, certificate);
 				else if (type.equalsIgnoreCase("rejected") == true)
 					SimpleWallet.this.reject(atom, certificate);
 				else if (type.equalsIgnoreCase("timeout") == true)
@@ -493,41 +485,7 @@ public class SimpleWallet implements AutoCloseable
 		}
 	}
 
-	// ACTION LISTENER //
-	private EventListener atomListener = new EventListener() 
-	{
-		@Subscribe
-		public void on(final AtomAcceptedEvent event) 
-		{
-			accept(event.getAtom(), event.getPendingAtom().getCertificate());
-		}
-		
-		@Subscribe
-		public void on(final AtomRejectedEvent event) 
-		{
-			reject(event.getAtom(), event.getPendingAtom().getCertificate());
-		}
-		
-		@Subscribe
-		public void on(final AtomAcceptedTimeoutEvent event) 
-		{
-			timeout(event.getAtom());
-		}
-
-		@Subscribe
-		public void on(final AtomCommitTimeoutEvent event) 
-		{
-			timeout(event.getAtom());
-		}
-
-		@Subscribe
-		public void on(final AtomExceptionEvent event) 
-		{
-			exception(event.getAtom(), event.getException());
-		}
-	};
-	
-	private void accept(final Atom atom, final AtomCertificate certificate)
+	private void committed(final Atom atom, final AtomCertificate certificate)
 	{
 		this.lock.lock();
 		try

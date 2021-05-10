@@ -2,9 +2,9 @@ package org.fuserleer.ledger.events;
 
 import org.fuserleer.ledger.PendingAtom;
 
-public final class AtomRejectedEvent extends AtomEvent
+public final class AtomNegativeCommitEvent extends AtomEvent
 {
-	public AtomRejectedEvent(final PendingAtom pendingAtom)
+	public AtomNegativeCommitEvent(final PendingAtom pendingAtom)
 	{
 		super(pendingAtom);
 		

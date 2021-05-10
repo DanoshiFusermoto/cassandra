@@ -28,13 +28,14 @@ import org.fuserleer.ledger.CommitOperation.Type;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.atoms.Particle.Spin;
-import org.fuserleer.ledger.events.AtomAcceptedEvent;
+import org.fuserleer.ledger.events.AtomPositiveCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomAcceptedTimeoutEvent;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
-import org.fuserleer.ledger.events.AtomRejectedEvent;
+import org.fuserleer.ledger.events.AtomNegativeCommitEvent;
 import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
+import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncBlockEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
@@ -51,6 +52,13 @@ import com.google.common.eventbus.Subscribe;
 public final class Ledger implements Service, LedgerInterface
 {
 	private static final Logger ledgerLog = Logging.getLogger("ledger");
+	
+	static 
+	{
+		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL);
+	}
 
 	private final Context 	context;
 	
@@ -89,10 +97,6 @@ public final class Ledger implements Service, LedgerInterface
 		this.ledgerSearch = new LedgerSearch(this.context);
 
 		this.head = new AtomicReference<BlockHeader>(this.context.getNode().getHead());
-
-//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		ledgerLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 	
 	@Override
@@ -268,10 +272,13 @@ public final class Ledger implements Service, LedgerInterface
 	@JsonGetter("head")
 	public BlockHeader getHead()
 	{
-		return this.head.get();
+		synchronized(this.head)
+		{
+			return this.head.get();
+		}
 	}
 
-	private void update(final Block block) throws StateLockedException, IOException
+	private void commit(final Block block) throws StateLockedException, IOException
 	{
 		Objects.requireNonNull(block, "Block is null");
 		
@@ -287,10 +294,7 @@ public final class Ledger implements Service, LedgerInterface
 				
 				acceptedPendingAtoms.add(pendingAtom);
 			}
-			
-			this.stateAccumulator.lock(acceptedPendingAtoms);
-			acceptedPendingAtoms.forEach(pa -> pa.provision(block.getHeader()));
-			
+
 			Set<PendingAtom> committedPendingAtoms = new HashSet<PendingAtom>();
 			for (AtomCertificate atomCertificate : block.getCertificates())
 			{
@@ -301,14 +305,22 @@ public final class Ledger implements Service, LedgerInterface
 				committedPendingAtoms.add(pendingAtom);
 			}
 
-			if (committedPendingAtoms.isEmpty() == false)
+			synchronized(this.head)
 			{
-				this.ledgerStore.commit(committedPendingAtoms.stream().map(cpa -> cpa.getCommitOperation()).collect(Collectors.toList()));
-				this.stateAccumulator.unlock(committedPendingAtoms);
+				if (committedPendingAtoms.isEmpty() == false)
+					this.ledgerStore.commit(committedPendingAtoms.stream().map(cpa -> cpa.getCommitOperation()).collect(Collectors.toList()));
+				
+				if (acceptedPendingAtoms.isEmpty() == false)
+					this.stateAccumulator.lock(acceptedPendingAtoms);
+	
+				if (committedPendingAtoms.isEmpty() == false)
+					this.stateAccumulator.unlock(committedPendingAtoms);
+				
+				this.head.set(block.getHeader());
+				this.context.getNode().setHead(block.getHeader());
 			}
-			
-			this.head.set(block.getHeader());
-			this.context.getNode().setHead(block.getHeader());
+
+			this.context.getEvents().post(new BlockCommittedEvent(block));
 		}
 		finally
 		{
@@ -355,7 +367,9 @@ public final class Ledger implements Service, LedgerInterface
 	// SHARD GROUP FUNCTIONS //
 	public long numShardGroups()
 	{
-		return numShardGroups(this.getHead().getHeight());
+		// TODO dynamic shard group count from height / epoch
+		// DO NOT LOCK THE HEAD!
+		return Universe.getDefault().shardGroupCount();
 	}
 
 	public long numShardGroups(final long height)
@@ -402,9 +416,9 @@ public final class Ledger implements Service, LedgerInterface
 			try
 			{
 				if (event.getPendingAtom().getCertificate().getDecision().equals(StateDecision.POSITIVE))
-					Ledger.this.context.getEvents().post(new AtomAcceptedEvent(event.getPendingAtom()));
+					Ledger.this.context.getEvents().post(new AtomPositiveCommitEvent(event.getPendingAtom()));
 				if (event.getPendingAtom().getCertificate().getDecision().equals(StateDecision.NEGATIVE))
-					Ledger.this.context.getEvents().post(new AtomRejectedEvent(event.getPendingAtom()));
+					Ledger.this.context.getEvents().post(new AtomNegativeCommitEvent(event.getPendingAtom()));
 			}
 			catch (Exception ex)
 			{
@@ -414,7 +428,7 @@ public final class Ledger implements Service, LedgerInterface
 		}
 
 		@Subscribe
-		public void on(final AtomRejectedEvent event) 
+		public void on(final AtomNegativeCommitEvent event) 
 		{
 			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" rejected", event.getPendingAtom().thrown());
 		}
@@ -450,9 +464,9 @@ public final class Ledger implements Service, LedgerInterface
 		private long lastThroughputShardsTouched = 0;
 
 		@Subscribe
-		public void on(final BlockCommittedEvent event) throws StateLockedException, IOException 
+		public void on(final BlockCommitEvent event) throws StateLockedException, IOException 
 		{
-			update(event.getBlock());
+			commit(event.getBlock());
 		}
 		
 		@Subscribe
@@ -461,7 +475,7 @@ public final class Ledger implements Service, LedgerInterface
 			sync(event.getBlock());
 		}
 
-		private void update(final Block block) throws StateLockedException, IOException
+		private void commit(final Block block) throws StateLockedException, IOException
 		{
 			if (block.getHeader().getPrevious().equals(Ledger.this.getHead().getHash()) == false)
 			{
@@ -469,7 +483,7 @@ public final class Ledger implements Service, LedgerInterface
 				return;
 			}
 			
-			Ledger.this.update(block);
+			Ledger.this.commit(block);
 			ledgerLog.info(Ledger.this.context.getName()+": Committed block with "+block.getHeader().getInventory(InventoryType.ATOMS).size()+" atoms and "+block.getHeader().getInventory(InventoryType.CERTIFICATES).size()+" certificates "+block.getHeader().getInventory(InventoryType.TIMEOUTS).size()+" timeouts "+block.getHeader());
 			stats(block);
 		}

@@ -73,6 +73,13 @@ import com.sleepycat.je.OperationStatus;
 public class BlockHandler implements Service
 {
 	private static final Logger blocksLog = Logging.getLogger("blocks");
+	
+	static
+	{
+//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
+		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL);
+	}
 
 	public static boolean withinRange(long location, long point, long range)
 	{
@@ -150,14 +157,8 @@ public class BlockHandler implements Service
 						PendingBlock generatedBlock = null;
 						long generationStart = Time.getSystemTime();
 						
-						// TODO is it really ok to massage the build clock like this?  Resolves a rare but possible liveness issue. 
-						// 		It is not "illegal" to propose multiple blocks for a round, but it IS illegal to vote multiple times per round.
-						//		Doing this doesn't violate the latter, but unsure currently if it exposes any attack surface
-						boolean canBuild = buildCandidate.getHeight() >= BlockHandler.this.buildClock.get();
-						if (BlockHandler.this.buildBranch != null && BlockHandler.this.buildBranch.supers().isEmpty() == false)
-							canBuild = true;
-						
-						if (canBuild == true)
+						// Safe to attempt to build a block outside of a lock
+						if (buildCandidate.getHeight() >= BlockHandler.this.buildClock.get())
 							generatedBlock = BlockHandler.this.build(buildCandidate, BlockHandler.this.buildBranch);
 						
 						BlockHandler.this.lock.writeLock().lock();
@@ -189,6 +190,7 @@ public class BlockHandler implements Service
 										this.committedCount += committedBlocks.size();
 										this.committedTimeTotal += (Time.getSystemTime()-commitStart);
 										blocksLog.info(BlockHandler.this.context.getName()+": Committed "+committedBlocks.size()+" blocks in "+(Time.getSystemTime()-commitStart)+"ms / "+(this.committedTimeTotal/this.committedCount)+" ms average");
+										BlockHandler.this.buildClock.set(committable.getHeight());
 									}
 								}
 							}
@@ -338,10 +340,6 @@ public class BlockHandler implements Service
 		this.currentVote = new AtomicReference<BlockHeader>();
 		this.buildBranch = null;
 		this.commitBranch = null;
-		
-//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
-//		blocksLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
 	@Override
@@ -1046,9 +1044,20 @@ public class BlockHandler implements Service
 			final LinkedList<PendingBlock> committedBlocks = branch.commit(block);
 			if (committedBlocks.isEmpty() == false)
 			{
+				Set<Hash> acceptedAtoms = new HashSet<Hash>();
+				Set<Hash> committedAtoms = new HashSet<Hash>();
+				Set<Hash> committedCertificates = new HashSet<Hash>();
+				Set<Hash> timedoutAtoms = new HashSet<Hash>();
 				for (PendingBlock committedBlock : committedBlocks)
 				{
 					blocksLog.info(BlockHandler.this.context.getName()+": Committed block "+committedBlock.getHeader());
+					
+					committedBlock.getAtoms().forEach(a -> acceptedAtoms.add(a.getHash()));
+					committedBlock.getTimedout().forEach(a -> timedoutAtoms.add(a.getHash()));
+					committedBlock.getCertificates().forEach(c -> {
+						committedAtoms.add(c.getAtom());
+						committedCertificates.add(c.getHash());
+					});
 					
 					// FIXME temporary for profiling BLS state certificates average size reduction on test baseline
 					this.context.getMetaData().increment("ledger.blocks.bytes", Serialization.getInstance().toDson(committedBlock.getBlock(), Output.WIRE).length);
@@ -1057,18 +1066,44 @@ public class BlockHandler implements Service
 				this.buildBranch = null;
 				this.commitBranch = null;
 				
+				// Discover blocks that can't be processed anymore due to this commit
+				Set<PendingBlock> invalidPendingBlocks = new HashSet<PendingBlock>();
+				for (PendingBlock pendingBlock : this.pendingBlocks.values())
+				{
+					// Will be pruned by the update process if head height is before the last committed pending block 
+					if (pendingBlock.getHeight() <= committedBlocks.getLast().getHeight())
+						continue;
+					
+					acceptedAtoms.forEach(a -> { if (pendingBlock.containsAtom(a)) invalidPendingBlocks.add(pendingBlock); });
+					committedAtoms.forEach(a -> { if (pendingBlock.containsAtom(a)) invalidPendingBlocks.add(pendingBlock); });
+					committedCertificates.forEach(c -> { if (pendingBlock.containsCertificate(c)) invalidPendingBlocks.add(pendingBlock); });
+					timedoutAtoms.forEach(t -> { if (pendingBlock.containsTimedout(t)) invalidPendingBlocks.add(pendingBlock); });
+				}
+				
+				invalidPendingBlocks.forEach(pb -> blocksLog.info(context.getName()+": Pending block "+pb+" will be discarded as no longer validatable"));
+				
+				Set<PendingBranch> invalidPendingBranches = new HashSet<PendingBranch>();
+				for (PendingBranch pendingBranch : this.pendingBranches)
+				{
+					for (PendingBlock pendingBlock : invalidPendingBlocks)
+					{
+						if (pendingBranch.contains(pendingBlock) == false)
+							continue;
+						
+						invalidPendingBranches.add(pendingBranch);
+					}
+				}
+
+				invalidPendingBranches.forEach(pb -> blocksLog.info(context.getName()+": Pending branch "+pb+" will be discarded as no longer validatable"));
+				invalidPendingBlocks.forEach(pb -> this.pendingBlocks.remove(pb.getHash(), pb));
+				this.pendingBranches.removeAll(invalidPendingBranches);
+				
 				// Signal the commit
 				// TODO Might need to catch exceptions on these from synchronous listeners
 				for (PendingBlock committedBlock : committedBlocks)
 				{
 					BlockCommitEvent blockCommitEvent = new BlockCommitEvent(committedBlock.getBlock());
 					BlockHandler.this.context.getEvents().post(blockCommitEvent);
-				}
-
-				for (PendingBlock committedBlock : committedBlocks)
-				{
-					BlockCommittedEvent blockCommittedEvent = new BlockCommittedEvent(committedBlock.getBlock());
-					BlockHandler.this.context.getEvents().post(blockCommittedEvent);
 				}
 			}
 			
@@ -1457,13 +1492,13 @@ public class BlockHandler implements Service
 					continue;
 				}
 				
-				// Short circuit on any branch that has a commit possible
-				// If not full constructed will commit the portion that is
-
 				// Test for supers in the branch, if no supers is it still a candidate? Need fully constructed branches in order to select them!
 				// NOTE disable this to promote a stall on liveness when critical gossip / connectivity issues
 				List<PendingBlock> supers = pendingBranch.supers();
 				if (supers.isEmpty() == true && pendingBranch.isConstructed() == false)
+					continue;
+
+				if (pendingBranch.getHigh().getHeight() < this.buildClock.get())
 					continue;
 
 				if (buildBranch != null && buildBranch.supers().size() < supers.size())
@@ -1494,14 +1529,14 @@ public class BlockHandler implements Service
 			// However this will add at least one additional block production of latency to block commits, but will most certainly be secure!
 			// TODO can round of latency be optimised?
 			PendingBranch commitBranch = null;
-			int	commitBranchSuperBlocks = 0;
+			Set<PendingBlock> commitBranchSuperBlocks = new HashSet<PendingBlock>();
 			for (PendingBranch pendingBranch : this.pendingBranches)
 			{
 				PendingBlock committable = pendingBranch.commitable();
 				if (committable == null)
 					continue;
 				
-				int superBlocks = 0;
+				Set<PendingBlock> superBlocks = new HashSet<PendingBlock>();
 				for (PendingBlock pendingBlock : pendingBranch.getBlocks())
 				{
 					long blockWeight = pendingBranch.getWeight(pendingBlock.getHeight());
@@ -1510,17 +1545,26 @@ public class BlockHandler implements Service
 					if (blockWeight < votePowerThresholdAtBlock)
 						continue;
 					
-					superBlocks++;
+					superBlocks.add(pendingBlock);
 				}
 					
-				if (superBlocks > commitBranchSuperBlocks)
+				if (superBlocks.size() > commitBranchSuperBlocks.size())
 				{
-					commitBranchSuperBlocks = superBlocks;
+					commitBranchSuperBlocks.clear();
+					commitBranchSuperBlocks.addAll(superBlocks);
 					commitBranch = pendingBranch;
 					blocksLog.debug(BlockHandler.this.context.getName()+": Preselected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());
 				}
-				else if (superBlocks == commitBranchSuperBlocks)
-					commitBranch = null;
+				else if (superBlocks.size() == commitBranchSuperBlocks.size())
+				{
+					 if (commitBranch.getHigh().getHeader().getAverageStep() < pendingBranch.getHigh().getHeader().getAverageStep() ||
+					     (commitBranch.getHigh().getHeader().getAverageStep() == pendingBranch.getHigh().getHeader().getAverageStep() && commitBranch.getHigh().getHeader().getStep() < pendingBranch.getHigh().getHeader().getStep()))
+					 {
+						commitBranchSuperBlocks.clear();
+						commitBranchSuperBlocks.addAll(superBlocks);
+						commitBranch = pendingBranch;
+					 }
+				}
 			}
 				
 			if (commitBranch != null)
@@ -1528,7 +1572,7 @@ public class BlockHandler implements Service
 				// Always select the best commit branch as the build branch
 				this.buildBranch = commitBranch;
 
-				if (commitBranchSuperBlocks >= 2)
+				if (commitBranchSuperBlocks.size() >= Math.ceil(Math.log(commitBranch.size())))
 				{
 					this.commitBranch = commitBranch;
 					blocksLog.debug(BlockHandler.this.context.getName()+": Selected commit branch with "+commitBranchSuperBlocks+" supers "+commitBranch.getHigh().getHeader());

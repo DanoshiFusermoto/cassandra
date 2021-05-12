@@ -71,7 +71,7 @@ public final class StatePool implements Service
 
 	private enum StateVoteStatus
 	{
-		SUCCESS, FAILED, SKIPPED;
+		SUCCESS, FAILED, SKIPPED, POSTPONED;
 	}
 
 	private final Context context;
@@ -103,12 +103,6 @@ public final class StatePool implements Service
 							{
 								try
 								{
-									if (StatePool.this.context.getLedger().getLedgerStore().store(StatePool.this.context.getLedger().getHead().getHeight(), stateVote.getValue()).equals(OperationStatus.SUCCESS) == false)
-									{
-										statePoolLog.warn(StatePool.this.context.getName()+": Already seen state vote of "+stateVote.getValue().getState()+" for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
-										continue;
-									}
-									
 									StateVoteStatus status = process(stateVote.getValue());
 									if (status == StateVoteStatus.SUCCESS)
 									{
@@ -117,6 +111,8 @@ public final class StatePool implements Service
 
 										stateVotesToBroadcast.add(stateVote.getValue());
 									}
+									else if (status == StateVoteStatus.POSTPONED)
+										statePoolLog.info(StatePool.this.context.getName()+": Processing of state vote "+stateVote.getValue().getHash()+" was postponed for atom "+stateVote.getValue().getAtom()+" in block "+stateVote.getValue().getBlock()+" by "+stateVote.getValue().getOwner());
 									else if (status == StateVoteStatus.SKIPPED)
 									{
 										if (statePoolLog.hasLevel(Logging.DEBUG) == true)
@@ -174,24 +170,18 @@ public final class StatePool implements Service
 																	  			pendingAtom.getExecution(), StatePool.this.context.getNode().getIdentity());
 											stateVote.sign(StatePool.this.context.getNode().getKeyPair());
 											
-											if (StatePool.this.context.getLedger().getLedgerStore().store(StatePool.this.context.getLedger().getHead().getHeight(), stateVote).equals(OperationStatus.SUCCESS) == true)
+											StateVoteStatus status = process(stateVote);
+											if (status == StateVoteStatus.SUCCESS)
 											{
-												StateVoteStatus status = process(stateVote);
-												if (status == StateVoteStatus.SUCCESS)
-												{
-													if (statePoolLog.hasLevel(Logging.DEBUG))
-														statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
-																						
-													stateVotesToBroadcast.add(stateVote);
-												}
-												else if (status == StateVoteStatus.SKIPPED)
-													statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision()+" was skipped");
-												else
-													statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision()+" return false");
-	
+												if (statePoolLog.hasLevel(Logging.DEBUG))
+													statePoolLog.debug(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision());
+																					
+												stateVotesToBroadcast.add(stateVote);
 											}
-											else // FIXME happens usually on sync after state reconstruction as local validator doesn't know its voted already
-												statePoolLog.error(StatePool.this.context.getName()+": Local state vote of "+stateVote.getState()+" for "+stateVote.getOwner()+" failed");
+											else if (status == StateVoteStatus.SKIPPED)
+												statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision()+" was skipped");
+											else
+												statePoolLog.error(StatePool.this.context.getName()+": State vote "+stateVote.getHash()+" on "+pendingState.getKey()+" in atom "+pendingState.getAtom()+" with decision "+stateVote.getDecision()+" failed");
 										}
 										else
 											StatePool.this.tryFinalize(pendingAtom, pendingState);
@@ -228,20 +218,29 @@ public final class StatePool implements Service
 						final List<Hash> voteRemovals = new ArrayList<Hash>();
 						StatePool.this.votesToCountDelayed.forEach((h,sv) -> 
 						{
-							PendingAtom pendingAtom;
-							try
+							// Stale?
+							if (sv.getHeight() + PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS <= StatePool.this.context.getLedger().getHead().getHeight())
 							{
-								pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(sv.getAtom());
-								if (sv.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight() && 
-									pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true)
-								{
-									StatePool.this.votesToCountQueue.put(sv.getHash(), sv);
-									voteRemovals.add(h);
-								}
+								voteRemovals.add(h);
+								return;
 							}
-							catch (IOException ioex)
+							
+							if (sv.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight())
 							{
-								statePoolLog.error(StatePool.this.context.getName()+": Maintenence of delayed state votes failed for pending atom "+sv.getAtom(), ioex);
+								PendingAtom pendingAtom;
+								try
+								{
+									pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(sv.getAtom());
+									if (pendingAtom != null && pendingAtom.getStatus().greaterThan(CommitStatus.ACCEPTED) == true)
+									{
+										StatePool.this.votesToCountQueue.put(sv.getHash(), sv);
+										voteRemovals.add(h);
+									}
+								}
+								catch (IOException ioex)
+								{
+									statePoolLog.error(StatePool.this.context.getName()+": Maintenence of delayed state votes failed for pending atom "+sv.getAtom(), ioex);
+								}
 							}
 						});
 						synchronized(StatePool.this.votesToCountDelayed) { StatePool.this.votesToCountDelayed.keySet().removeAll(voteRemovals); }
@@ -351,18 +350,11 @@ public final class StatePool implements Service
 					StatePool.this.context.getLedger().getLedgerStore().has(stateVote.getHash()) == true)
 					return;
 
-				PendingAtom pendingAtom = StatePool.this.context.getLedger().getAtomHandler().get(stateVote.getAtom());
-				if (stateVote.getHeight() <= StatePool.this.context.getLedger().getHead().getHeight() && 
-					pendingAtom.getStatus().greaterThan(CommitStatus.PREPARED) == true)
+				StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
+				synchronized(StatePool.this.voteProcessor)
 				{
-					StatePool.this.votesToCountQueue.put(stateVote.getHash(), stateVote);
-					synchronized(StatePool.this.voteProcessor)
-					{
-						StatePool.this.voteProcessor.notify();
-					}
+					StatePool.this.voteProcessor.notify();
 				}
-				else
-					StatePool.this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
 			}
 		});
 					
@@ -582,6 +574,12 @@ public final class StatePool implements Service
 	{
 		Objects.requireNonNull(stateVote, "State vote is null");
 		
+		if (stateVote.getHeight() > StatePool.this.context.getLedger().getHead().getHeight())
+		{
+			this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
+			return StateVoteStatus.POSTPONED; 
+		}
+		
 		StatePool.this.lock.writeLock().lock();
 		StateVoteStatus response = StateVoteStatus.FAILED;
 		PendingState pendingState = null;
@@ -592,12 +590,28 @@ public final class StatePool implements Service
 			if (pendingAtom == null)
 			{
 				Commit commit = StatePool.this.context.getLedger().getLedgerStore().search(new StateAddress(Atom.class, stateVote.getAtom()));
-				if (commit != null && commit.getPath().get(Elements.CERTIFICATE) != null)
-					return StateVoteStatus.SKIPPED;
+				if (commit != null)
+				{
+					if (commit.getPath().get(Elements.CERTIFICATE) != null)
+						return StateVoteStatus.SKIPPED;
+					else
+						return StateVoteStatus.FAILED;
+				}
 
 				throw new IllegalStateException("Pending atom "+stateVote.getAtom()+" for pending state "+stateVote.getObject()+" not found");
 			}
+			else if	(pendingAtom.getStatus().lessThan(CommitStatus.PROVISIONING) == true)
+			{
+				this.votesToCountDelayed.put(stateVote.getHash(), stateVote);
+				return StateVoteStatus.POSTPONED; 
+			}
 			
+			if (this.context.getLedger().getLedgerStore().store(StatePool.this.context.getLedger().getHead().getHeight(), stateVote).equals(OperationStatus.SUCCESS) == false)
+			{
+				statePoolLog.warn(this.context.getName()+": Already seen state vote of "+stateVote.getState()+" for atom "+stateVote.getAtom()+" in block "+stateVote.getBlock()+" by "+stateVote.getOwner());
+				return StateVoteStatus.SKIPPED; 
+			}
+
 			pendingState = this.context.getLedger().getStateHandler().get(pendingAtom.getBlock(), pendingAtom.getHash(), stateVote.getState());
 			// Creating pending state objects from vote if particle not seen or committed
 			if (pendingState == null)

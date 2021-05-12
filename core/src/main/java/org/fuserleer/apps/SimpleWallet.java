@@ -34,6 +34,7 @@ import org.fuserleer.ledger.SearchResult;
 import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
+import org.fuserleer.ledger.atoms.HostedFileParticle;
 import org.fuserleer.ledger.atoms.MessageParticle;
 import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.TokenSpecification;
@@ -88,7 +89,12 @@ public class SimpleWallet implements AutoCloseable
 		{
 			for (SearchResult searchResult : searchResponseFuture.get().getResults())
 			{
-				this.particles.put(searchResult.getType().cast(searchResult.getPrimitive()).getHash(), searchResult.getPrimitive());
+				Particle particle = searchResult.getPrimitive();
+				if (particle instanceof HostedFileParticle)
+				{
+					HostedFileParticle hostedFileParticle = (HostedFileParticle)particle;
+					hostedFileParticle.minimize();
+				}
 				
 				if (searchResult.getPrimitive() instanceof TokenParticle)
 				{
@@ -99,6 +105,8 @@ public class SimpleWallet implements AutoCloseable
 					if (transferParticle.getSpin().equals(Spin.DOWN) == true && transferParticle.getAction().equals(Action.TRANSFER) == true)
 						SimpleWallet.this.unconsumed.remove(transferParticle.get(Spin.UP));
 				}
+
+				this.particles.put(searchResult.getType().cast(searchResult.getPrimitive()).getHash(), particle);
 			}
 			
 			searchOffset = searchResponseFuture.get().getNextOffset();
@@ -108,7 +116,6 @@ public class SimpleWallet implements AutoCloseable
 			search = new AssociationSearchQuery(key.getPublicKey().asHash(), Particle.class, Order.ASCENDING, searchOffset, 25);
 		}
 		
-//		this.context.getEvents().register(this.atomListener);
 		openWebSockets();
 	}
 	
@@ -119,7 +126,6 @@ public class SimpleWallet implements AutoCloseable
 		{
 			this.closed = true;
 			this.websockets.forEach((p, s) -> s.close());
-	//		this.context.getEvents().unregister(this.atomListener);
 			this.websockets.clear();
 			this.particles.clear();
 			this.unconsumed.clear();
@@ -164,7 +170,9 @@ public class SimpleWallet implements AutoCloseable
 				
 				List<Particle> particles = new ArrayList<Particle>();
 				for(int p = 0 ; p < messageJSON.getJSONArray("particles").length() ; p++)
+				{
 					particles.add(Serialization.getInstance().fromJsonObject(messageJSON.getJSONArray("particles").getJSONObject(p), Particle.class));
+				}
 				
 				Atom atom = new Atom(particles);
 				if (messageJSON.getString("atom").compareToIgnoreCase(atom.getHash().toString()) != 0)
@@ -507,8 +515,12 @@ public class SimpleWallet implements AutoCloseable
 						return;
 				}
 
-				this.particles.put(p.getHash(), p);
-				
+				if (p instanceof HostedFileParticle)
+				{
+					HostedFileParticle hostedFileParticle = (HostedFileParticle)p;
+					hostedFileParticle.minimize();
+				}
+
 				if (p instanceof TokenParticle)
 				{
 					if (p.getSpin().equals(Spin.UP) == true && ((TokenParticle)p).getAction().equals(Action.TRANSFER) == true)
@@ -517,6 +529,8 @@ public class SimpleWallet implements AutoCloseable
 					if (p.getSpin().equals(Spin.DOWN) == true && ((TokenParticle)p).getAction().equals(Action.TRANSFER) == true)
 						this.unconsumed.remove(p.get(Spin.UP));
 				}	
+
+				this.particles.put(p.getHash(), p);
 			});
 		}
 		finally

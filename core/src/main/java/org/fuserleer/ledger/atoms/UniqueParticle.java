@@ -5,8 +5,6 @@ import java.util.Objects;
 
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Identity;
-import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECKeyPair;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateAddress;
 import org.fuserleer.ledger.StateMachine;
@@ -37,28 +35,20 @@ public final class UniqueParticle extends SignedParticle
 		this.value = Objects.requireNonNull(value);
 	}
 	
-	public UniqueParticle(Hash value, ECKeyPair owner) throws CryptoException
-	{
-		super(Spin.UP, owner.getIdentity());
-		
-		this.value = Objects.requireNonNull(value);
-		this.sign(owner);
-	}
-
 	public Hash getValue()
 	{
 		return this.value;
 	}
 	
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		stateMachine.sop(new StateOp(new StateAddress(UniqueParticle.class, this.value), StateOp.Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(UniqueParticle.class, this.value), StateOp.Instruction.NOT_EXISTS), this);
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		stateMachine.sop(new StateOp(new StateAddress(UniqueParticle.class, this.value), UInt256.from(this.value.toByteArray()), StateOp.Instruction.SET), this);
 	}

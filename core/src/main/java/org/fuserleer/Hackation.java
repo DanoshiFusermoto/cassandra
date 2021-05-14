@@ -12,6 +12,7 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.Configuration;
 import org.fuserleer.Context;
 import org.fuserleer.console.Console;
+import org.fuserleer.exceptions.StartupException;
 import org.fuserleer.API;
 import org.fuserleer.time.Time;
 import org.fuserleer.time.TimeProvider;
@@ -63,12 +64,14 @@ public class Hackation
 				if (Boolean.getBoolean("godix") == true)
 					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Contexts(),
 													   new org.fuserleer.console.Serializer(), new org.fuserleer.console.System(), new org.fuserleer.console.Validators(),
-												   	   new org.fuserleer.console.Atoms(), new org.fuserleer.console.Spam(), new org.fuserleer.console.Twitter(), 
-												   	   new org.fuserleer.console.Wallet(), new org.fuserleer.console.Tokens(), new org.fuserleer.console.Messages());
+												   	   new org.fuserleer.console.Atoms(), new org.fuserleer.console.Spam(), //new org.fuserleer.console.Twitter(), 
+												   	   new org.fuserleer.console.Wallet(), new org.fuserleer.console.Tokens(), new org.fuserleer.console.Messages(),
+												   	   new org.fuserleer.console.Hosting());
 				else
 					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Atoms(), 
 													   new org.fuserleer.console.Serializer(), new org.fuserleer.console.System(), new org.fuserleer.console.Validators(), 
-													   new org.fuserleer.console.Wallet(), new org.fuserleer.console.Tokens(), new org.fuserleer.console.Messages());
+													   new org.fuserleer.console.Wallet(), new org.fuserleer.console.Tokens(), new org.fuserleer.console.Messages(),
+													   new org.fuserleer.console.Hosting());
 			}
 
 		}
@@ -104,6 +107,16 @@ public class Hackation
 			contexts.add(Context.createAndStart());
 		else
 			contexts.addAll(Context.createAndStart(Integer.parseInt(Configuration.getDefault().getCommandLine().getOptionValue("contexts", "1")), "node", Configuration.getDefault()));
+		
+		// WEB SERVER //
+		try
+		{
+			new WebServer(contexts.get(0)).start();
+		}
+		catch (StartupException ex)
+		{
+			log.error("WebServer service failed to start, continuing ... ", ex);
+		}
 		
 		// API //
 		API.create(contexts.get(0)).start();

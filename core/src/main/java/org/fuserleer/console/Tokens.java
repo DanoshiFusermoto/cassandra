@@ -12,7 +12,6 @@ import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
 import org.fuserleer.apps.SimpleWallet;
-import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Identity;
 import org.fuserleer.ledger.SearchResult;

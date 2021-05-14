@@ -425,7 +425,7 @@ public class API implements Service
 				{
 					Hash randomValue = Hash.random();
 					ECKeyPair key = new ECKeyPair();
-					UniqueParticle particle = new UniqueParticle(randomValue, key.getPublicKey());
+					UniqueParticle particle = new UniqueParticle(randomValue, key.getIdentity());
 					particle.sign(key);
 
 					Atom atom = new Atom(particle);

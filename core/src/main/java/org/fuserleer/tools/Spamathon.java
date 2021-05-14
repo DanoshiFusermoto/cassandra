@@ -148,7 +148,7 @@ public class Spamathon
 								long value = ThreadLocalRandom.current().nextLong();
 								Hash valueHash = new Hash(Longs.toByteArray(value), Mode.STANDARD);
 								ECKeyPair owner = owners.get(ThreadLocalRandom.current().nextInt(owners.size()));
-								UniqueParticle particle = new UniqueParticle(valueHash, owner.getPublicKey());
+								UniqueParticle particle = new UniqueParticle(valueHash, owner.getIdentity());
 								
 								try
 								{

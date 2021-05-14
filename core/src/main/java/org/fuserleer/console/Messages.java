@@ -12,6 +12,7 @@ import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.apps.SimpleWallet;
 import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.MessageParticle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
@@ -41,7 +42,7 @@ public class Messages extends Function
 		
 		if (commandLine.hasOption("send") == true)
 		{
-			ECPublicKey receiver = ECPublicKey.from(commandLine.getOptionValue("send"));
+			Identity receiver = Identity.from(commandLine.getOptionValue("send"));
 			String message = commandLine.getArgList().stream().collect(Collectors.joining(" "));
 			
 			MessageParticle messageParticle = new MessageParticle(message, wallet.getIdentity(), receiver, Time.getSystemTime());

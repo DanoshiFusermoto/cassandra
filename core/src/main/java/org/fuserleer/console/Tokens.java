@@ -104,7 +104,7 @@ public class Tokens extends Function
 				token = tokenSearchResult.getPrimitive(); 
 			}
 			
-			Atom atom = wallet.spend(token, amount, receiver);
+			Atom atom = wallet.spend(token, amount, receiver.getIdentity());
 			wallet.submit(atom);
 			printStream.println(Serialization.getInstance().toJson(atom, Output.API));
 		}

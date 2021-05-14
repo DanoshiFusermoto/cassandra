@@ -25,8 +25,8 @@ import org.fuserleer.common.Direction;
 import org.fuserleer.common.Order;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.ECKeyPair;
-import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.ledger.AssociationSearchQuery;
 import org.fuserleer.ledger.AssociationSearchResponse;
 import org.fuserleer.ledger.AtomFuture;
@@ -274,9 +274,9 @@ public class SimpleWallet implements AutoCloseable
 		}
 	}
 	
-	public ECPublicKey getIdentity()
+	public Identity getIdentity()
 	{
-		return this.key.getPublicKey();
+		return this.key.getIdentity();
 	}
 
 	public void sign(SignedParticle particle) throws CryptoException
@@ -353,7 +353,7 @@ public class SimpleWallet implements AutoCloseable
 		{
 			UInt256 balance = getBalance(token);
 			if (balance.compareTo(UInt256.from(slices)) < 0)
-				throw new InsufficientBalanceException(this.key.getPublicKey(), token, UInt256.from(slices), this.key.getPublicKey());
+				throw new InsufficientBalanceException(getIdentity(), token, UInt256.from(slices), getIdentity());
 			
 			List<TokenParticle> selected = new ArrayList<TokenParticle>();
 			UInt256 credit = UInt256.ZERO;
@@ -377,14 +377,14 @@ public class SimpleWallet implements AutoCloseable
 			UInt256 sliceQuantity = credit.divide(UInt256.from(slices));
 			for (int s = 0 ; s < slices ; s++)
 			{
-				TokenParticle transfer = new TokenParticle(sliceQuantity, token, Action.TRANSFER, Spin.UP, this.key.getPublicKey()); 
+				TokenParticle transfer = new TokenParticle(sliceQuantity, token, Action.TRANSFER, Spin.UP, getIdentity()); 
 				particles.add(transfer);
 				credit = credit.subtract(sliceQuantity);
 			}
 		
 			if (credit.compareTo(UInt256.ZERO) > 0)
 			{
-				TokenParticle change = new TokenParticle(credit, token, Action.TRANSFER, Spin.UP, this.key.getPublicKey()); 
+				TokenParticle change = new TokenParticle(credit, token, Action.TRANSFER, Spin.UP, getIdentity()); 
 				particles.add(change);
 			}
 		
@@ -396,24 +396,24 @@ public class SimpleWallet implements AutoCloseable
 		}
 	}
 
-	public Atom spend(final TokenSpecification token, final UInt256 quantity, final ECPublicKey to) throws CryptoException, InsufficientBalanceException
+	public Atom spend(final TokenSpecification token, final UInt256 quantity, final Identity to) throws CryptoException, InsufficientBalanceException
 	{
 		return spend(token.getHash(), quantity, to);
 	}
 
-	public Atom spend(final Hash token, final UInt256 quantity, final ECPublicKey to) throws CryptoException, InsufficientBalanceException
+	public Atom spend(final Hash token, final UInt256 quantity, final Identity to) throws CryptoException, InsufficientBalanceException
 	{
 		return new Atom(spendParticles(token, quantity, to));
 	}
 	
-	private Collection<TokenParticle> spendParticles(final Hash token, final UInt256 quantity, final ECPublicKey to) throws CryptoException, InsufficientBalanceException
+	private Collection<TokenParticle> spendParticles(final Hash token, final UInt256 quantity, final Identity to) throws CryptoException, InsufficientBalanceException
 	{
 		this.lock.lock();
 		try
 		{
 			UInt256 balance = getBalance(token);
 			if (balance.compareTo(quantity) < 0)
-				throw new InsufficientBalanceException(this.key.getPublicKey(), token, quantity, to);
+				throw new InsufficientBalanceException(getIdentity(), token, quantity, to);
 			
 			List<TokenParticle> selected = new ArrayList<TokenParticle>();
 			UInt256 credit = UInt256.ZERO;
@@ -442,7 +442,7 @@ public class SimpleWallet implements AutoCloseable
 		
 			if (credit.subtract(quantity).compareTo(UInt256.ZERO) > 0)
 			{
-				TokenParticle change = new TokenParticle(credit.subtract(quantity), token, Action.TRANSFER, Spin.UP, this.key.getPublicKey()); 
+				TokenParticle change = new TokenParticle(credit.subtract(quantity), token, Action.TRANSFER, Spin.UP, getIdentity()); 
 				particles.add(change);
 			}
 		

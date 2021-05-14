@@ -54,7 +54,7 @@ public abstract class Particle extends BasicObject implements Primitive, StateEx
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private Spin spin;
 
-	Particle()
+	protected Particle()
 	{
 		super();
 	}

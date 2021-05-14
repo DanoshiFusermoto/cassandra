@@ -3,7 +3,7 @@ package org.fuserleer.ledger.atoms;
 import java.io.IOException;
 import java.util.Objects;
 
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateAddress;
@@ -37,7 +37,7 @@ public final class TokenSpecification extends SignedParticle
 		super();
 	}
 	
-	public TokenSpecification(String ISO, String description, ECPublicKey owner)
+	public TokenSpecification(String ISO, String description, Identity owner)
 	{
 		super(Spin.UP, owner);
 		

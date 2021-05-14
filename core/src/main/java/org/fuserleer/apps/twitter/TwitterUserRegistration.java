@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.util.Objects;
 
 import org.fuserleer.Universe;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateAddress;
@@ -78,7 +78,7 @@ public class TwitterUserRegistration extends SignedParticle
 		super();
 	}
 	
-	public TwitterUserRegistration(final long id, final String handle, final long createdAt, final ECPublicKey owner)
+	public TwitterUserRegistration(final long id, final String handle, final long createdAt, final Identity owner)
 	{
 		super(Spin.UP, owner);
 		

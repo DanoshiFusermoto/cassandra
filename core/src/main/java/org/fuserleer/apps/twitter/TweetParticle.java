@@ -14,7 +14,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.fuserleer.Universe;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateAddress;
@@ -84,7 +84,7 @@ public class TweetParticle extends SignedParticle
 		super();
 	}
 
-	public TweetParticle(final long id, final String user, final String text, final Collection<Hash> media, final Hash replyTo, final Hash retweetOf, final long createdAt, final ECPublicKey owner)
+	public TweetParticle(final long id, final String user, final String text, final Collection<Hash> media, final Hash replyTo, final Hash retweetOf, final long createdAt, final Identity owner)
 	{
 		super(Spin.UP, owner);
 		

@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
 
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
@@ -27,7 +27,7 @@ public final class EmbeddedMediaDeclaration extends MediaDeclaration
 		super();
 	}
 	
-	public EmbeddedMediaDeclaration(String contentType, byte[] data, ECPublicKey owner) 
+	public EmbeddedMediaDeclaration(String contentType, byte[] data, Identity owner) 
 	{
 		super(contentType, owner);
 		

@@ -4,9 +4,10 @@ import java.io.IOException;
 import java.util.Objects;
 
 import org.fuserleer.crypto.CryptoException;
-import org.fuserleer.crypto.ECKeyPair;
-import org.fuserleer.crypto.ECPublicKey;
-import org.fuserleer.crypto.ECSignature;
+import org.fuserleer.crypto.KeyPair;
+import org.fuserleer.crypto.PublicKey;
+import org.fuserleer.crypto.Signature;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
@@ -18,18 +19,18 @@ public abstract class SignedParticle extends Particle
 {
 	@JsonProperty("owner")
 	@DsonOutput(Output.ALL)
-	private ECPublicKey owner;
+	private Identity owner;
 
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
-	private ECSignature signature;
+	private Signature signature;
 	
 	protected SignedParticle()
 	{
 		super();
 	}
 	
-	protected SignedParticle(Spin spin, ECPublicKey owner)
+	protected SignedParticle(Spin spin, Identity owner)
 	{
 		super(spin);
 		
@@ -44,20 +45,20 @@ public abstract class SignedParticle extends Particle
 		return object;
 	}
 
-	public final ECPublicKey getOwner()
+	public final Identity getOwner()
 	{
 		return this.owner;
 	}
 
-	public final synchronized void sign(ECKeyPair key) throws CryptoException
+	public final synchronized void sign(KeyPair<?, ?, ?> key) throws CryptoException
 	{
-		if (key.getPublicKey().equals(getOwner()) == false)
+		if (key.getIdentity().equals(getOwner()) == false)
 			throw new CryptoException("Attempting to sign particle with key that doesn't match owner");
 
 		this.signature = key.sign(getHash());
 	}
 
-	public final synchronized boolean verify(ECPublicKey key) throws CryptoException
+	public final synchronized boolean verify(PublicKey key) throws CryptoException
 	{
 		if (this.signature == null)
 			throw new CryptoException("Signature is not present");
@@ -65,7 +66,7 @@ public abstract class SignedParticle extends Particle
 		if (getOwner() == null)
 			return false;
 
-		if (key.equals(getOwner()) == false)
+		if (key.getIdentity().equals(getOwner()) == false)
 			return false;
 
 		return key.verify(getHash(), this.signature);
@@ -76,7 +77,7 @@ public abstract class SignedParticle extends Particle
 		return true;
 	}
 	
-	public final synchronized ECSignature getSignature()
+	public final synchronized Signature getSignature()
 	{
 		return this.signature;
 	}

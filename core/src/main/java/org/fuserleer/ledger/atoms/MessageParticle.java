@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.util.Objects;
 
 import org.fuserleer.Universe;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
@@ -30,7 +30,7 @@ public class MessageParticle extends SignedParticle
 	
 	@JsonProperty("recipient")
 	@DsonOutput(Output.ALL)
-	private ECPublicKey recipient;
+	private Identity recipient;
 
 	@JsonProperty("created_at")
 	@DsonOutput(Output.ALL)
@@ -41,7 +41,7 @@ public class MessageParticle extends SignedParticle
 		super();
 	}
 	
-	public MessageParticle(String message, ECPublicKey sender, ECPublicKey recipient, long createdAt)
+	public MessageParticle(String message, Identity sender, Identity recipient, long createdAt)
 	{
 		super(Spin.UP, sender);
 		
@@ -58,7 +58,7 @@ public class MessageParticle extends SignedParticle
 			throw new IllegalArgumentException("Created time "+this.createdAt+" is before genesis time "+Universe.getDefault().getTimestamp());
 	}
 
-	public MessageParticle(String subject, String message, ECPublicKey sender, ECPublicKey recipient, long createdAt)
+	public MessageParticle(String subject, String message, Identity sender, Identity recipient, long createdAt)
 	{
 		super(Spin.UP, sender);
 		
@@ -90,12 +90,12 @@ public class MessageParticle extends SignedParticle
 		return this.message;
 	}
 
-	public ECPublicKey getSender() 
+	public Identity getSender() 
 	{
 		return getOwner();
 	}
 
-	public ECPublicKey getRecipient() 
+	public Identity getRecipient() 
 	{
 		return this.recipient;
 	}

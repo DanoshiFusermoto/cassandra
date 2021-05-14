@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
 
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateAddress;
@@ -43,7 +43,7 @@ public final class HostedFileParticle extends MediaDeclaration
 		super();
 	}
 	
-	public HostedFileParticle(String contentType, String path, byte[] data, ECPublicKey owner) 
+	public HostedFileParticle(String contentType, String path, byte[] data, Identity owner) 
 	{
 		super(contentType, owner);
 		

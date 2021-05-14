@@ -2,13 +2,11 @@ package org.fuserleer.ledger.atoms;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 import org.fuserleer.Universe;
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.SearchResult;
@@ -58,7 +56,7 @@ public final class TokenParticle extends SignedParticle
 		super();
 	}
 	
-	public TokenParticle(UInt256 quantity, Hash token, Action action, Spin spin, ECPublicKey owner)
+	public TokenParticle(UInt256 quantity, Hash token, Action action, Spin spin, Identity owner)
 	{
 		super(spin, owner);
 		
@@ -151,16 +149,17 @@ public final class TokenParticle extends SignedParticle
 		{
 			spendable = spendable.add(this.quantity);
 			
-			// Check if token is embedded in atom
+			// Check if token spec is embedded in atom
 			TokenSpecification tokenSpec = stateMachine.getAtom().getParticle(token);
 			if (tokenSpec == null)
 			{
+				// Not a packed TOKEN/MINT atom ... look for the token if local shard group is responsible for it
 				StateAddress tokenSpecStateAddress = new StateAddress(Particle.class, token);
 				long numShardGroups = stateMachine.getContext().getLedger().numShardGroups();
 				long localShardGroup = ShardMapper.toShardGroup(stateMachine.getContext().getNode().getIdentity(), numShardGroups);
 				long tokenSpecShardGroup = ShardMapper.toShardGroup(tokenSpecStateAddress.get(), numShardGroups);
 				
-				// Local search only.  If not found or invalid, localShardGroup will respond with REJECT.
+				// Search ... if not found or invalid, localShardGroup will respond with REJECT failing the MINT action
 				if (localShardGroup == tokenSpecShardGroup)
 				{
 					// TODO find a more efficient way to do this as it will block ... multi-thread and do in the prepare?

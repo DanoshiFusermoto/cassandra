@@ -3,7 +3,7 @@ package org.fuserleer.ledger.atoms;
 import java.io.IOException;
 import java.util.Objects;
 
-import org.fuserleer.crypto.ECPublicKey;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
@@ -24,7 +24,7 @@ public abstract class MediaDeclaration extends SignedParticle
 		super();
 	}
 
-	MediaDeclaration(String contentType, ECPublicKey owner)
+	MediaDeclaration(String contentType, Identity owner)
 	{
 		super(Spin.UP, owner);
 		

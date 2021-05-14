@@ -3,9 +3,10 @@ package org.fuserleer.crypto;
 import java.util.Objects;
 
 import org.bouncycastle.util.Arrays;
-import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Base58;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
 
 public final class Identity extends Key
 {
@@ -26,7 +27,7 @@ public final class Identity extends Key
 
 	Identity(String identity) throws CryptoException
 	{
-		this(Bytes.fromBase64String(Objects.requireNonNull(identity, "Identity string is null")));
+		this(Base58.fromBase58(Objects.requireNonNull(identity, "Identity string is null")));
 	}
 
 	private Identity(byte[] identity) throws CryptoException 
@@ -41,7 +42,7 @@ public final class Identity extends Key
 		else if (this.prefix == COMPUTE)
 			this.key = ComputeKey.from(Arrays.copyOfRange(identity, 1, identity.length));
 		else
-			throw new IllegalArgumentException("Identity of type "+this.prefix+" is not supported for "+Bytes.toBase64String(identity));
+			throw new IllegalArgumentException("Identity of type "+this.prefix+" is not supported for "+Base58.toBase58(identity));
 	}
 
 	
@@ -80,6 +81,7 @@ public final class Identity extends Key
 		return this.key.canVerify();
 	}
 
+	@JsonValue
 	@Override
 	public byte[] toByteArray()
 	{

@@ -10,7 +10,7 @@ import java.util.Objects;
 
 import org.bouncycastle.math.ec.ECPoint;
 import org.fuserleer.crypto.Hash.Mode;
-import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Base58;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 
@@ -37,7 +37,7 @@ public final class ECPublicKey extends PublicKey
 
 	ECPublicKey(String key) throws CryptoException
 	{
-		this(Bytes.fromBase64String(Objects.requireNonNull(key, "Key string is null")));
+		this(Base58.fromBase58(Objects.requireNonNull(key, "Key string is null")));
 	}
 
 	private ECPublicKey(byte[] key) throws CryptoException 

@@ -6,7 +6,7 @@ import java.util.stream.Collectors;
 
 import org.bouncycastle.util.Arrays;
 import org.fuserleer.crypto.bls.group.G2Point;
-import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Base58;
 import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -31,18 +31,9 @@ public final class BLSPublicKey extends PublicKey
 	{
 		Objects.requireNonNull(key, "Key string is null");
 		Numbers.isZero(key.length(), "Key string is empty");
-		return BLSPublicKey.from(Bytes.fromBase64String(Objects.requireNonNull(key, "Key string is null")));
+		return BLSPublicKey.from(Base58.fromBase58(Objects.requireNonNull(key, "Key string is null")));
 	}
 	
-	// Placeholder for the serializer ID
-/*	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
-	@DsonOutput(Output.ALL)
-	private SerializerDummy serializer = SerializerDummy.DUMMY;
-
-	@JsonProperty("version")
-	@DsonOutput(Output.ALL)
-	private short version = 100;*/
-
 	private byte[] bytes;
 
 	private transient G2Point point;

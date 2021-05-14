@@ -3,7 +3,7 @@ package org.fuserleer.crypto;
 import java.util.Arrays;
 import java.util.Objects;
 
-import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Base58;
 import org.fuserleer.utils.Numbers;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -29,7 +29,7 @@ public final class ComputeKey extends Key
 
 	ComputeKey(String key)
 	{
-		this(Bytes.fromBase64String(Objects.requireNonNull(key, "Key string is null")));
+		this(Base58.fromBase58(Objects.requireNonNull(key, "Key string is null")));
 	}
 
 	private ComputeKey(byte[] key)  

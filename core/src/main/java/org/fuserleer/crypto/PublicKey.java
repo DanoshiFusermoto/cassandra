@@ -1,6 +1,5 @@
 package org.fuserleer.crypto;
 
-import java.util.Arrays;
 import java.util.Objects;
 
 public abstract class PublicKey extends Key
@@ -23,19 +22,4 @@ public abstract class PublicKey extends Key
 	}
 
 	public abstract boolean verify(final byte[] hash, final Signature signature)  throws CryptoException;
-
-	@Override
-	public final boolean equals(Object object) 
-	{
-		if (object == this)
-			return true;
-
-		if (object instanceof PublicKey) 
-		{
-			PublicKey other = (PublicKey) object;
-			return Arrays.equals(other.toByteArray(), toByteArray());
-		}
-		
-		return false;
-	}
 }

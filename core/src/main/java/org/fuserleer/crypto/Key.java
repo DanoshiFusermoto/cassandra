@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.Objects;
 
 import org.fuserleer.crypto.Hash.Mode;
-import org.fuserleer.utils.Bytes;
+import org.fuserleer.utils.Base58;
 import org.fuserleer.utils.Longs;
 
 import com.google.common.primitives.SignedBytes;
@@ -42,6 +42,21 @@ public abstract class Key implements Comparable<Key>
 		return (int) this.hashCode;
 	}
 	
+	@Override
+	public final boolean equals(Object object) 
+	{
+		if (object == this)
+			return true;
+
+		if (object instanceof Key) 
+		{
+			Key other = (Key) object;
+			return Arrays.equals(other.toByteArray(), toByteArray());
+		}
+		
+		return false;
+	}
+	
     public final synchronized Hash asHash()
 	{
     	if (this.hash == null)
@@ -54,7 +69,7 @@ public abstract class Key implements Comparable<Key>
 	@Override
 	public final String toString() 
 	{
-		return Bytes.toBase64String(toByteArray());
+		return Base58.toBase58(toByteArray());
 	}
 
 	@Override

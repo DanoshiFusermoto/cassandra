@@ -12,12 +12,11 @@ import org.apache.commons.cli.Options;
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
 import org.fuserleer.apps.SimpleWallet;
-import org.fuserleer.common.Primitive;
 import org.fuserleer.crypto.ECPublicKey;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.ledger.SearchResult;
 import org.fuserleer.ledger.StateAddress;
-import org.fuserleer.ledger.StateKey;
 import org.fuserleer.ledger.StateSearchQuery;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.Particle;
@@ -81,7 +80,7 @@ public class Tokens extends Function
 		else if (commandLine.hasOption("send") == true)
 		{
 			String[] options = commandLine.getOptionValues("send");
-			ECPublicKey receiver = ECPublicKey.from(options[0]);
+			Identity receiver = Identity.from(options[0]);
 			UInt256 amount = UInt256.from(options[1]);
 			String ISO = options[2];
 

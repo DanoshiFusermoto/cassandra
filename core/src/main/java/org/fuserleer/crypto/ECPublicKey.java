@@ -71,7 +71,11 @@ public final class ECPublicKey extends PublicKey
 		// What are the performance implications?
 	}
 
-
+	public final Identity getIdentity()
+	{
+		return new Identity(Identity.EC, this);
+	}
+	
 	public byte[] toByteArray() 
 	{
 		return this.publicKey;

@@ -80,7 +80,7 @@ public final class ECPrivateKey extends PrivateKey
 		}
 		return true;
 	}
-
+	
 	public byte[] toByteArray()
 	{
 		return this.privateKey;

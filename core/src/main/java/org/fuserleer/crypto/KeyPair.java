@@ -61,6 +61,11 @@ public abstract class KeyPair<P extends PrivateKey, K extends PublicKey, S exten
 
 	public abstract S sign(byte[] hash) throws CryptoException; 
 
+	public final Identity getIdentity()
+	{
+		return this.getPublicKey().getIdentity();
+	}
+
 	@Override
 	public final boolean equals(Object object) 
 	{

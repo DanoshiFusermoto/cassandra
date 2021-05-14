@@ -89,6 +89,11 @@ public final class BLSPublicKey extends PublicKey
   		return new G2Point(this.point);
   	}
   	
+	public final Identity getIdentity()
+	{
+		return new Identity(Identity.BLS, this);
+	}
+
 	@JsonValue
 	@Override
 	public byte[] toByteArray()

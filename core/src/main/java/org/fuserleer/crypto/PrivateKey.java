@@ -2,26 +2,25 @@ package org.fuserleer.crypto;
 
 import java.util.Arrays;
 
-public abstract class PrivateKey
+public abstract class PrivateKey extends Key
 {
-	private Integer hashCode;
-
-	public abstract byte[] toByteArray();
-	
-	public final int length() 
-    {
-        return toByteArray().length;
-    }
-    
 	@Override
-	public final synchronized int hashCode() 
+	public final boolean canSign()
 	{
-		if (this.hashCode == null)
-			this.hashCode = Arrays.hashCode(toByteArray());
-		
-		return (int) this.hashCode;
+		return true;
 	}
 
+	@Override
+	public final boolean canVerify()
+	{
+		return false;
+	}
+
+	public final Identity getIdentity()
+	{
+		throw new UnsupportedOperationException("Private keys do not support identites");
+	}
+	
 	@Override
 	public final boolean equals(Object object) 
 	{
@@ -36,5 +35,4 @@ public abstract class PrivateKey
 		
 		return false;
 	}
-
 }

@@ -82,7 +82,7 @@ public class SimpleWallet implements AutoCloseable
 		this.key = Objects.requireNonNull(key);
 		
 		long searchOffset = 0;
-		AssociationSearchQuery search = new AssociationSearchQuery(key.getPublicKey().asHash(), Particle.class, Order.ASCENDING, 25);
+		AssociationSearchQuery search = new AssociationSearchQuery(key.getIdentity().asHash(), Particle.class, Order.ASCENDING, 25);
 		Future<AssociationSearchResponse> searchResponseFuture;
 		
 		while((searchResponseFuture = this.context.getLedger().get(search, Spin.UP)).get().isEmpty() == false)
@@ -317,7 +317,7 @@ public class SimpleWallet implements AutoCloseable
 		{
 			particles.forEach(tp -> 
 			{
-				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
+				if (tp.getOwner().equals(getIdentity()) == false)
 					return;
 				
 				SimpleWallet.this.particles.put(tp.getHash(), tp);
@@ -478,7 +478,7 @@ public class SimpleWallet implements AutoCloseable
 
 			atom.getParticles(TokenParticle.class).forEach(tp -> 
 			{
-				if (tp.getOwner().equals(SimpleWallet.this.key.getPublicKey()) == false)
+				if (tp.getOwner().equals(getIdentity()) == false)
 					return;
 				
 				if (tp.getSpin().equals(Spin.DOWN) == true)
@@ -506,12 +506,12 @@ public class SimpleWallet implements AutoCloseable
 			{
 				if (p instanceof MessageParticle)
 				{
-					if (((MessageParticle)p).getSender().equals(this.key.getPublicKey()) == false && ((MessageParticle)p).getRecipient().equals(this.key.getPublicKey()) == false)
+					if (((MessageParticle)p).getSender().equals(getIdentity()) == false && ((MessageParticle)p).getRecipient().equals(getIdentity()) == false)
 						return;
 				}
 				else if (p instanceof SignedParticle)
 				{
-					if (((SignedParticle)p).getOwner().equals(this.key.getPublicKey()) == false)
+					if (((SignedParticle)p).getOwner().equals(getIdentity()) == false)
 						return;
 				}
 
@@ -552,12 +552,12 @@ public class SimpleWallet implements AutoCloseable
 			{
 				if (p instanceof MessageParticle)
 				{
-					if (((MessageParticle)p).getSender().equals(this.key.getPublicKey()) == false && ((MessageParticle)p).getRecipient().equals(this.key.getPublicKey()) == false)
+					if (((MessageParticle)p).getSender().equals(getIdentity()) == false && ((MessageParticle)p).getRecipient().equals(getIdentity()) == false)
 						return;
 				}
 				else if (p instanceof SignedParticle)
 				{
-					if (((SignedParticle)p).getOwner().equals(this.key.getPublicKey()) == false)
+					if (((SignedParticle)p).getOwner().equals(getIdentity()) == false)
 						return;
 				}
 				
@@ -590,7 +590,7 @@ public class SimpleWallet implements AutoCloseable
 	
 			atom.getParticles(TokenParticle.class).forEach(tp -> 
 			{
-				if (tp.getOwner().equals(this.key.getPublicKey()) == false)
+				if (tp.getOwner().equals(getIdentity()) == false)
 					return;
 				
 				if (tp.getSpin().equals(Spin.UP) == true && tp.getAction().equals(Action.TRANSFER) == true)
@@ -617,7 +617,7 @@ public class SimpleWallet implements AutoCloseable
 	
 			atom.getParticles(TokenParticle.class).forEach(tp -> 
 			{
-				if (tp.getOwner().equals(this.key.getPublicKey()) == false)
+				if (tp.getOwner().equals(getIdentity()) == false)
 					return;
 				
 				if (tp.getSpin().equals(Spin.UP) == true && tp.getAction().equals(Action.TRANSFER) == true)

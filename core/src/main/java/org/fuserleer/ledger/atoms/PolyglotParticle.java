@@ -31,7 +31,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 @SerializerId2("ledger.particle.polyglot")
-public final class PolyglotParticle extends Particle
+public final class PolyglotParticle extends AutomataParticle
 {
 	public final static int MAX_CODE_SIZE = 65535;
 	
@@ -138,7 +138,17 @@ public final class PolyglotParticle extends Particle
 	}
 
 	@Override
-	public void prepare(final StateMachine stateMachine, final Object ... arguments) throws ValidationException, IOException
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
+	{
+	}
+	
+	@Override
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException
+	{
+	}
+
+	@Override
+	public void prepare(final StateMachine stateMachine, String method, final Object ... arguments) throws ValidationException, IOException
 	{
 		Objects.requireNonNull(stateMachine, "State machine is null");
 		
@@ -198,7 +208,7 @@ public final class PolyglotParticle extends Particle
 	}
 
 	@Override
-	public void execute(final StateMachine stateMachine, final Object ... arguments) throws ValidationException, IOException
+	public void execute(final StateMachine stateMachine, String method, final Object ... arguments) throws ValidationException, IOException
 	{
 		this.context.enter();
 		try

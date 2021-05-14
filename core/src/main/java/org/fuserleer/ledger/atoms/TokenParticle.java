@@ -90,7 +90,7 @@ public final class TokenParticle extends SignedParticle
 	}
 
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		if (this.action == null)
 			throw new ValidationException("Action is null");
@@ -115,7 +115,7 @@ public final class TokenParticle extends SignedParticle
 	}
 	
 	@Override
-	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		Hash token = stateMachine.get("token");
 		if (stateMachine.get("token") == null)

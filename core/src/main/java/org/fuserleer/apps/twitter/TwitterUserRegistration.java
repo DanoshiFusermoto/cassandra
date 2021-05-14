@@ -197,7 +197,7 @@ public class TwitterUserRegistration extends SignedParticle
 	}
 	
 	@Override
-	public void prepare(final StateMachine stateMachine, final Object ... arguments) throws ValidationException, IOException 
+	public void prepare(final StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		Objects.requireNonNull(this.handle, "Handle is null");
 		Numbers.inRange(this.handle.length(), TwitterUserRegistration.MIN_HANDLE_LENGTH, TwitterUserRegistration.MAX_HANDLE_LENGTH, "Handle "+this.handle+" length "+this.handle.length()+" is not in range "+TwitterUserRegistration.MIN_HANDLE_LENGTH+" -> "+TwitterUserRegistration.MAX_HANDLE_LENGTH);
@@ -233,7 +233,7 @@ public class TwitterUserRegistration extends SignedParticle
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(UInt256.from(this.id))), UInt256.from(this.id), Instruction.SET), this);
 		stateMachine.sop(new StateOp(new StateAddress(TwitterUserRegistration.class, Hash.from(this.handle.trim().toLowerCase())), UInt256.from(Hash.from(this.handle.trim().toLowerCase()).toByteArray()), Instruction.SET), this);

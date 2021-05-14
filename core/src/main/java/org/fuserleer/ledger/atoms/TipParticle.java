@@ -55,7 +55,7 @@ public final class TipParticle extends SignedParticle
 	}
 	
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		if (this.tipping.equals(Hash.ZERO) == true)
 			throw new ValidationException("Tipping reference is zero");
@@ -88,14 +88,14 @@ public final class TipParticle extends SignedParticle
 	}
 	
 	@Override
-	public void execute(StateMachine stateMachine, Object... arguments) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		stateMachine.sop(new StateOp(new StateField(this.tipping, "tip_total"), Instruction.SET), this);
 		
 		stateMachine.associate(this.tipping, this);
 		stateMachine.associate(this.transfer, this);
 
-		super.execute(stateMachine, arguments);
+		super.execute(stateMachine);
 	}
 
 	@Override

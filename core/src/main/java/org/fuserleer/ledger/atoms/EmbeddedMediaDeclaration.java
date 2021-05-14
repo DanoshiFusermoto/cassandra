@@ -47,7 +47,7 @@ public final class EmbeddedMediaDeclaration extends MediaDeclaration
 	}
 
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		if (this.data == null)
 			throw new ValidationException("Data is null");

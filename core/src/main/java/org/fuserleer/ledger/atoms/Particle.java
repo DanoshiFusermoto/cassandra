@@ -10,7 +10,7 @@ import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
 import org.fuserleer.common.Primitive;
 import org.fuserleer.exceptions.ValidationException;
-import org.fuserleer.ledger.StateExecutable;
+import org.fuserleer.ledger.StateInstruction;
 import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.Serialization;
@@ -21,7 +21,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 @SerializerId2("ledger.particle")
-public abstract class Particle extends BasicObject implements Primitive, StateExecutable
+public abstract class Particle extends BasicObject implements Primitive, StateInstruction
 {
 	public enum Spin
 	{
@@ -131,13 +131,13 @@ public abstract class Particle extends BasicObject implements Primitive, StateEx
 	@DsonOutput(Output.API)
 	public abstract boolean isConsumable();
 	
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		if (this.spin == null)
 			throw new ValidationException("Spin is null");
 	}
 	
-	public abstract void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException;
+	public abstract void execute(StateMachine stateMachine) throws ValidationException, IOException;
 	
 	public String toString()
 	{

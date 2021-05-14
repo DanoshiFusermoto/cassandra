@@ -300,7 +300,7 @@ public class TweetParticle extends SignedParticle
 	}
 	
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		try
 		{
@@ -336,11 +336,11 @@ public class TweetParticle extends SignedParticle
 		if (this.media != null)
 			this.media.forEach(media -> stateMachine.sop(new StateOp(new StateAddress(Particle.class, media), Instruction.EXISTS), this));
 
-		super.prepare(stateMachine, arguments);
+		super.prepare(stateMachine);
 	}
 	
 	@Override
-	public void execute(StateMachine stateMachine, Object... arguments) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		stateMachine.sop(new StateOp(new StateAddress(TweetParticle.class, this.id), UInt256.from(this.id.toByteArray()), Instruction.SET), this);
 		stateMachine.sop(new StateOp(new StateField(this.id, "replies"), UInt256.ZERO, Instruction.SET), this);

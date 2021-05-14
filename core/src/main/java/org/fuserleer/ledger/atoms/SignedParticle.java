@@ -88,16 +88,14 @@ public abstract class SignedParticle extends Particle
 	}
 	
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		if (this.owner == null)
 			throw new ValidationException("Owner is null");
-		
-		super.prepare(stateMachine);
 	}
 	
 	@Override
-	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		stateMachine.associate(getOwner().asHash(), this);
 	}

@@ -95,7 +95,7 @@ public final class HostedFileParticle extends MediaDeclaration
 	}
 
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		if (this.path == null)
 			throw new ValidationException("Path is null");
@@ -118,15 +118,15 @@ public final class HostedFileParticle extends MediaDeclaration
 		stateMachine.sop(new StateOp(new StateAddress(HostedFileParticle.class, Hash.from(this.path.toLowerCase())), Instruction.GET), this);
 		stateMachine.sop(new StateOp(new StateAddress(HostedFileParticle.class, Hash.from(this.path.toLowerCase())), Instruction.NOT_EXISTS), this);
 		
-		super.prepare(stateMachine, arguments);
+		super.prepare(stateMachine);
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		stateMachine.sop(new StateOp(new StateAddress(HostedFileParticle.class, Hash.from(this.path.toLowerCase())), UInt256.from(getHash().toByteArray()), Instruction.SET), this);
 		
-		super.execute(stateMachine, arguments);
+		super.execute(stateMachine);
 	}
 	
 	@Override

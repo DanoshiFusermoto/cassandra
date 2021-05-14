@@ -106,7 +106,7 @@ public class MessageParticle extends SignedParticle
 	}
 
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		if (this.message == null)
 			throw new ValidationException("Message is null");
@@ -125,9 +125,9 @@ public class MessageParticle extends SignedParticle
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
 	{
-		super.execute(stateMachine, arguments);
+		super.execute(stateMachine);
 
 		stateMachine.associate(getRecipient().asHash(), this);
 	}

@@ -62,7 +62,7 @@ public final class TokenSpecification extends SignedParticle
 	}
 	
 	@Override
-	public void prepare(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException 
+	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
 	{
 		// TODO not sure if nulls in the prepare sections should be caught 
 		// and thrown as a ValidatorException, or as a NullPointerException ... decide
@@ -90,12 +90,12 @@ public final class TokenSpecification extends SignedParticle
 	}
 
 	@Override
-	public void execute(StateMachine stateMachine, Object ... arguments) throws ValidationException, IOException
+	public void execute(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		stateMachine.sop(new StateOp(new StateAddress(TokenSpecification.class, Hash.from(this.ISO.toLowerCase())), UInt256.from(getHash().toByteArray()), Instruction.SET), this);
 		stateMachine.sop(new StateOp(new StateField(Hash.from(this.ISO.toLowerCase()), "minted"), UInt256.ZERO, Instruction.SET), this);
 		
-		super.execute(stateMachine, arguments);
+		super.execute(stateMachine);
 	}
 	
 	@Override

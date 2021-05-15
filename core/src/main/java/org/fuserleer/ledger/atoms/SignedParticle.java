@@ -1,26 +1,17 @@
 package org.fuserleer.ledger.atoms;
 
-import java.io.IOException;
-import java.util.Objects;
-
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.KeyPair;
 import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.crypto.Signature;
 import org.fuserleer.crypto.Identity;
-import org.fuserleer.exceptions.ValidationException;
-import org.fuserleer.ledger.StateMachine;
 import org.fuserleer.serialization.DsonOutput;
 import org.fuserleer.serialization.DsonOutput.Output;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-public abstract class SignedParticle extends Particle
+public abstract class SignedParticle extends OwnedParticle
 {
-	@JsonProperty("owner")
-	@DsonOutput(Output.ALL)
-	private Identity owner;
-
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
 	private Signature signature;
@@ -32,9 +23,7 @@ public abstract class SignedParticle extends Particle
 	
 	protected SignedParticle(Spin spin, Identity owner)
 	{
-		super(spin);
-		
-		this.owner = Objects.requireNonNull(owner);
+		super(spin, owner);
 	}
 	
 	@Override
@@ -43,11 +32,6 @@ public abstract class SignedParticle extends Particle
 		SignedParticle object = (SignedParticle) super.clone();
 		object.signature = null;
 		return object;
-	}
-
-	public final Identity getOwner()
-	{
-		return this.owner;
 	}
 
 	public final synchronized void sign(KeyPair<?, ?, ?> key) throws CryptoException
@@ -80,23 +64,5 @@ public abstract class SignedParticle extends Particle
 	public final synchronized Signature getSignature()
 	{
 		return this.signature;
-	}
-	
-	public String toString()
-	{
-		return super.toString()+" "+this.owner;
-	}
-	
-	@Override
-	public void prepare(StateMachine stateMachine) throws ValidationException, IOException 
-	{
-		if (this.owner == null)
-			throw new ValidationException("Owner is null");
-	}
-	
-	@Override
-	public void execute(StateMachine stateMachine) throws ValidationException, IOException 
-	{
-		stateMachine.associate(getOwner().asHash(), this);
 	}
 }

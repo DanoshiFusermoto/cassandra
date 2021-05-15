@@ -60,11 +60,15 @@ public abstract class Key implements Comparable<Key>
     public final synchronized Hash asHash()
 	{
     	if (this.hash == null)
-    		// Trim off the type prefix and return the raw X coordinate
-    		this.hash = new Hash(toByteArray(), Mode.STANDARD);
+    		this.hash = computeHash();
     	
     	return this.hash;
 	}
+    
+    Hash computeHash()
+    {
+		return new Hash(toByteArray(), Mode.STANDARD);
+    }
 
 	@Override
 	public final String toString() 

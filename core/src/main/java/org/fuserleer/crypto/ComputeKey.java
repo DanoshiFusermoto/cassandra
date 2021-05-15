@@ -45,6 +45,12 @@ public final class ComputeKey extends Key
 	}
 	
 	@Override
+	Hash computeHash()
+	{
+		return new Hash(this.bytes);
+	}
+	
+	@Override
 	public boolean canSign() 
 	{
 		return false;

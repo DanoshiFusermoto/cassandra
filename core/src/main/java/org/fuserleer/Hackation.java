@@ -66,12 +66,12 @@ public class Hackation
 													   new org.fuserleer.console.Serializer(), new org.fuserleer.console.System(), new org.fuserleer.console.Validators(),
 												   	   new org.fuserleer.console.Atoms(), new org.fuserleer.console.Spam(), //new org.fuserleer.console.Twitter(), 
 												   	   new org.fuserleer.console.Wallet(), new org.fuserleer.console.Tokens(), new org.fuserleer.console.Messages(),
-												   	   new org.fuserleer.console.Hosting());
+												   	   new org.fuserleer.console.Hosting(), new org.fuserleer.console.Automata());
 				else
 					new Console(System.in, System.out, new org.fuserleer.console.Ledger(), new org.fuserleer.console.Network(), new org.fuserleer.console.Atoms(), 
 													   new org.fuserleer.console.Serializer(), new org.fuserleer.console.System(), new org.fuserleer.console.Validators(), 
 													   new org.fuserleer.console.Wallet(), new org.fuserleer.console.Tokens(), new org.fuserleer.console.Messages(),
-													   new org.fuserleer.console.Hosting());
+													   new org.fuserleer.console.Hosting(), new org.fuserleer.console.Automata());
 			}
 
 		}

@@ -21,12 +21,15 @@ import org.fuserleer.Universe;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
 import org.fuserleer.crypto.Hash.Mode;
+import org.fuserleer.crypto.Identity;
 import org.fuserleer.crypto.MerkleTree;
+import org.fuserleer.crypto.PublicKey;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.CommitOperation.Type;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.OwnedParticle;
 import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.SignedParticle;
@@ -55,6 +58,7 @@ public final class StateMachine // implements LedgerInterface
 
 	private final Context 			context;
 	private final Atom 				atom;
+	
 	private final Map<Hash, Path> 	statePaths;
 	private final Multimap<Hash, Path> 	associationPaths;
 	private final Map<Hash, Optional<UInt256>> stateInputs;
@@ -303,6 +307,14 @@ public final class StateMachine // implements LedgerInterface
 		{
 			for (Particle particle : this.atom.getParticles())
 			{
+				// Illegal to reference automata state or declare instructions against it in atoms
+				if (particle instanceof OwnedParticle)
+				{
+					OwnedParticle ownedParticle = (OwnedParticle)particle;
+					if (ownedParticle.getOwner().getPrefix() == Identity.COMPUTE)
+						throw new ValidationException("Atom references automata state in particle "+particle.getHash()+" owned by "+ownedParticle.getOwner());
+				}
+				
 				Set<StateOp> stateOps = new LinkedHashSet<StateOp>();
 				if (particle.getSpin().equals(Spin.UP) == true)
 				{
@@ -346,7 +358,10 @@ public final class StateMachine // implements LedgerInterface
 					try
 					{
 						SignedParticle signedParticle = (SignedParticle) particle;
-						if (signedParticle.verify(signedParticle.getOwner()) == false)
+						if (signedParticle.getOwner().canVerify() == false)
+							throw new ValidationException("Owner identity "+signedParticle.getOwner()+" is not a public key Signature for "+particle.toString()+" in atom "+atom.getHash());
+						
+						if (signedParticle.verify((PublicKey)signedParticle.getOwner().getKey()) == false)
 							throw new ValidationException("Signature for "+particle.toString()+" in atom "+atom.getHash()+" did not verify with public key "+signedParticle.getOwner());
 					}
 					catch (CryptoException cex)
@@ -502,7 +517,8 @@ public final class StateMachine // implements LedgerInterface
 				if (stateMachineLog.hasLevel(Logging.DEBUG) == true)
 					stateMachineLog.debug(this.context.getName()+": Executing particle "+particle);
 	
-				particle.execute(this);
+				if (particle instanceof StateInstruction)
+					particle.execute(this);
 			}
 			
 			// Create an output merkle

@@ -63,7 +63,7 @@ public final class PolyglotParticle extends AutomataParticle
 	
 	private PolyglotParticle()
 	{
-		super(Spin.UP);
+		super();
 
 		this.fields = new TreeMap<>();
 	}

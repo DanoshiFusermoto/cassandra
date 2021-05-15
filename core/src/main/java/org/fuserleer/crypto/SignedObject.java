@@ -14,7 +14,7 @@ import org.fuserleer.serialization.SerializerId2;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("crypto.signed_object")
-public final class SignedObject<T>
+public final class SignedObject<K extends PublicKey, T>
 {
 	// Placeholder for the serializer ID
 	@JsonProperty(SerializerConstants.SERIALIZER_TYPE_NAME)
@@ -27,7 +27,7 @@ public final class SignedObject<T>
 	
 	@JsonProperty("owner")
 	@DsonOutput(Output.ALL)
-	private PublicKey owner;
+	private K owner;
 
 	@JsonProperty("signature")
 	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
@@ -39,7 +39,7 @@ public final class SignedObject<T>
 		// For serializer
 	}
 	
-	public SignedObject(final T object, final PublicKey owner)
+	public SignedObject(final T object, final K owner)
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
 		
@@ -48,7 +48,7 @@ public final class SignedObject<T>
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
 	}
 
-	public SignedObject(final T object, final PublicKey owner, final Signature signature) throws CryptoException
+	public SignedObject(final T object, final K owner, final Signature signature) throws CryptoException
 	{
 		this.object = Objects.requireNonNull(object, "Object is null");
 		this.owner = Objects.requireNonNull(owner, "Owner is null");
@@ -72,7 +72,7 @@ public final class SignedObject<T>
 		return this.object;
 	}
 
-	public final PublicKey getOwner()
+	public final K getOwner()
 	{
 		return this.owner;
 	}
@@ -93,13 +93,13 @@ public final class SignedObject<T>
 		this.signature = key.sign(objectHash);
 	}
 
-	public final synchronized boolean verify(final PublicKey key) throws CryptoException, SerializationException
+	public final synchronized boolean verify(final K key) throws CryptoException, SerializationException
 	{
 		Objects.requireNonNull(key, "Verification key is null");
 		
 		if (this.signature == null)
 			throw new CryptoException("Signature is not present");
-		
+
 		if (getOwner() == null)
 			return false;
 

@@ -6,6 +6,7 @@ import org.apache.commons.cli.DefaultParser;
 import org.apache.commons.cli.Options;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.fuserleer.crypto.KeyPair;
+import org.fuserleer.apps.SimpleIncrementingAutomata;
 import org.fuserleer.crypto.BLSKeyPair;
 import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.ECKeyPair;
@@ -14,6 +15,7 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.Block;
 import org.fuserleer.ledger.ShardMapper;
 import org.fuserleer.ledger.atoms.Atom;
+import org.fuserleer.ledger.atoms.ExecuteAutomataParticle;
 import org.fuserleer.ledger.atoms.Particle.Spin;
 import org.fuserleer.ledger.atoms.TokenSpecification;
 import org.fuserleer.ledger.atoms.TokenParticle;
@@ -167,7 +169,7 @@ public final class GenerateUniverses
 		mintParticle.sign(this.universeKey);
 		final TokenParticle transferParticle = new TokenParticle(UInt256.from(UInt128.HIGH_BIT), tokenSpecParticle.getHash(), Action.TRANSFER, Spin.UP, this.universeKey.getIdentity());
 		mintParticle.sign(this.universeKey);
-
+		
 		// TODo want to actually save this or something?
 		final BLSKeyPair ephemeralValidator = new BLSKeyPair();
 		final List<Atom> atoms = Collections.singletonList(new Atom(tokenSpecParticle, mintParticle, transferParticle));

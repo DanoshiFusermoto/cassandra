@@ -131,6 +131,13 @@ public abstract class Particle extends BasicObject implements Primitive, StateIn
 	@DsonOutput(Output.API)
 	public abstract boolean isConsumable();
 	
+	@JsonProperty("ephemeral")
+	@DsonOutput(Output.API)
+	public boolean isEphemeral()
+	{
+		return true;
+	}
+
 	public void prepare(StateMachine stateMachine) throws ValidationException, IOException
 	{
 		if (this.spin == null)

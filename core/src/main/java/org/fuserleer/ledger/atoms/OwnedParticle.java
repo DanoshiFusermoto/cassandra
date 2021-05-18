@@ -29,6 +29,12 @@ public abstract class OwnedParticle extends Particle
 		this.owner = Objects.requireNonNull(owner);
 	}
 	
+	@Override
+	public final boolean isEphemeral()
+	{
+		return false;
+	}
+
 	public final Identity getOwner()
 	{
 		return this.owner;

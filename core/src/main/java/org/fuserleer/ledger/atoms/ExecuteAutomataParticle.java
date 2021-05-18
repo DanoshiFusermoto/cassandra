@@ -61,7 +61,7 @@ public final class ExecuteAutomataParticle extends Particle
 			this.arguments = Collections.emptyList();
 		else
 		{
-			Numbers.lessThan(arguments.length, 8, "Too many arguments");
+			Numbers.greaterThan(arguments.length, 8, "Too many arguments");
 			this.arguments = Arrays.asList(arguments);
 		}
 	}
@@ -105,7 +105,7 @@ public final class ExecuteAutomataParticle extends Particle
 		if (this.arguments != null && this.arguments.size() > 8)
 			throw new ValidationException("Too many arguments");
 		
-		if (stateMachine.getAtom().hasParticle(this.identity.getKey().asHash()) == false)
+		if (stateMachine.getPendingAtom().getAtom().hasParticle(this.identity.getKey().asHash()) == false)
 		{
 			// TODO will need proper provisioning of unknown automata here
 			Future<SearchResult> automataSearchResultFuture = stateMachine.getContext().getLedger().get(new StateSearchQuery(new StateAddress(Particle.class, this.identity.getKey().asHash()), Particle.class));
@@ -125,7 +125,7 @@ public final class ExecuteAutomataParticle extends Particle
 			this.automata = automataSearchResult.getPrimitive();
 		}
 		else
-			this.automata = stateMachine.getAtom().getParticle(this.identity.getKey().asHash());
+			this.automata = stateMachine.getPendingAtom().getAtom().getParticle(this.identity.getKey().asHash());
 			
 		this.automata.prepare(stateMachine, this.method, this.arguments == null ? null : this.arguments.toArray());
 		

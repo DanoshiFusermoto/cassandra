@@ -20,4 +20,10 @@ public abstract class AutomataParticle extends SignedParticle implements StateAu
 	{
 		return new Identity(Identity.COMPUTE, ComputeKey.from(getHash().toByteArray()));
 	}
+	
+	@Override
+	public boolean isConsumable()
+	{
+		return false;
+	}
 }

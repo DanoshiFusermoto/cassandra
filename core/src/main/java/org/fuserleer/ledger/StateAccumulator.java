@@ -204,6 +204,43 @@ public final class StateAccumulator implements LedgerProvider
 		}
 	}
 	
+	void lock(final PendingAtom pendingAtom, final Collection<StateOp> stateOps) throws StateLockedException
+	{
+		Objects.requireNonNull(pendingAtom, "Pending atom is null");
+		
+		this.lock.lock();
+		try
+		{
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Locking state "+stateOps+" in "+pendingAtom.getHash());
+
+			PendingAtom locked = this.pending.get(pendingAtom.getHash()); 
+			if (locked == null)
+				throw new IllegalStateException("Atom "+pendingAtom.getHash()+" is already not pending and locked");
+			
+			for (StateOp stateOp : stateOps)
+			{
+				if (lockable(stateOp.key(), pendingAtom, stateOp.ins().exclusive()) == false)
+					throw new StateLockedException(stateOp.key(), pendingAtom.getHash());
+			}
+
+			for (StateOp stateOp : stateOps)
+			{
+				if (stateOp.ins().exclusive() == true)
+					this.exclusive.put(stateOp.key().get(), pendingAtom);
+				else
+					this.nonexclusive.put(stateOp.key().get(), pendingAtom);
+	
+				if (stateLog.hasLevel(Logging.DEBUG) == true)
+					stateLog.debug(this.context.getName()+": "+this.name+" Locked state "+stateOp+" "+(stateOp.ins().exclusive() == true ? "exclusively":"non-exclusively")+" via "+pendingAtom.getHash());
+			}
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
 	void unlock(final Collection<PendingAtom> pendingAtoms) throws StateLockedException
 	{
 		Objects.requireNonNull(pendingAtoms, "Pending atoms is null");

@@ -448,7 +448,8 @@ public final class Ledger implements Service, LedgerInterface
 				return;
 			
 			ledgerLog.error(Ledger.this.context.getName()+": Atom "+event.getAtom().getHash()+" aborted", event.getException());
-			Ledger.this.stateAccumulator.unlock(event.getPendingAtom());
+			if (event.getPendingAtom().getStatus().greaterThan(CommitStatus.PREPARED) == true)
+				Ledger.this.stateAccumulator.unlock(event.getPendingAtom());
 		}
 	};
 	

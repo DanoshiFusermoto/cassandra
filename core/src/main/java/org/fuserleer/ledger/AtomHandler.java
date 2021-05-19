@@ -29,11 +29,13 @@ import org.fuserleer.exceptions.TerminationException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.executors.Executable;
 import org.fuserleer.executors.Executor;
+import org.fuserleer.ledger.AtomPool.AtomVoteStatus;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.LedgerStore.SyncInventoryType;
 import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
+import org.fuserleer.ledger.atoms.AutomataExtension;
 import org.fuserleer.ledger.events.AtomPositiveCommitEvent;
 import org.fuserleer.ledger.events.AtomCommitTimeoutEvent;
 import org.fuserleer.ledger.events.AtomAcceptedEvent;
@@ -42,7 +44,6 @@ import org.fuserleer.ledger.events.AtomExceptionEvent;
 import org.fuserleer.ledger.events.AtomPersistedEvent;
 import org.fuserleer.ledger.events.AtomNegativeCommitEvent;
 import org.fuserleer.ledger.events.AtomUnpreparedTimeoutEvent;
-import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
 import org.fuserleer.ledger.messages.SyncAcquiredMessage;
@@ -59,6 +60,7 @@ import org.fuserleer.node.Node;
 import org.fuserleer.time.Time;
 
 import com.google.common.eventbus.Subscribe;
+import com.sleepycat.je.OperationStatus;
 
 public class AtomHandler implements Service
 {
@@ -67,7 +69,7 @@ public class AtomHandler implements Service
 	static
 	{
 //		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.INFO | Logging.WARN);
-//		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
+		atomsLog.setLevels(Logging.ERROR | Logging.FATAL | Logging.WARN);
 //		atomsLog.setLevels(Logging.ERROR | Logging.FATAL);
 	}
 
@@ -76,6 +78,7 @@ public class AtomHandler implements Service
 	private final Map<Hash, PendingAtom> pendingAtoms = Collections.synchronizedMap(new HashMap<Hash, PendingAtom>());
 	private final Map<Hash, Long> timedout = Collections.synchronizedMap(new HashMap<Hash, Long>());
 	private final MappedBlockingQueue<Hash, Atom> atomQueue;
+	private final MappedBlockingQueue<Hash, AutomataExtension> automataExtQueue;
 
 	private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
 
@@ -107,6 +110,7 @@ public class AtomHandler implements Service
 							final Collection<Long> shardGroups;
 							final long numShardGroups = AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight());
 							final long localShardGroup = ShardMapper.toShardGroup(AtomHandler.this.context.getNode().getIdentity(), numShardGroups);
+							boolean hasAutomata = false;
 							AtomHandler.this.lock.writeLock().lock();
 							try
 							{
@@ -128,11 +132,18 @@ public class AtomHandler implements Service
 									if (pendingAtom.getStatus().equals(CommitStatus.NONE))
 										AtomHandler.this.context.getLedger().getLedgerStore().store(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.getAtom());  // TODO handle failure
 	
-									pendingAtom.prepare();
+									// FIXME quick hack to test automata
+									hasAutomata = !pendingAtom.getAtom().getAutomata().isEmpty();
+									if (hasAutomata)
+										pendingAtom.getAtom().clearAutomata();
 									
-				                	shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
-				                	if (shardGroups.contains(localShardGroup) == false)
-				                		AtomHandler.this.pendingAtoms.remove(pendingAtom.getHash(), pendingAtom);
+									pendingAtom.prepare();
+									shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
+									if (hasAutomata)
+										shardGroups.add(localShardGroup);
+									
+									if (shardGroups.contains(localShardGroup) == false)
+										AtomHandler.this.pendingAtoms.remove(pendingAtom.getHash(), pendingAtom);
 								}
 								catch (Exception ex)
 								{
@@ -147,7 +158,7 @@ public class AtomHandler implements Service
 			                	AtomHandler.this.lock.writeLock().unlock();
 							}
 							
-		                	if (shardGroups.contains(localShardGroup) == true)
+		                	if (hasAutomata == true || shardGroups.contains(localShardGroup) == true)
 		                		AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(pendingAtom));
 
 		                	AtomHandler.this.context.getNetwork().getGossipHandler().broadcast(pendingAtom.getAtom(), shardGroups);
@@ -157,6 +168,91 @@ public class AtomHandler implements Service
 					{
 						// DO NOTHING //
 						continue;
+					}
+
+					Entry<Hash, AutomataExtension> automataExt = AtomHandler.this.automataExtQueue.peek();
+					if (automataExt != null)
+					{
+						if (atomsLog.hasLevel(Logging.DEBUG))
+							atomsLog.debug(AtomHandler.this.context.getName()+": Verifying automata extension "+automataExt.getValue().getHash()+" for atom "+automataExt.getValue().getAtom().getHash());
+
+						final PendingAtom pendingAtom;
+						final Collection<Long> shardGroups;
+						final long numShardGroups = AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight());
+						final long localShardGroup = ShardMapper.toShardGroup(AtomHandler.this.context.getNode().getIdentity(), numShardGroups);
+						AtomHandler.this.lock.writeLock().lock();
+						try
+						{
+							OperationStatus status = AtomHandler.this.context.getLedger().getLedgerStore().store(AtomHandler.this.context.getLedger().getHead().getHeight(), automataExt.getValue());
+							if (status.equals(OperationStatus.SUCCESS) == false)
+								atomsLog.error(AtomHandler.this.context.getName()+": Error storing automata extension for atom "+automataExt.getValue().getAtom().getHash()+" due to "+status);
+
+							pendingAtom = AtomHandler.this.pendingAtoms.computeIfAbsent(automataExt.getValue().getAtom().getHash(), (k) -> PendingAtom.create(AtomHandler.this.context, automataExt.getValue().getAtom()));
+							try
+							{
+								if (pendingAtom.getStatus().equals(CommitStatus.NONE) == false)
+								{
+									atomsLog.warn(AtomHandler.this.context.getName()+": Automata ext atom "+automataExt.getValue().getHash()+" is already pending with state "+pendingAtom.getStatus());
+									continue;
+								}
+								
+								if (pendingAtom.getAtom() == null)
+									pendingAtom.setAtom(automataExt.getValue().getAtom());
+								
+								shardGroups = ShardMapper.toShardGroups(automataExt.getValue().getShards(), numShardGroups);
+								if (shardGroups.contains(localShardGroup) == false)
+								{
+									AtomHandler.this.pendingAtoms.remove(pendingAtom.getHash(), pendingAtom);
+									atomsLog.error(AtomHandler.this.context.getName()+": Automata ext for atom "+automataExt.getValue().getHash()+" does not intersect with local shard group "+localShardGroup);
+									continue;
+								}
+
+								if (pendingAtom.getStatus().equals(CommitStatus.NONE))
+									AtomHandler.this.context.getLedger().getLedgerStore().store(AtomHandler.this.context.getLedger().getHead().getHeight(), pendingAtom.getAtom());  // TODO handle failure
+
+								pendingAtom.prepare(automataExt.getValue());
+								shardGroups.addAll(ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups));
+							}
+							catch (Exception ex)
+							{
+								atomsLog.error(AtomHandler.this.context.getName()+": Error processing automata atom extension for "+automataExt.getValue().getHash(), ex);
+								AtomHandler.this.context.getEvents().post(new AtomExceptionEvent(pendingAtom, ex));
+								continue;
+							}
+						}
+						finally
+						{
+		                	AtomHandler.this.automataExtQueue.remove(automataExt.getKey());
+		                	AtomHandler.this.lock.writeLock().unlock();
+						}
+
+						AtomHandler.this.context.getEvents().post(new AtomPersistedEvent(pendingAtom));
+	                	AtomHandler.this.context.getNetwork().getGossipHandler().broadcast(automataExt.getValue(), Collections.singleton(localShardGroup));
+	                	
+	                	// TODO temporary, should be pushed into queue over in AtomPool
+	                	for (AtomVote atomVote : automataExt.getValue().getVotes())
+	                	{
+							AtomVoteStatus status = AtomHandler.this.context.getLedger().getAtomPool().process(atomVote); 
+							if (status.equals(AtomVoteStatus.SUCCESS) == true)
+							{
+								if (atomsLog.hasLevel(Logging.DEBUG) == true)
+									atomsLog.debug(AtomHandler.this.context.getName()+":  Processed automata extension atom vote "+atomVote.getHash()+" for atom "+atomVote.getAtom()+" by "+atomVote.getOwner());
+							}
+							else if (status.equals(AtomVoteStatus.SKIPPED) == true)
+							{
+								if (atomsLog.hasLevel(Logging.DEBUG) == true)
+									atomsLog.debug(AtomHandler.this.context.getName()+":  Processing of automata extension atom vote "+atomVote.getHash()+" was skipped for atom "+atomVote.getAtom()+" by "+atomVote.getOwner());
+							}
+							else
+								atomsLog.warn(AtomHandler.this.context.getName()+": Processing of automata extension atom vote "+atomVote.getHash()+" failed for atom "+atomVote.getAtom()+" by "+atomVote.getOwner());
+	                	}
+	                	
+	                	// TODO temporary, should be processed in StateHandler
+	                	for (StateInput stateInput : automataExt.getValue().getInputs())
+	                	{
+				    		if (AtomHandler.this.context.getLedger().getLedgerStore().store(AtomHandler.this.context.getLedger().getHead().getHeight(), stateInput).equals(OperationStatus.SUCCESS) == false)
+								atomsLog.warn(AtomHandler.this.context.getName()+": Already stored automata extension state input "+stateInput.getKey()+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock());
+	                	}
 					}
 				}
 			}
@@ -172,11 +268,13 @@ public class AtomHandler implements Service
 	{
 		this.context = Objects.requireNonNull(context);
 		this.atomQueue = new MappedBlockingQueue<Hash, Atom>(this.context.getConfiguration().get("ledger.atom.queue", 1<<16));
+		this.automataExtQueue = new MappedBlockingQueue<Hash, AutomataExtension>(this.context.getConfiguration().get("ledger.atom.automata.queue", 1<<10));
 	}
 
 	@Override
 	public void start() throws StartupException 
 	{
+		// ATOMS //
 		this.context.getNetwork().getGossipHandler().register(Atom.class, new GossipFilter(this.context) 
 		{
 			@Override
@@ -226,7 +324,11 @@ public class AtomHandler implements Service
 				Set<Atom> fetched = new HashSet<Atom>();
 				for (Hash item : items)
 				{
-					Atom atom = AtomHandler.this.atomQueue.get(item);
+					Atom atom = null;
+					if (AtomHandler.this.pendingAtoms.containsKey(item) == true)
+						atom = AtomHandler.this.pendingAtoms.get(item).getAtom();
+					if (atom == null)
+						atom = AtomHandler.this.atomQueue.get(item);
 					if (atom == null)
 						atom = AtomHandler.this.context.getLedger().getLedgerStore().get(item, Atom.class);
 
@@ -238,6 +340,68 @@ public class AtomHandler implements Service
 					}
 					
 					fetched.add(atom);
+				}
+				return fetched;
+			}
+		});
+		
+		// AUTOMATA EXTENSIONS //
+		this.context.getNetwork().getGossipHandler().register(AutomataExtension.class, new GossipFilter(this.context) 
+		{
+			@Override
+			public Set<Long> filter(Primitive object) throws IOException
+			{
+				AutomataExtension automataExt = (AutomataExtension)object;
+				return ShardMapper.toShardGroups(automataExt.getShards(), AtomHandler.this.context.getLedger().numShardGroups(AtomHandler.this.context.getLedger().getHead().getHeight()));
+			}
+		});
+
+		this.context.getNetwork().getGossipHandler().register(AutomataExtension.class, new GossipInventory() 
+		{
+			@Override
+			public Collection<Hash> required(final Class<? extends Primitive> type, final Collection<Hash> items) throws IOException
+			{
+				Set<Hash> required = new HashSet<Hash>();
+				for (Hash item : items)
+				{
+					if (AtomHandler.this.context.getLedger().getLedgerStore().has(item) == true)
+						continue;
+				
+					required.add(item);
+				}
+				return required;
+			}
+		});
+
+		this.context.getNetwork().getGossipHandler().register(AutomataExtension.class, new GossipReceiver() 
+		{
+			@Override
+			public void receive(final Primitive object) throws InterruptedException
+			{
+				AtomHandler.this.automataExtQueue.putIfAbsent(object.getHash(), (AutomataExtension)object);
+			}
+		});
+
+		this.context.getNetwork().getGossipHandler().register(AutomataExtension.class, new GossipFetcher() 
+		{
+			@Override
+			public Collection<AutomataExtension> fetch(final Collection<Hash> items) throws IOException
+			{
+				Set<AutomataExtension> fetched = new HashSet<AutomataExtension>();
+				for (Hash item : items)
+				{
+					AutomataExtension automataExt = AtomHandler.this.automataExtQueue.get(item); 
+					if (automataExt == null)
+						automataExt = AtomHandler.this.context.getLedger().getLedgerStore().get(item, AutomataExtension.class);
+
+					if (automataExt == null)
+					{
+						if (atomsLog.hasLevel(Logging.DEBUG) == true)
+							atomsLog.debug(AtomHandler.this.context.getName()+": Requested automata extension "+item+" not found");
+						continue;
+					}
+					
+					fetched.add(automataExt);
 				}
 				return fetched;
 			}
@@ -265,19 +429,38 @@ public class AtomHandler implements Service
 							// TODO will cause problems when pool is BIG
 							Set<PendingAtom> pendingAtoms = new HashSet<PendingAtom>(AtomHandler.this.pendingAtoms.values());
 							final Set<Hash> pendingAtomInventory = new LinkedHashSet<Hash>();
+							final Set<Hash> automataExtensionInventory = new LinkedHashSet<Hash>();
 							
 							for (PendingAtom pendingAtom : pendingAtoms)
 							{
 								if (pendingAtom.getStatus().lessThan(CommitStatus.PREPARED) == true)
 									continue;
 								
-			                	Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
+								if (pendingAtom.getAutomataExtension() != null)
+									continue;
+
+								Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
 			                	if (shardGroups.contains(localShardGroup) == false)
 			                		continue;
 
 			                	pendingAtomInventory.add(pendingAtom.getHash());
 							}
 							
+							for (PendingAtom pendingAtom : pendingAtoms)
+							{
+								if (pendingAtom.getStatus().lessThan(CommitStatus.PREPARED) == true)
+									continue;
+								
+								if (pendingAtom.getAutomataExtension() == null)
+									continue;
+								
+			                	Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getAutomataExtension().getShards(), numShardGroups);
+			                	if (shardGroups.contains(localShardGroup) == false)
+			                		continue;
+
+			                	automataExtensionInventory.add(pendingAtom.getHash());
+							}
+
 							long height = AtomHandler.this.context.getLedger().getHead().getHeight();
 							while (height >= Math.max(0, syncAcquiredMessage.getHead().getHeight() - 1))
 							{
@@ -293,6 +476,16 @@ public class AtomHandler implements Service
 								SyncInventoryMessage pendingAtomInventoryMessage = new SyncInventoryMessage(pendingAtomInventory, 0, Math.min(SyncInventoryMessage.MAX_ITEMS, pendingAtomInventory.size()), Atom.class);
 								AtomHandler.this.context.getNetwork().getMessaging().send(pendingAtomInventoryMessage, peer);
 								pendingAtomInventory.removeAll(pendingAtomInventoryMessage.getItems());
+							}
+
+							if (atomsLog.hasLevel(Logging.DEBUG) == true)
+								atomsLog.debug(AtomHandler.this.context.getName()+": Broadcasting "+automataExtensionInventory.size()+" / "+automataExtensionInventory+" atom automata extensions to "+peer);
+
+							while(automataExtensionInventory.isEmpty() == false)
+							{
+								SyncInventoryMessage automataExtensionInventoryMessage = new SyncInventoryMessage(automataExtensionInventory, 0, Math.min(SyncInventoryMessage.MAX_ITEMS, automataExtensionInventory.size()), AutomataExtension.class);
+								AtomHandler.this.context.getNetwork().getMessaging().send(automataExtensionInventoryMessage, peer);
+								automataExtensionInventory.removeAll(automataExtensionInventoryMessage.getItems());
 							}
 						}
 						catch (Exception ex)

@@ -14,7 +14,7 @@ import org.fuserleer.utils.UInt256;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 @SerializerId2("ledger.state.inputs")
-class StateInput implements Primitive
+public class StateInput implements Primitive, Comparable<StateInput>
 {
 	static Hash getHash(final Hash atom, final StateKey<?, ?> key)
 	{
@@ -48,7 +48,7 @@ class StateInput implements Primitive
 		// FOR SERIALIZER
 	}
 	
-	StateInput(final Hash atom, final StateKey<?, ?> key, final UInt256 value)
+	public StateInput(final Hash atom, final StateKey<?, ?> key, final UInt256 value)
 	{
 		Objects.requireNonNull(key, "State key is null");
 		Objects.requireNonNull(atom, "Atom is null");
@@ -83,5 +83,11 @@ class StateInput implements Primitive
 	public final String toString()
 	{
 		return getHash()+" "+getAtom()+" "+getKey();
+	}
+
+	@Override
+	public int compareTo(final StateInput other)
+	{
+		return getHash().compareTo(other.getHash());
 	}
 }

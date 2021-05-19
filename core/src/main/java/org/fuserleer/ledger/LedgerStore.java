@@ -27,6 +27,7 @@ import org.fuserleer.ledger.Path.Elements;
 import org.fuserleer.ledger.StateOp.Instruction;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
+import org.fuserleer.ledger.atoms.AutomataExtension;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.serialization.DsonOutput;
@@ -255,7 +256,7 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 			
 			if (primitive.equals(Atom.class) == true || primitive.equals(BlockHeader.class) == true || 
 				Vote.class.isAssignableFrom(primitive) == true || Certificate.class.isAssignableFrom(primitive) == true || 
-				StateInput.class.isAssignableFrom(primitive) == true)
+				StateInput.class.isAssignableFrom(primitive) == true || AutomataExtension.class.isAssignableFrom(primitive) == true)
 			{
 				OperationStatus status = this.primitives.get(null, key, value, LockMode.DEFAULT);
 				if (status.equals(OperationStatus.SUCCESS) == true)
@@ -872,6 +873,47 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 		} 
 	}
 
+	final OperationStatus store(final long height, final AutomataExtension automataExt) throws IOException 
+	{
+		Objects.requireNonNull(automataExt, "Automata extension is null");
+		Numbers.isNegative(height, "Height is negative");
+
+		if (this.primitiveLRW.containsKey(automataExt.getHash()) == true)
+			return OperationStatus.KEYEXIST;
+
+		Transaction transaction = this.context.getDatabaseEnvironment().beginTransaction(null, null);
+		try 
+		{
+			OperationStatus status = store(transaction, automataExt.getHash(), automataExt, Serialization.getInstance().toDson(automataExt, DsonOutput.Output.PERSIST));
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+		    {
+		    	if (status.equals(OperationStatus.KEYEXIST) == true) 
+		    	{
+		    		databaseLog.warn(this.context.getName()+": Automata extension "+automataExt.getHash()+" is already present");
+		    		transaction.abort();
+		    		return status;
+		    	}
+		    	else 
+		    		throw new DatabaseException("Failed to store automata extension "+automataExt.getHash()+" due to "+status.name());
+		    } 
+		    
+			status = storeSyncInventory(transaction, height, automataExt.getHash(), AutomataExtension.class, SyncInventoryType.SEEN);
+		    if (status.equals(OperationStatus.SUCCESS) == false) 
+	    		throw new DatabaseException("Failed to store automata extension "+automataExt.getHash()+" in sync inventory due to "+status.name());
+
+		    transaction.commit();
+		    this.primitiveLRW.put(automataExt.getHash(), automataExt.getHash());
+		    return OperationStatus.SUCCESS;
+		} 
+		catch (Exception ex) 
+		{
+			transaction.abort();
+		    if (ex instanceof DatabaseException)
+		    	throw ex; 
+		    throw new DatabaseException(ex);
+		} 
+	}
+
 	// STATE //
 	final Commit search(final StateKey<?, ?> key) throws IOException
 	{
@@ -1246,6 +1288,9 @@ public class LedgerStore extends DatabaseStore implements LedgerProvider
 				status = this.primitives.put(transaction, atomKey, atomValue);
 			    if (status.equals(OperationStatus.SUCCESS) != true) 
 		    		throw new DatabaseException("Failed to commit atom "+commit.getAtom().getHash()+" with state objects " + status.name());
+			    
+			    if (commit.getAtom().getAutomata().isEmpty() == false)
+			    	databaseLog.info("Atom "+commit.getAtom().getHash()+" with automata");
 	    		
 				for (StateOp stateOp : commit.getStateOps())
 				{

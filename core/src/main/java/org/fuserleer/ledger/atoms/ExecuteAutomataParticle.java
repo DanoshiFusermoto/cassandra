@@ -107,7 +107,8 @@ public final class ExecuteAutomataParticle extends Particle
 		
 		if (stateMachine.getPendingAtom().getAtom().hasParticle(this.identity.getKey().asHash()) == false)
 		{
-			// TODO will need proper provisioning of unknown automata here
+			// TODO will need proper provisioning, validation and storage of unknown automata here
+			// TODO what happens if an automata is updated?
 			Future<SearchResult> automataSearchResultFuture = stateMachine.getContext().getLedger().get(new StateSearchQuery(new StateAddress(Particle.class, this.identity.getKey().asHash()), Particle.class));
 			SearchResult automataSearchResult = null;
 			try

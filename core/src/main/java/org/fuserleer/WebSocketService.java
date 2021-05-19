@@ -140,6 +140,10 @@ public final class WebSocketService extends WebSocketServer
 			for (Particle particle : event.getAtom().getParticles())
 				particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
 			eventJSON.put("particles", particles);
+			JSONArray automata = new JSONArray();
+			for (Particle particle : event.getAtom().getAutomata())
+				automata.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+			eventJSON.put("automata", automata);
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
 
@@ -154,6 +158,10 @@ public final class WebSocketService extends WebSocketServer
 			for (Particle particle : event.getAtom().getParticles())
 				particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
 			eventJSON.put("particles", particles);
+			JSONArray automata = new JSONArray();
+			for (Particle particle : event.getAtom().getAutomata())
+				automata.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+			eventJSON.put("automata", automata);
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
 		
@@ -170,6 +178,10 @@ public final class WebSocketService extends WebSocketServer
 			for (Particle particle : event.getAtom().getParticles())
 				particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
 			eventJSON.put("particles", particles);
+			JSONArray automata = new JSONArray();
+			for (Particle particle : event.getAtom().getAutomata())
+				automata.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+			eventJSON.put("automata", automata);
 			eventJSON.put("error", event.getException().toString());
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}
@@ -203,6 +215,10 @@ public final class WebSocketService extends WebSocketServer
 				for (Particle particle : pendingAtom.getAtom().getParticles())
 					particles.put(Serialization.getInstance().toJsonObject(particle, Output.API));
 				eventJSON.put("particles", particles);
+				JSONArray automata = new JSONArray();
+				for (Particle particle : pendingAtom.getAtom().getAutomata())
+					automata.put(Serialization.getInstance().toJsonObject(particle, Output.API));
+				eventJSON.put("automata", automata);
 			}
 			WebSocketService.this.broadcast(eventJSON.toString());
 		}

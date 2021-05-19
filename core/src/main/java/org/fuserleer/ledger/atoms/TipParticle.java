@@ -67,7 +67,7 @@ public final class TipParticle extends SignedParticle
 			throw new ValidationException("Can not tip a tip transfer");
 		
 		boolean hasTransfer = false;
-		for (TokenParticle transferParticle : stateMachine.getAtom().getParticles(TokenParticle.class))
+		for (TokenParticle transferParticle : stateMachine.getPendingAtom().getAtom().getParticles(TokenParticle.class))
 		{
 			if (transferParticle.getSpin().equals(Spin.UP) == true && 
 				transferParticle.getHash().equals(this.transfer) == true)
@@ -78,7 +78,7 @@ public final class TipParticle extends SignedParticle
 		}
 		
 		if (hasTransfer == false)
-			throw new ValidationException("Atom "+stateMachine.getAtom().getHash()+" doesn't contain transfer "+this.transfer+" for tip "+this.getHash());
+			throw new ValidationException("Atom "+stateMachine.getPendingAtom().getAtom().getHash()+" doesn't contain transfer "+this.transfer+" for tip "+this.getHash());
 		
 		stateMachine.sop(new StateOp(new StateAddress(Particle.class, this.transfer), Instruction.EXISTS), this);
 		stateMachine.sop(new StateOp(new StateAddress(Particle.class, this.tipping), Instruction.EXISTS), this);

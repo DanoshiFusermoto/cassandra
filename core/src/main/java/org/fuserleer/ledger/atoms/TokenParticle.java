@@ -150,7 +150,7 @@ public final class TokenParticle extends SignedParticle
 			spendable = spendable.add(this.quantity);
 			
 			// Check if token spec is embedded in atom
-			TokenSpecification tokenSpec = stateMachine.getAtom().getParticle(token);
+			TokenSpecification tokenSpec = stateMachine.getPendingAtom().getAtom().getParticle(token);
 			if (tokenSpec == null)
 			{
 				// Not a packed TOKEN/MINT atom ... look for the token if local shard group is responsible for it

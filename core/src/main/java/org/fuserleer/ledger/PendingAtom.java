@@ -25,6 +25,8 @@ import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.CommitOperation.Type;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
+import org.fuserleer.ledger.atoms.AutomataExtension;
+import org.fuserleer.ledger.atoms.Particle;
 import org.fuserleer.logging.Logger;
 import org.fuserleer.logging.Logging;
 import org.fuserleer.time.Time;
@@ -43,7 +45,7 @@ public final class PendingAtom implements Hashable
 	private static final Logger cerbyLog = Logging.getLogger("cerby");
 
 	public final static int ATOM_COMMIT_TIMEOUT_BLOCKS = 60;	// TODO need a much smarter timeout mechanism along with recovery.  ~10 minutes per phase if block production is ~5 seconds.  Sufficient for alpha testing.
-	public final static int ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS = 30;	// TODO Long inclusion commit timeout ~10 minutes.  Is extended if atom is suspected included in a block (evidence of state votes etc).  Sufficient for alpha testing.
+	public final static int ATOM_INCLUSION_TIMEOUT_CLOCK_SECONDS = 120;	// TODO Long inclusion commit timeout ~10 minutes.  Is extended if atom is suspected included in a block (evidence of state votes etc).  Sufficient for alpha testing.
 	
 	public static PendingAtom create(final Context context, final Atom atom)
 	{
@@ -70,6 +72,7 @@ public final class PendingAtom implements Hashable
 	private Hash			block;
 	private Atom 			atom;
 	private StateMachine	stateMachine;
+	private AutomataExtension automataExt;
 	
 	private long			voteWeight;
 	private long			voteThreshold;
@@ -231,6 +234,11 @@ public final class PendingAtom implements Hashable
 	
 	void prepare() throws IOException, ValidationException
 	{
+		prepare(null);
+	}
+	
+	void prepare(final AutomataExtension automataExt) throws IOException, ValidationException
+	{
 		this.lock.writeLock().lock();
 		try
 		{
@@ -239,8 +247,15 @@ public final class PendingAtom implements Hashable
 	
 			if (this.stateMachine == null)
 			{
-				this.stateMachine = new StateMachine(this.context, this.atom);
+				this.stateMachine = new StateMachine(this.context, this);
 				this.stateMachine.prepare();
+				
+				if (automataExt != null)
+				{
+					this.automataExt = automataExt;
+					for (Particle particle : automataExt.getParticles())
+						this.stateMachine.prepare(particle, true);
+				}
 				
 				// FIXME needs to be a threshold per shard group for correctness.  A summed weight will suffice for testing.
 				Set<Long> shardGroups = ShardMapper.toShardGroups(this.stateMachine.getShards(), this.context.getLedger().numShardGroups());
@@ -255,6 +270,11 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
+	AutomataExtension getAutomataExtension()
+	{
+		return this.automataExt;
+	}
+
 	int lock()
 	{
 		int lockCount = this.locks.incrementAndGet();
@@ -330,7 +350,7 @@ public final class PendingAtom implements Hashable
 		return this.stateMachine.isProvisioned();
 	}
 	
-	Set<StateKey<?, ?>> provision(final BlockHeader block)
+	Set<StateKey<?, ?>> provision(final BlockHeader block) throws ValidationException, IOException
 	{
 		this.lock.writeLock().lock();
 		try
@@ -343,6 +363,12 @@ public final class PendingAtom implements Hashable
 			long commitBlockTimeout = Longs.fromByteArray(block.getHash().toByteArray()) + PendingAtom.ATOM_COMMIT_TIMEOUT_BLOCKS;
 			setCommitBlockTimeout(commitBlockTimeout);
 			
+			if (this.automataExt != null)
+			{
+				for (StateInput stateInput : automataExt.getInputs())
+					provision(stateInput);
+			}
+			
 			return this.stateMachine.provision(block);
 		}
 		finally
@@ -351,14 +377,14 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
-	synchronized boolean provision(final StateKey<?, ?> key, final UInt256 value) throws ValidationException
+	synchronized boolean provision(final StateInput stateInput) throws ValidationException, IOException
 	{
 		this.lock.writeLock().lock();
 		try
 		{
 			if (this.stateMachine.thrown() != null)
 			{
-				cerbyLog.warn("Detected thrown exception for pending atom "+getHash()+" when provisioning "+key+" with "+value);
+				cerbyLog.warn("Detected thrown exception for pending atom "+getHash()+" when provisioning "+stateInput.getKey()+" with "+stateInput.getValue());
 				return false;
 			
 			// FIXME want to throw this but currently causes issues as there are two call point for provision that are not 
@@ -366,24 +392,28 @@ public final class PendingAtom implements Hashable
 //				throw new IllegalStateException("Detected thrown exception for pending atom "+getHash()+" when provisioning "+key+" with "+value);
 			}
 			
-			if (this.status.get().equals(CommitStatus.PROVISIONING) == false)
+			if (this.status.get().equals(CommitStatus.PROVISIONING) == false && this.status.get().equals(CommitStatus.AUTOMATA) == false )
 				throw new IllegalStateException("Pending atom "+getHash()+" is not PROVISIONING but "+this.status);
 			
 			try
 			{
-				this.stateMachine.provision(key, value);
+				this.stateMachine.provision(stateInput);
 			}
 			catch (Exception ex)
 			{
 				// TODO status setting is strict order so can't skip. but would like to skip here (or have a more relevant status)
-				setStatus(CommitStatus.PROVISIONED);
+				if (getStatus().equals(CommitStatus.PROVISIONING) == true)
+					setStatus(CommitStatus.PROVISIONED);
+				
 				setStatus(CommitStatus.EXECUTED);
 				throw ex;
 			}
 
 			if (this.stateMachine.isProvisioned() == true)
 			{
-				setStatus(CommitStatus.PROVISIONED);
+				if (getStatus().lessThan(CommitStatus.PROVISIONED) == true)
+					setStatus(CommitStatus.PROVISIONED);
+				
 				return true;
 			}
 			
@@ -406,14 +436,7 @@ public final class PendingAtom implements Hashable
 			if (this.status.get().equals(CommitStatus.PROVISIONED) == false) 
 				throw new IllegalStateException("Pending atom "+this.getHash()+" is not PROVISIONED but "+this.status);
 	
-			try
-			{
-				this.stateMachine.execute();
-			}
-			finally
-			{
-				setStatus(CommitStatus.EXECUTED);
-			}
+			this.stateMachine.execute();
 		}
 		finally
 		{
@@ -421,6 +444,19 @@ public final class PendingAtom implements Hashable
 		}
 	}
 	
+	public Collection<StateInput> getInputs()
+	{
+		this.lock.readLock().lock();
+		try
+		{
+			return this.stateMachine.getInputs();
+		}
+		finally
+		{
+			this.lock.readLock().unlock();
+		}
+	}
+
 	Optional<UInt256> getInput(final StateKey<?, ?> key)
 	{
 		this.lock.readLock().lock();

@@ -2,7 +2,7 @@ package org.fuserleer.ledger;
 
 public enum CommitStatus
 {
-	NONE(0), PREPARED(1), ACCEPTED(2), PROVISIONING(3), PROVISIONED(4), EXECUTED(5), COMPLETED(6), ABORTED(10);
+	NONE(0), PREPARED(1), ACCEPTED(2), PROVISIONING(3), PROVISIONED(4), AUTOMATA(5), EXECUTED(6), COMPLETED(7), ABORTED(10);
 	
 	private final int index;
 	

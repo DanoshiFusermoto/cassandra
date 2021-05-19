@@ -57,7 +57,8 @@ public final class AtomPool implements Service
 {
 	private static final Logger atomsLog = Logging.getLogger("atoms");
 
-	private enum AtomVoteStatus
+	// TODO temporary should be private
+	protected enum AtomVoteStatus
 	{
 		SUCCESS, FAILED, SKIPPED;
 	}
@@ -92,12 +93,6 @@ public final class AtomPool implements Service
 							{
 								try
 								{
-									if (AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote.getValue()).equals(OperationStatus.SUCCESS) == false)
-									{
-										atomsLog.warn(AtomPool.this.context.getName()+": Received already seen atom vote "+atomVote.getKey()+":"+atomVote.getValue().getAtom()+" for "+atomVote.getValue().getOwner());
-										continue;
-									}
-									
 									AtomVoteStatus status = process(atomVote.getValue()); 
 									if (status.equals(AtomVoteStatus.SUCCESS) == true)
 									{
@@ -149,14 +144,11 @@ public final class AtomPool implements Service
 										AtomVote atomVote = new AtomVote(pendingAtom.getHash(), AtomPool.this.context.getNode().getIdentity());
 										atomVote.sign(AtomPool.this.context.getNode().getKeyPair());
 	
-										if (AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote).equals(OperationStatus.SUCCESS) == true)
+										AtomVoteStatus status = process(atomVote); 
+										if (status.equals(AtomVoteStatus.SUCCESS) == true)
 										{
-											AtomVoteStatus status = process(atomVote); 
-											if (status.equals(AtomVoteStatus.SUCCESS) == true)
-											{
-												if (atomsLog.hasLevel(Logging.DEBUG))
-													atomsLog.debug(AtomPool.this.context.getName()+": Voted on atom "+atomVote.getAtom()+" with vote "+atomVote.getHash());
-											}
+											if (atomsLog.hasLevel(Logging.DEBUG))
+												atomsLog.debug(AtomPool.this.context.getName()+": Voted on atom "+atomVote.getAtom()+" with vote "+atomVote.getHash());
 										}
 										else
 											atomsLog.warn(AtomPool.this.context.getName()+": Persistance of local atom vote failed "+atomVote.getHash()+":"+atomVote.getAtom()+" for "+atomVote.getOwner()+" (did out of sync recently happen?)");
@@ -379,10 +371,16 @@ public final class AtomPool implements Service
 		}
 	}
 	
-	private AtomVoteStatus process(final AtomVote atomVote) throws IOException, CryptoException, ValidationException
+	AtomVoteStatus process(final AtomVote atomVote) throws IOException, CryptoException, ValidationException
 	{
 		Objects.requireNonNull(atomVote, "Atom vote is null");
 		
+		if (AtomPool.this.context.getLedger().getLedgerStore().store(AtomPool.this.context.getLedger().getHead().getHeight(), atomVote).equals(OperationStatus.SUCCESS) == false)
+		{
+			atomsLog.warn(AtomPool.this.context.getName()+": Received already seen atom vote "+atomVote+":"+atomVote.getAtom()+" for "+atomVote.getOwner());
+			return AtomVoteStatus.SKIPPED;
+		}
+
 		AtomPool.this.lock.writeLock().lock();
 		AtomVoteStatus response = AtomVoteStatus.FAILED;
 		PendingAtom pendingAtom = null;
@@ -784,7 +782,8 @@ public final class AtomPool implements Service
 		@Subscribe
 		public void on(AtomExceptionEvent event)
 		{
-			AtomPool.this.remove(event.getPendingAtom().getHash());
+			if (event.getPendingAtom().getStatus().equals(CommitStatus.PREPARED) == true)
+				AtomPool.this.remove(event.getPendingAtom().getHash());
 		}
 
 		@Subscribe

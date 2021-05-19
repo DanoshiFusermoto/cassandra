@@ -194,8 +194,8 @@ public final class StateHandler implements Service
 							PendingAtom pendingAtom = stateToProvision.getValue();
 							try
 							{
-								if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == false)
-									throw new IllegalStateException("Pending atom "+pendingAtom+" is not in PROVISIONING commit state");
+								if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == false && pendingAtom.getStatus().equals(CommitStatus.AUTOMATA) == false)
+									throw new IllegalStateException("Pending atom "+pendingAtom+" is not in PROVISIONING or AUTOMATA commit state");
 								
 								if (cerbyLog.hasLevel(Logging.DEBUG))
 									cerbyLog.debug(StateHandler.this.context.getName()+": Provisioning state "+pendingState+" for atom "+pendingAtom.getHash());
@@ -224,15 +224,15 @@ public final class StateHandler implements Service
 
 			            				if (pendingAtom.getInput(pendingState.getKey()) == null)
 			            				{
-											provision(pendingAtom, pendingState.getKey(), value);
-
 											StateInput stateInput = new StateInput(pendingAtom.getHash(), pendingState.getKey(), value); 
 											if (stateLog.hasLevel(Logging.DEBUG))
 												stateLog.debug(StateHandler.this.context.getName()+": Storing local provisioned state "+pendingState.getKey()+" for atom "+pendingAtom.getHash()+" for state recovery");
 
 								    		if (StateHandler.this.context.getLedger().getLedgerStore().store(StateHandler.this.context.getLedger().getHead().getHeight(), stateInput).equals(OperationStatus.SUCCESS) == false)
 												stateLog.warn(StateHandler.this.context.getName()+": Already stored provisioned state "+pendingState.getKey()+" for atom "+pendingAtom.getHash()+" in block "+pendingAtom.getBlock());
-								    		
+
+								    		provision(pendingAtom, stateInput);
+
 											Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
 											if (provisionShardGroup == localShardGroup)
 												shardGroups.remove(provisionShardGroup);
@@ -254,7 +254,7 @@ public final class StateHandler implements Service
 
 					            					StateHandler.this.remoteProvisionQueue.remove(stateInput.getHash());
 					            					StateHandler.this.remoteProvisionDelayed.remove(stateInput.getHash());
-					            					provision(pendingAtom, stateInput.getKey(), stateInput.getValue());
+					            					provision(pendingAtom, stateInput);
 					            					
 													provisionShardGroup = ShardMapper.toShardGroup(provisionedStateKey.get(), numShardGroups);
 													Set<Long> shardGroups = ShardMapper.toShardGroups(pendingAtom.getShards(), numShardGroups);
@@ -305,9 +305,10 @@ public final class StateHandler implements Service
 									continue;
 								}
 
-								if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == true && pendingAtom.getInput(stateInput.getValue().getKey()) == null)
+								if ((pendingAtom.getStatus().equals(CommitStatus.PROVISIONING) == true || pendingAtom.getStatus().equals(CommitStatus.AUTOMATA) == true) && 
+									pendingAtom.getInput(stateInput.getValue().getKey()) == null)
 								{
-									provision(pendingAtom, stateInput.getValue().getKey(), stateInput.getValue().getValue());
+									provision(pendingAtom, stateInput.getValue());
 								
 									long numShardGroups = StateHandler.this.context.getLedger().numShardGroups();
 									long stateShardGroup = ShardMapper.toShardGroup(stateInput.getValue().getKey().get(), numShardGroups);
@@ -560,22 +561,61 @@ public final class StateHandler implements Service
 		}
 	}
 
-	private void provision(final PendingAtom pendingAtom, final StateKey<?, ?> stateKey, final UInt256 value) throws InterruptedException, IOException
+	void provision(final PendingAtom pendingAtom, final StateKey<?, ?> stateKey) throws IOException
+	{
+		Objects.requireNonNull(pendingAtom, "Pending atom for provisioning is null");
+		Objects.requireNonNull(stateKey, "Pending atom state key to provision is null");
+		
+		StateHandler.this.lock.readLock().lock();
+		try
+		{
+			if (pendingAtom.getInput(stateKey) != null)
+				throw new IllegalStateException("State "+stateKey+" is already provisioned for "+pendingAtom+" in block"+pendingAtom.getBlock());
+			
+			if (stateLog.hasLevel(Logging.DEBUG) == true)
+				stateLog.debug(this.context.getName()+": Provisioning state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
+
+			long numShardGroups = StateHandler.this.context.getLedger().numShardGroups(Longs.fromByteArray(pendingAtom.getBlock().toByteArray()));
+			long localShardGroup = ShardMapper.toShardGroup(StateHandler.this.context.getNode().getIdentity(), numShardGroups);
+			PendingState pendingState = get(pendingAtom.getBlock(), pendingAtom.getHash(), stateKey);
+			if (pendingState == null || pendingAtom.getHash().equals(pendingState.getAtom()) == false)
+				throw new IllegalStateException("Expected pending state "+stateKey+" in atom "+pendingAtom.getHash()+" not found");
+				
+			long provisionShardGroup = ShardMapper.toShardGroup(stateKey.get(), numShardGroups);
+			if (provisionShardGroup == localShardGroup)
+			{
+				if (this.localProvisionQueue.putIfAbsent(pendingState, pendingAtom) != null)
+					stateLog.warn(StateHandler.this.context.getName()+": Provisioning "+stateKey+" should be absent for "+pendingAtom.getHash());
+			}
+		}
+		finally
+		{
+			StateHandler.this.lock.readLock().unlock();
+		}
+	}
+
+	private void provision(final PendingAtom pendingAtom, final StateInput stateinput) throws InterruptedException, IOException
 	{
 		try
 		{
-			if (pendingAtom.provision(stateKey, value) == true)
+			if (pendingAtom.provision(stateinput) == true)
 			{
-	    		if (stateLog.hasLevel(Logging.DEBUG))
-					stateLog.debug(StateHandler.this.context.getName()+": Queuing pending atom "+pendingAtom.getHash()+" for execution");
-	    		
-	    		this.executionQueue.put(pendingAtom);
+				if (pendingAtom.getStatus().equals(CommitStatus.PROVISIONED) == true)
+				{
+		    		if (stateLog.hasLevel(Logging.DEBUG))
+						stateLog.debug(StateHandler.this.context.getName()+": Queuing pending atom "+pendingAtom.getHash()+" for execution");
+		    		
+		    		this.executionQueue.put(pendingAtom);
+				}
+				// TODO Shouldnt be here, needed for executing automata results outside of a worker...change it
+				else if (pendingAtom.getStatus().equals(CommitStatus.EXECUTED) == true)
+					this.context.getEvents().post(new AtomExecutedEvent(pendingAtom));
 			}
 		}
 		catch (ValidationException vex)
 		{
 			// Let provisioning validation exceptions make it into the state pool as they represent a "no" vote for commit
-			stateLog.error(StateHandler.this.context.getName()+": State machine throw validation exception processing provisioning for "+stateKey+" in atom "+pendingAtom.getHash(), vex);
+			stateLog.error(StateHandler.this.context.getName()+": State machine throw validation exception processing provisioning for "+stateinput.getKey()+" in atom "+pendingAtom.getHash(), vex);
 			StateHandler.this.context.getEvents().post(new AtomExecutedEvent(pendingAtom, vex));
 		}
 	}
@@ -583,7 +623,8 @@ public final class StateHandler implements Service
 	void execute(final PendingAtom pendingAtom) throws ValidationException, IOException
 	{
 		pendingAtom.execute();
-		this.context.getEvents().post(new AtomExecutedEvent(pendingAtom));
+		if (pendingAtom.getStatus().equals(CommitStatus.EXECUTED))
+			this.context.getEvents().post(new AtomExecutedEvent(pendingAtom));
 	}
 
 	@Override
@@ -1146,7 +1187,6 @@ public final class StateHandler implements Service
 						cerbyLog.debug(this.context.getName()+": Removal failed for pending state "+stateKey+" for "+pendingAtom+" in block "+pendingAtom.getBlock());
 					
 					this.localProvisionQueue.remove(pendingState, pendingAtom);
-
 					Optional<UInt256> value = pendingAtom.getInput(stateKey);
 					if (value == null)
 						continue;
@@ -1185,7 +1225,6 @@ public final class StateHandler implements Service
 			StateHandler.this.lock.writeLock().unlock();
 		}
 	}
-
 
 	// PARTICLE CERTIFICATE LISTENER //
 	private EventListener certificateListener = new EventListener()

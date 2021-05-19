@@ -29,6 +29,10 @@ public final class Atom extends BasicObject implements Primitive
 	@DsonOutput(Output.ALL)
 	private List<Particle> particles;
 	
+	@JsonProperty("automata")
+	@DsonOutput(value = {Output.API, Output.WIRE, Output.PERSIST})
+	private List<Particle> automata;
+
 	@JsonProperty("states")
 	@DsonOutput(value = {Output.API, Output.PERSIST})
 	@JsonDeserialize(as=LinkedHashMap.class)
@@ -81,6 +85,78 @@ public final class Atom extends BasicObject implements Primitive
 		this.particles = new ArrayList<Particle>(verifiedNonDuplicates);
 	}
 	
+	public Atom(final Collection<? extends Particle> particles, final Collection<? extends Particle> automata)
+	{
+		this();
+		
+		Objects.requireNonNull(automata, "Automata is null");
+		Objects.requireNonNull(particles, "Particles is null");
+		Numbers.isZero(particles.size(), "Particles is empty");
+		
+		Set<Particle> verifiedNonDuplicates = new LinkedHashSet<Particle>();
+		for (Particle particle : particles)
+		{
+			if (verifiedNonDuplicates.add(particle) == false)
+				throw new IllegalArgumentException("Particle "+particle.getHash()+" is duplicated");
+		}
+		for (Particle particle : automata)
+		{
+			if (verifiedNonDuplicates.add(particle) == false)
+				throw new IllegalArgumentException("Automata particle "+particle.getHash()+" is duplicated");
+		}
+
+		this.particles = new ArrayList<Particle>(particles);
+		this.automata = new ArrayList<Particle>(automata);
+	}
+
+	public Collection<Particle> getAutomata()
+	{
+		if (this.automata == null)
+			return Collections.emptyList();
+		
+		return Collections.unmodifiableList(this.automata);
+	}
+
+
+	public void clearAutomata()
+	{
+		if (this.automata != null)
+			this.automata.clear();
+	}
+
+/*	public boolean addAutomata(final Collection<Particle> particles)
+	{
+		Objects.requireNonNull(particles, "Automata particles is null");
+		Numbers.isZero(particles.size(), "Automata particles is empty");
+		if (this.automata == null)
+			this.automata = Collections.synchronizedList(new ArrayList<Particle>());
+
+		for (Particle particle : particles)
+		{
+			if (this.particles.contains(particle) == true)
+				throw new IllegalArgumentException("Automata particle "+particle.getHash()+" is internal atom particle");
+
+			if (this.automata.contains(particle) == true)
+				throw new IllegalArgumentException("Automata particle "+particle.getHash()+" is duplicated");
+				
+			this.automata.add(particle);
+		}
+		
+		return true;
+	}*/
+
+	public boolean addAutomata(final Particle particle)
+	{
+		Objects.requireNonNull(particle, "Automata output particle is null");
+		if (this.automata == null)
+			this.automata = Collections.synchronizedList(new ArrayList<Particle>());
+		
+		if (this.automata.contains(particle) == true)
+			throw new IllegalArgumentException("Automata output particle "+particle.getHash()+" is duplicated");
+			
+		return this.automata.add(particle);
+	}
+	
 	public Collection<Particle> getParticles()
 	{
 		return Collections.unmodifiableList(this.particles);
@@ -130,6 +206,15 @@ public final class Atom extends BasicObject implements Primitive
 			return Collections.emptyMap();
 		
 		return this.states;
+	}
+
+	public boolean addState(StateObject stateObject)
+	{
+		Objects.requireNonNull(stateObject, "State object for atom "+getHash()+" is null");
+		if (this.states == null)
+			this.states = new LinkedHashMap<Hash, StateObject>();
+		
+		return this.states.putIfAbsent(stateObject.getKey().get(), stateObject) == null ? true : false;
 	}
 
 	/**

@@ -43,6 +43,7 @@ import org.fuserleer.ledger.PendingBranch.Type;
 import org.fuserleer.ledger.atoms.Atom;
 import org.fuserleer.ledger.atoms.AtomCertificate;
 import org.fuserleer.ledger.events.AtomExceptionEvent;
+import org.fuserleer.ledger.events.AutomataExtensionEvent;
 import org.fuserleer.ledger.events.BlockCommitEvent;
 import org.fuserleer.ledger.events.BlockCommittedEvent;
 import org.fuserleer.ledger.events.SyncStatusChangeEvent;
@@ -626,7 +627,7 @@ public class BlockHandler implements Service
 				});
 			}
 		});
-
+		
 		// SYNC //
 		this.context.getNetwork().getMessaging().register(SyncAcquiredMessage.class, this.getClass(), new MessageProcessor<SyncAcquiredMessage>()
 		{
@@ -697,6 +698,7 @@ public class BlockHandler implements Service
 
 		this.context.getEvents().register(this.syncChangeListener);
 		this.context.getEvents().register(this.asyncBlockListener);
+		this.context.getEvents().register(this.syncAutomataListener);
 
 		Thread blockProcessorThread = new Thread(this.blockProcessor);
 		blockProcessorThread.setDaemon(true);
@@ -714,6 +716,7 @@ public class BlockHandler implements Service
 	{
 		this.voteProcessor.terminate(true);
 		this.blockProcessor.terminate(true);
+		this.context.getEvents().unregister(this.syncAutomataListener);
 		this.context.getEvents().unregister(this.asyncBlockListener);
 		this.context.getEvents().unregister(this.syncChangeListener);
 		this.context.getNetwork().getMessaging().deregisterAll(this.getClass());
@@ -1610,6 +1613,37 @@ public class BlockHandler implements Service
 		}
 	};
 	
+	// AUTOMATA EXTENSION LISTENER //
+	private EventListener syncAutomataListener = new EventListener()
+	{
+		@Subscribe
+		public void on(AutomataExtensionEvent automataExtensionEvent) throws StateLockedException // TODO handle exceptions internally
+		{
+			BlockHandler.this.lock.writeLock().lock();
+			try
+			{
+				// TODO crude branch locking here for automata extensions, improve!
+				for (PendingBranch pendingBranch : BlockHandler.this.pendingBranches)
+				{
+					if (automataExtensionEvent.getPendingAtom().getBlock() != null && pendingBranch.getRoot().equals(BlockHandler.this.context.getLedger().getHead()) == true)
+						pendingBranch.getStateAccumulator().lock(automataExtensionEvent.getPendingAtom(), automataExtensionEvent.getStateOps());
+					else
+					{
+						for (PendingBlock pendingBlock : pendingBranch.getBlocks())
+						{
+							if (pendingBlock.containsAtom(automataExtensionEvent.getPendingAtom().getHash()) == true)
+								pendingBranch.getStateAccumulator().lock(automataExtensionEvent.getPendingAtom(), automataExtensionEvent.getStateOps());
+						}
+					}
+				}
+			}
+			finally
+			{
+				BlockHandler.this.lock.writeLock().unlock();
+			}
+		}
+	};
+
 	// SYNC CHANGE LISTENER //
 	private SynchronousEventListener syncChangeListener = new SynchronousEventListener()
 	{

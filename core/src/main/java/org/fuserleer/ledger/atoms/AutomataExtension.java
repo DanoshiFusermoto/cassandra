@@ -24,7 +24,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 @SerializerId2("ledger.automataext")
 public final class AutomataExtension extends BasicObject implements Primitive
 {
-	@JsonProperty("Atom")
+	@JsonProperty("atom")
 	@DsonOutput(Output.ALL)
 	private Atom atom;
 

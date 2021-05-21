@@ -18,9 +18,11 @@ import java.util.stream.Stream;
 
 import org.fuserleer.Context;
 import org.fuserleer.Universe;
+import org.fuserleer.collections.Bloom;
 import org.fuserleer.crypto.BLSPublicKey;
 import org.fuserleer.crypto.CryptoException;
 import org.fuserleer.crypto.Hash;
+import org.fuserleer.database.DatabaseException;
 import org.fuserleer.exceptions.ValidationException;
 import org.fuserleer.ledger.BlockHeader.InventoryType;
 import org.fuserleer.ledger.StateAccumulator.StateLockType;
@@ -178,6 +180,37 @@ public class PendingBranch
 		try
 		{
 			return this.meta.containsKey(pendingBlock.getHash());
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+	}
+
+	boolean isCanonical()
+	{
+		this.lock.lock();
+		try
+		{
+			PendingBlock current = null;
+			Iterator<PendingBlock> blockIterator = this.blocks.descendingIterator();
+			while(blockIterator.hasNext() == true)
+			{
+				PendingBlock previous = blockIterator.next();
+				if (current != null)
+				{
+					if (previous.getHash().equals(current.getHeader().getPrevious()) == false)
+						return false;
+					
+					current = previous;
+				}
+				
+				current = previous;
+				if (current.getHeader().getPrevious().equals(this.root.getHash()) == true)
+					return true;
+			}
+			
+			return false;
 		}
 		finally
 		{
@@ -881,6 +914,32 @@ public class PendingBranch
 		{
 			this.lock.unlock();
 		}
+	}
+
+	public long getVotePower(final long height, final Bloom owners) throws DatabaseException
+	{
+		Objects.requireNonNull(owners, "Identities is null");
+
+		long committedPower = this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, height - ValidatorHandler.VOTE_POWER_MATURITY), owners);
+		long pendingPower = 0;
+		this.lock.lock();
+		try
+		{
+			for (PendingBlock vertex : this.blocks)
+			{
+				if (vertex.getHeight() <= height - ValidatorHandler.VOTE_POWER_MATURITY)
+				{
+					if (owners.contains(vertex.getHeader().getOwner().toByteArray()) == true)
+						pendingPower++;
+				}
+			}
+		}
+		finally
+		{
+			this.lock.unlock();
+		}
+		
+		return committedPower+pendingPower;
 	}
 
 	long getVotePowerThreshold(final long height) throws IOException

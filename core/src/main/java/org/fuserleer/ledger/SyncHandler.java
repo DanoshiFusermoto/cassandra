@@ -232,7 +232,7 @@ public class SyncHandler implements Service
 	private final Map<ConnectedPeer, SyncInventoryPeerTask> inventoryTasks;
 	private final TreeMultimap<ConnectedPeer, Hash> blockInventories;
 	private boolean synced;
-	
+
 	private final ReentrantLock lock = new ReentrantLock(true);
 
 	private Executable syncProcessor = new Executable()
@@ -240,13 +240,14 @@ public class SyncHandler implements Service
 		@Override
 		public void execute()
 		{
+			long delay = 1000;
 			try 
 			{
 				while (this.isTerminated() == false)
 				{
 					try
 					{
-						Thread.sleep(500);//TimeUnit.SECONDS.toMillis(1));
+						Thread.sleep(delay);
 						
 						long localShardGroup = ShardMapper.toShardGroup(SyncHandler.this.context.getNode().getIdentity(), SyncHandler.this.context.getLedger().numShardGroups());
 						StandardPeerFilter standardPeerFilter = StandardPeerFilter.build(SyncHandler.this.context).setStates(PeerState.CONNECTED).setShardGroup(localShardGroup);
@@ -284,9 +285,9 @@ public class SyncHandler implements Service
 							if (SyncHandler.this.blocksRequested.isEmpty() == false)
 								continue;
 							
-							// Find committable block //
-							Block bestBlock = null;
-							double bestBlockVoteRatio = 0;
+							// Find best committable branch //
+							SyncBranch bestBranch = null;
+							double bestBranchVoteRatio = 0;
 							Iterator<Block> blockIterator = SyncHandler.this.blocks.values().iterator(); 
 							while(blockIterator.hasNext() == true)
 							{
@@ -310,42 +311,51 @@ public class SyncHandler implements Service
 									continue;
 								}
 
-								long blockVotePower = SyncHandler.this.context.getLedger().getValidatorHandler().getVotePower(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), block.getHeader().getCertificate().getSigners());
-								long blockVotePowerThreshold = SyncHandler.this.context.getLedger().getValidatorHandler().getVotePowerThreshold(Math.max(0, block.getHeader().getHeight() - ValidatorHandler.VOTE_POWER_MATURITY), Collections.singleton(localShardGroup));
+								SyncBranch syncBranch = new SyncBranch(SyncHandler.this.context, SyncHandler.this.context.getLedger().getHead());
+								syncBranch.push(block.getHeader());
+								Block branchBlock = block;
+								Block prevBranchBlock = null;
+								while(branchBlock.getHeader().getPrevious().equals(syncBranch.getRoot().getHash()) == false)
+								{
+									prevBranchBlock = SyncHandler.this.blocks.get(branchBlock.getHeader().getPrevious());
+									if (prevBranchBlock == null)
+									{
+										if (syncLog.hasLevel(Logging.DEBUG) == true)
+											syncLog.debug(SyncHandler.this.context.getName()+": Previous sync block "+branchBlock.getHeader().getPrevious()+" of "+branchBlock.getHeader().toString()+" is not known");
+										
+										break;
+									}
+									
+									syncBranch.push(prevBranchBlock.getHeader());
+									branchBlock = prevBranchBlock;
+								}
+								
+								if (prevBranchBlock == null)
+									continue;
+								
+								long blockVotePower = syncBranch.getVotePower(syncBranch.getHigh().getHeight(), syncBranch.getHigh().getCertificate().getSigners());
+								long blockVotePowerThreshold = syncBranch.getVotePowerThreshold(syncBranch.getHigh().getHeight());
 								double blockVotePowerRatio = blockVotePower / (double) blockVotePowerThreshold;
 								if (blockVotePower < blockVotePowerThreshold)
 									continue;
 								
-								if (blockVotePowerRatio < bestBlockVoteRatio)
+								if (blockVotePowerRatio < bestBranchVoteRatio)
 									continue;
 								
-								if (bestBlock == null || bestBlockVoteRatio < blockVotePowerRatio)
+								if (bestBranch == null || bestBranchVoteRatio < blockVotePowerRatio)
 								{
-									bestBlockVoteRatio = blockVotePowerRatio;
-									bestBlock = block;
+									bestBranchVoteRatio = blockVotePowerRatio;
+									bestBranch = syncBranch;
 								}
 							}
 							
-							if (bestBlock != null)
+							if (bestBranch != null)
 							{
-								syncLog.info(SyncHandler.this.context.getName()+": Selected block "+bestBlock.getHeader()+" as sync candidate");
+								syncLog.info(SyncHandler.this.context.getName()+": Selected block "+bestBranch.getHigh()+" as sync candidate");
 								
-								// Ensure there is a branch to commit 
-								LinkedList<Block> bestBranch = new LinkedList<Block>();
-								Block currentBranchBlock = bestBlock;
-								
-								do
-								{
-									bestBranch.add(currentBranchBlock);
-									if (currentBranchBlock.getHeader().getPrevious().equals(SyncHandler.this.context.getLedger().getHead().getHash()) == true)
-										break;
-									
-									currentBranchBlock = SyncHandler.this.blocks.get(currentBranchBlock.getHeader().getPrevious());
-								}
-								while(currentBranchBlock != null);
-								
-								if (bestBranch.getLast().getHeader().getPrevious().equals(SyncHandler.this.context.getLedger().getHead().getHash()) == false)
-									syncLog.error(SyncHandler.this.context.getName()+": Selected branch terminating with block "+bestBranch.getLast().getHeader()+" does not link to "+SyncHandler.this.context.getLedger().getHead());
+								// Ensure there is a branch to commit
+								if (bestBranch.isCanonical() == false)
+									syncLog.error(SyncHandler.this.context.getName()+": Selected branch terminating with block "+bestBranch.getHigh()+" does not link to "+SyncHandler.this.context.getLedger().getHead());
 								else
 								{
 									try
@@ -355,14 +365,18 @@ public class SyncHandler implements Service
 									catch (Exception ex)
 									{
 										// Dump the branch on any exception
-										for (Block block : bestBranch)
-											SyncHandler.this.blocks.remove(block.getHeader().getHash());
+										for (BlockHeader header : bestBranch.getHeaders())
+											SyncHandler.this.blocks.remove(header.getHash());
 
-										syncLog.error(SyncHandler.this.context.getName()+": Commit of branch with head "+bestBranch.getFirst().getHeader()+" failed", ex);
+										syncLog.error(SyncHandler.this.context.getName()+": Commit of branch with head "+bestBranch.getHigh()+" failed", ex);
 									}
 								}
+								
+								delay = Math.max(50, delay/2);
 							}
-							
+							else 
+								delay = Math.min(1000, delay*2);
+
 							// Clean out inventories that are committed and maybe ask for some blocks //
 							for (ConnectedPeer syncPeer : syncPeers)
 							{
@@ -417,26 +431,30 @@ public class SyncHandler implements Service
 								
 								if (SyncHandler.this.inventoryTasks.containsKey(syncPeer) == false &&
 									(SyncHandler.this.blockInventories.containsKey(syncPeer) == false || 
-									 SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == true))
+									 SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == true || bestBranch == null))
 								{
 									SyncInventoryPeerTask syncInventoryPeerTask = null;
+									Hash highestInventory = SyncHandler.this.context.getLedger().getHead().getHash();
+									if (SyncHandler.this.blockInventories.containsKey(syncPeer) == true && SyncHandler.this.blockInventories.get(syncPeer).isEmpty() == false) 
+										highestInventory = SyncHandler.this.blockInventories.get(syncPeer).first();
+
 									try
 									{
-										GetSyncBlockInventoryMessage getSyncBlockInventoryMessage = new GetSyncBlockInventoryMessage(SyncHandler.this.context.getLedger().getHead().getHash());
+										GetSyncBlockInventoryMessage getSyncBlockInventoryMessage = new GetSyncBlockInventoryMessage(highestInventory);
 										
-										syncInventoryPeerTask = new SyncInventoryPeerTask(syncPeer, SyncHandler.this.context.getLedger().getHead().getHash(), getSyncBlockInventoryMessage.getSeq());
+										syncInventoryPeerTask = new SyncInventoryPeerTask(syncPeer, highestInventory, getSyncBlockInventoryMessage.getSeq());
 										SyncHandler.this.inventoryTasks.put(syncPeer, syncInventoryPeerTask);
 										Executor.getInstance().schedule(syncInventoryPeerTask);
 										
 										SyncHandler.this.context.getNetwork().getMessaging().send(getSyncBlockInventoryMessage, syncPeer);
-										syncLog.info(SyncHandler.this.context.getName()+": Requested block inventory "+getSyncBlockInventoryMessage.getSeq()+":"+SyncHandler.this.context.getLedger().getHead().getHash()+" from "+syncPeer);
+										syncLog.info(SyncHandler.this.context.getName()+": Requested block inventory "+getSyncBlockInventoryMessage.getSeq()+":"+highestInventory+" from "+syncPeer);
 									}
 									catch (Exception ex)
 									{
 										if (syncInventoryPeerTask != null)
 											syncInventoryPeerTask.cancel();
 										
-										syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetSyncBlockInventoryMessage from "+SyncHandler.this.context.getLedger().getHead().getHash()+" to "+syncPeer, ex);
+										syncLog.error(SyncHandler.this.context.getName()+": Unable to send GetSyncBlockInventoryMessage from "+highestInventory+" to "+syncPeer, ex);
 									}
 								}
 							}
@@ -756,15 +774,16 @@ public class SyncHandler implements Service
 		return true;
 	}
 
-	private void commit(LinkedList<Block> branch) throws IOException, ValidationException, StateLockedException
+	private void commit(final SyncBranch branch) throws IOException, ValidationException, StateLockedException
 	{
 		// TODO pretty much everything, limited validation here currently, just accepts blocks and atoms almost on faith
 		// TODO remove reference to ledger StateAccumulator and use a local instance with a push on sync
 		List<Block> committedBlocks = new ArrayList<Block>();
-		Iterator<Block> blockIterator = branch.descendingIterator();
-		while(blockIterator.hasNext() == true)
+		Iterator<BlockHeader> blockHeaderIterator = branch.getHeaders().iterator();
+		while(blockHeaderIterator.hasNext() == true)
 		{
-			Block block = blockIterator.next();
+			BlockHeader header = blockHeaderIterator.next();
+			Block block = this.blocks.get(header.getHash());
 			// Provision any missing atoms required by certificates
 			for (AtomCertificate certificate : block.getCertificates())
 			{
@@ -815,7 +834,7 @@ public class SyncHandler implements Service
 					throw new ValidationException(this.context.getName()+": Pending atom "+certificate.getAtom()+" not found for certificate "+certificate.getHash()+" in block "+block.getHash());
 				
 				for (StateCertificate stateCertificate : certificate.getAll())
-					pendingAtom.provision(stateCertificate.getState(), stateCertificate.getInput());
+					pendingAtom.provision(new StateInput(pendingAtom.getHash(), stateCertificate.getState(), stateCertificate.getInput()));
 				pendingAtom.execute();
 				
 				pendingAtom.setCertificate(certificate);
@@ -945,7 +964,7 @@ public class SyncHandler implements Service
 						if (stateInput == null)
 							continue;
 
-						pendingAtom.provision(stateKey, stateInput.getValue());
+						pendingAtom.provision(stateInput);
 					}
 					
 					if (pendingAtom.isProvisioned() == true)
@@ -973,7 +992,7 @@ public class SyncHandler implements Service
 							if (this.context.getLedger().getLedgerStore().has(stateInput.getHash()) == false)
 								this.context.getLedger().getLedgerStore().store(this.context.getLedger().getHead().getHeight(), stateInput);
 
-							provisioned = pendingAtom.provision(stateCertificate.getState(), stateCertificate.getInput());
+							provisioned = pendingAtom.provision(new StateInput(stateCertificate.getAtom(), stateCertificate.getState(), stateCertificate.getInput()));
 						}
 						
 						pendingAtom.execute();
@@ -990,7 +1009,7 @@ public class SyncHandler implements Service
 						if (stateCertificate == null)
 							stateKeysToProvision.add(stateKey);
 						else
-							provisioned = pendingAtom.provision(stateKey, stateCertificate.getInput());
+							provisioned = pendingAtom.provision(new StateInput(pendingAtom.getHash(), stateKey, stateCertificate.getInput()));
 					}
 					
 					if (provisioned == false)
